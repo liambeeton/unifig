@@ -1,12 +1,39 @@
 name: CI
 
+# Every step here is a make target, so CI and a developer's laptop run the
+# same commands. The two jobs mirror the Makefile's split: `check` needs no
+# Docker daemon, `e2e` does.
+
 on:
   push:
     branches: [main]
   pull_request:
 
 jobs:
-  test:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The pinned golangci-lint is a `go install` away, so cache the built
+      # binary rather than recompiling it every run. The Makefile owns the
+      # pin, so keying on the Makefile refetches when the pin is bumped.
+      - name: Cache pinned tools
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: Check
+        run: make check
+
+  e2e:
     name: e2e vs UniFi Network ${{ matrix.network }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -24,18 +51,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Check formatting
-        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-
-      - name: Vet
-        run: go vet ./...
-
       # Pull outside the test run so a slow or flaky registry doesn't eat
       # into the suite's own timeout.
       - name: Pull Controller image
         run: docker pull "$CONTROLLER_IMAGE"
 
-      - name: Test
-        run: go test ./... -timeout 20m
+      - name: E2E
+        run: make e2e
         env:
           UNIFIG_TEST_CONTROLLER_IMAGE: ${{ env.CONTROLLER_IMAGE }}

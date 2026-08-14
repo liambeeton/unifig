@@ -37,11 +37,11 @@ const site = "default"
 // "changes pending".
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 || args[0] != "export" {
-		fmt.Fprint(stderr, usage)
+		_, _ = fmt.Fprint(stderr, usage)
 		return 1
 	}
 	if err := runExport(ctx, stdout); err != nil {
-		fmt.Fprintf(stderr, "unifig: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "unifig: %v\n", err)
 		return 1
 	}
 	return 0

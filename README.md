@@ -7,7 +7,7 @@ Current state: walking skeleton — `unifig export` prints the site's networks a
 ## Usage
 
 ```sh
-go build -o unifig ./cmd/unifig
+make build                               # builds ./unifig
 
 export UNIFIG_HOST=https://192.168.1.1   # Controller base URL (bare hosts get https:// prepended)
 export UNIFIG_API_KEY=...                # Controller API key — see below
@@ -24,13 +24,17 @@ On the UDR: UniFi OS → Control Plane → Admins & Users → your admin → Cre
 
 ## Development
 
-Tests drive the whole tool at the process boundary against a real dockerized Controller (see `docs/adr/0003-apikey-auth-os-gate.md` for the rig design). Requirements: Go and Docker.
+`make` is the task entrypoint — run it with no arguments to list the targets. CI runs these same targets, so local and CI cannot drift.
 
 ```sh
-go test ./...          # full suite; boots the pinned Controller image (~30s warm)
-go test -short ./...   # skips the dockerized suite
+make check   # fmt-check + lint + build; needs no Docker
+make fmt     # format with gofumpt
+make e2e     # the dockerized suite
+make run ARGS="export"   # run against a live Controller, credentials from the environment
 ```
 
-The version pin lives in `e2e/rig_test.go` (`defaultControllerImage`) and in the CI matrix.
+Requirements: Go for `make check`, plus Docker for `make e2e`. `make` installs its own pinned golangci-lint (which carries gofumpt) into `bin/`; the pin lives in the Makefile.
+
+Tests drive the whole tool at the process boundary against a real dockerized Controller (see `docs/adr/0003-apikey-auth-os-gate.md` for the rig design). `go test -short ./...` skips the dockerized suite. The Controller version pin lives in `e2e/rig_test.go` (`defaultControllerImage`) and in the CI matrix.
 
 Rig knobs: `UNIFIG_TEST_CONTROLLER_IMAGE` overrides the pinned Controller image; `UNIFIG_TEST_CONTROLLER_URL` points the suite at an already-running demo-mode Controller for a faster inner loop.

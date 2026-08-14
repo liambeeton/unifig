@@ -1,0 +1,31 @@
+# golangci-lint configuration.
+#
+# The tool version is pinned in the Makefile (GOLANGCI_LINT_VERSION), which
+# installs and runs exactly that version. CI runs the same make targets, so
+# there is one pin covering local and CI alike, and gofumpt rides along inside
+# golangci-lint rather than being a second binary to keep in step.
+version: "2"
+
+linters:
+  # The standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  # Deliberately not an opinionated everything-on set — govet subsumes the
+  # `go vet` this repo used to run separately, and errcheck is what earns the
+  # linter its keep.
+  default: standard
+
+  settings:
+    errcheck:
+      exclude-functions:
+        # Closing a response body whose contents have already been read has
+        # no failure worth acting on, and the alternative at each call site is
+        # to wrap the defer in a func literal purely to discard the error.
+        # Narrow on purpose: Close on anything being *written* still counts,
+        # because that is where a dropped error loses data.
+        - (io.ReadCloser).Close
+
+formatters:
+  # gofumpt replaces gofmt rather than sitting beside it: gofumpt is a strict
+  # superset, so a separate gofmt check adds nothing and only creates a second
+  # place that can disagree about formatting.
+  enable:
+    - gofumpt

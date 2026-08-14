@@ -1,5 +1,8 @@
 # built binary
 /unifig
 
+# pinned tools installed by the Makefile
+/bin/
+
 # local connection secrets (direnv workflow)
 .envrc
