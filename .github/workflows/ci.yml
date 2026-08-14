@@ -23,7 +23,8 @@ jobs:
 
       # The pinned golangci-lint is a `go install` away, so cache the built
       # binary rather than recompiling it every run. The Makefile owns the
-      # pin, so keying on the Makefile refetches when the pin is bumped.
+      # pin, so keying on the whole file is conservative: any Makefile edit
+      # evicts the cache, but a bumped pin can never serve a stale binary.
       - name: Cache pinned tools
         uses: actions/cache@v4
         with:
