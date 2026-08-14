@@ -49,9 +49,13 @@ test: ## Run the tests that need no Docker
 .PHONY: check
 check: fmt-check lint build test ## Everything that does not need Docker
 
+# -count=1 defeats Go's test cache. This suite's result depends on a live
+# Controller container, which the cache cannot see, so a cached "ok" would
+# assert nothing about the pinned image — and CI restores the build cache
+# between runs, which is exactly where that stale pass came from.
 .PHONY: e2e
 e2e: ## Run the testcontainers suite against a real Controller (needs Docker)
-	$(GO) test ./e2e/... -timeout 20m
+	$(GO) test ./e2e/... -timeout 20m -count=1
 
 # Connection config comes from the environment only — the developer's direnv
 # .envrc, which is gitignored. Nothing here defaults, hardcodes or echoes a
