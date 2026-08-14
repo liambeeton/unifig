@@ -1,0 +1,5 @@
+# built binary
+/unifig
+
+# local connection secrets (direnv workflow)
+.envrc

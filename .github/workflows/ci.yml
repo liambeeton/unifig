@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: e2e vs UniFi Network ${{ matrix.network }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One pinned Network version for now; issue #11 grows this into the
+      # published compatibility matrix.
+      matrix:
+        network: ["v10.0.162"]
+    env:
+      CONTROLLER_IMAGE: jacobalberty/unifi:${{ matrix.network }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: Vet
+        run: go vet ./...
+
+      # Pull outside the test run so a slow or flaky registry doesn't eat
+      # into the suite's own timeout.
+      - name: Pull Controller image
+        run: docker pull "$CONTROLLER_IMAGE"
+
+      - name: Test
+        run: go test ./... -timeout 20m
+        env:
+          UNIFIG_TEST_CONTROLLER_IMAGE: ${{ env.CONTROLLER_IMAGE }}

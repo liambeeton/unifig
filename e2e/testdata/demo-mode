@@ -1,0 +1,14 @@
+#!/bin/sh
+# Runs inside the jacobalberty/unifi container before the Network application
+# starts. Demo mode (is_simulation) skips the setup wizard and provisions the
+# admin/admin account the rig logs in with; the simulated gateway makes the
+# demo site resemble a UDR-managed one.
+
+write_config() {
+  echo "${1}=${2}" >> /usr/lib/unifi/data/system.properties
+}
+
+write_config is_simulation true
+write_config demo.num_uap 0
+write_config demo.num_ugw 1
+write_config demo.num_usw 1
