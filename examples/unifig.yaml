@@ -1,0 +1,18 @@
+# The modeline below is what gives an editor autocomplete and inline errors —
+# the schema is the same one `unifig validate` checks against.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/liambeeton/unifig/main/schema/unifig.schema.json
+
+networks:
+  # The Controller's built-in LAN. Names are how unifig matches Resources, so
+  # this must be the name as it appears in the Controller.
+  - name: Default
+    subnet: 192.168.1.1/24
+
+  - name: IoT
+    vlan: 20
+    subnet: 10.20.0.1/24
+
+# Validated but not yet reconciled — `network` must name a network above.
+wlans:
+  - name: Home IoT
+    network: IoT

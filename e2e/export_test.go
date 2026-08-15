@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -85,6 +87,36 @@ func TestExportListsVLANsByNameAndLeavesWANSlotsOut(t *testing.T) {
 	}
 	if def := byName["Default"]; def.VLAN != 0 {
 		t.Errorf("Default network exported with vlan=%d, want no vlan", def.VLAN)
+	}
+}
+
+// The brownfield adoption path is export-then-validate, so the config unifig
+// generates from a real Controller has to be config unifig accepts. Nothing
+// short of this proves it: a hand-written literal only tests the literal, and
+// a Go-struct round-trip never sees what the Controller actually returns.
+func TestExportedConfigValidates(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "IoT", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 20, "ip_subnet": "10.20.0.1/24",
+	})
+
+	exported := testRig.runUnifig(t, []string{"export"}, nil)
+	if exported.ExitCode != 0 {
+		t.Fatalf("unifig export exited %d\nstderr: %s", exported.ExitCode, exported.Stderr)
+	}
+
+	path := filepath.Join(t.TempDir(), "unifig.yaml")
+	if err := os.WriteFile(path, exported.Stdout, 0o600); err != nil {
+		t.Fatalf("writing exported config: %v", err)
+	}
+
+	// No connection config: validate is offline, and export's output must not
+	// need a Controller to check.
+	validated := testRig.runUnifig(t, []string{"validate", path},
+		map[string]string{"UNIFIG_HOST": "", "UNIFIG_API_KEY": ""})
+	if validated.ExitCode != 0 {
+		t.Fatalf("validate rejected export's own output (exit %d)\nstderr: %s\nexported:\n%s",
+			validated.ExitCode, validated.Stderr, exported.Stdout)
 	}
 }
 

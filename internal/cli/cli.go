@@ -6,6 +6,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,15 +16,17 @@ import (
 
 	"github.com/filipowm/go-unifi/v2/unifi"
 
+	"github.com/liambeeton/unifig/internal/config"
 	"github.com/liambeeton/unifig/internal/export"
 )
 
 const usage = `usage: unifig <command>
 
 commands:
-  export    print the Controller's configuration as YAML on stdout
+  export            print the Controller's configuration as YAML on stdout
+  validate [file]   check a config file offline (default: unifig.yaml)
 
-connection (environment variables):
+connection (environment variables; not used by validate, which is offline):
   UNIFIG_HOST      Controller host or base URL, e.g. https://192.168.1.1
   UNIFIG_API_KEY   Controller API key
   UNIFIG_INSECURE  set to true to skip TLS certificate verification
@@ -32,19 +35,45 @@ connection (environment variables):
 // site is fixed: a config tree manages a single Controller, single site.
 const site = "default"
 
+// errUsage means the command line itself was wrong, which earns the usage
+// text rather than a one-line error — the operator needs the whole menu.
+var errUsage = errors.New("bad usage")
+
 // Run executes one unifig invocation and returns its process exit code:
 // 0 on success, 1 on any error. Exit code 2 stays reserved for plan's
 // "changes pending".
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 || args[0] != "export" {
+	err := dispatch(ctx, args, stdout)
+	switch {
+	case errors.Is(err, errUsage):
 		_, _ = fmt.Fprint(stderr, usage)
 		return 1
-	}
-	if err := runExport(ctx, stdout); err != nil {
+	case err != nil:
 		_, _ = fmt.Fprintf(stderr, "unifig: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+func dispatch(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return errUsage
+	}
+	verb, rest := args[0], args[1:]
+	switch verb {
+	case "export":
+		if len(rest) != 0 {
+			return errUsage
+		}
+		return runExport(ctx, stdout)
+	case "validate":
+		if len(rest) > 1 {
+			return errUsage
+		}
+		return runValidate(rest, stdout)
+	default:
+		return errUsage
+	}
 }
 
 // connection holds Controller connection config. It is read from the
@@ -84,7 +113,22 @@ func runExport(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("exporting networks: %w", err)
 	}
-	return export.WriteYAML(stdout, cfg)
+	return config.WriteYAML(stdout, cfg)
+}
+
+// runValidate is config.Load and nothing else. That is the point: validate's
+// promise is that a file it accepts is a file the other verbs can load, and
+// the only way to keep that promise is for it to be the very same call.
+func runValidate(args []string, stdout io.Writer) error {
+	path := config.DefaultPath
+	if len(args) == 1 {
+		path = args[0]
+	}
+	if _, err := config.Load(path); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "%s is valid\n", path)
+	return nil
 }
 
 func connect(conn connection) (unifi.Client, error) {

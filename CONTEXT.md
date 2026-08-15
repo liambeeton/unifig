@@ -18,6 +18,10 @@ _Avoid_: object, entity
 A fixed-slot or singleton configuration area of the Controller that can only be updated — never created, deleted, or pruned. WAN slots and Encrypted DNS are Settings.
 _Avoid_: resource (for these)
 
+**WLAN**:
+A wireless network (SSID) the Controller broadcasts. A Resource, matched by name, and bound to the Network its clients join — the reference that makes cross-reference validation necessary.
+_Avoid_: SSID (that names the broadcast identifier, not the configured object), wifi network
+
 **Zone**:
 A named group of networks/interfaces in the Controller's zone-based firewall. Custom Zones are Resources; built-in Zones (Internal, External, …) are matchable but never prunable.
 
@@ -49,6 +53,10 @@ _Avoid_: push, sync
 
 **Validate**:
 Offline schema and cross-reference checking of the config files; touches no API.
+
+**Interpolation**:
+Replacing `${ENV_VAR}` references in config values from the environment as the file loads. Values only, never keys; the result is always text; substituted values are never rescanned. This is how secrets stay out of the committed file.
+_Avoid_: substitution, templating (the latter implies logic, of which there is none)
 
 **Export**:
 Generating YAML config from the live Controller state. The brownfield adoption path.

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/liambeeton/unifig/main/schema/unifig.schema.json",
+  "title": "unifig configuration",
+  "description": "Declarative configuration for a UniFi Network application (the Controller). Point your editor at this schema from the top of unifig.yaml:\n\n  # yaml-language-server: $schema=https://raw.githubusercontent.com/liambeeton/unifig/main/schema/unifig.schema.json\n\nAny string value may contain ${ENV_VAR} references, which unifig replaces from the environment when it loads the file. Connection details (Controller host, API key) are not configured here — they live in the environment.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "networks": {
+      "title": "Networks",
+      "description": "LAN networks and VLANs. Matched against the Controller by name; WAN slots are not networks and are configured separately.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/network" }
+    },
+    "wlans": {
+      "title": "WLANs",
+      "description": "Wireless networks (SSIDs). Not reconciled yet — unifig validates this section but does not plan or apply it.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/wlan" }
+    }
+  },
+  "$defs": {
+    "network": {
+      "title": "Network",
+      "description": "A LAN network or VLAN on the Controller.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "title": "Name",
+          "description": "The network's name, as shown in the Controller. This is its natural key: unifig matches on it, so renaming a network here means replacing it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "vlan": {
+          "title": "VLAN ID",
+          "description": "802.1Q VLAN ID. Omit for an untagged network such as the default LAN.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4094
+        },
+        "subnet": {
+          "title": "Subnet",
+          "description": "The gateway address and prefix length in CIDR notation, e.g. 10.20.0.1/24 — the Controller's own convention, so the host part is the gateway rather than the network address.",
+          "type": "string",
+          "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/([0-9]|[12][0-9]|3[0-2])$"
+        }
+      }
+    },
+    "wlan": {
+      "title": "WLAN",
+      "description": "A wireless network (SSID) and the network its clients join.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "network"],
+      "properties": {
+        "name": {
+          "title": "SSID",
+          "description": "The broadcast SSID. This is the WLAN's natural key.",
+          "type": "string",
+          "minLength": 1
+        },
+        "network": {
+          "title": "Network",
+          "description": "The name of the network this WLAN's clients join. Must be the name of a network defined in this file.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
