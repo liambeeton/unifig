@@ -53,9 +53,13 @@ func run(t *testing.T, args ...string) result {
 	t.Setenv("UNIFIG_API_KEY", "unused-by-validate")
 
 	var stdout, stderr strings.Builder
-	code := cli.Run(context.Background(), args, &stdout, &stderr)
+	code := cli.Run(context.Background(), args, noInput, &stdout, &stderr)
 	return result{exitCode: code, stdout: stdout.String(), stderr: stderr.String()}
 }
+
+// noInput is a closed stdin. Nothing these tests run should ever ask the
+// operator a question, so anything that does gets EOF and has to cope.
+var noInput = strings.NewReader("")
 
 // mustPass fails the test unless validate accepted the file, printing what it
 // objected to.
@@ -128,7 +132,7 @@ func TestValidateNeedsNoControllerAndNoConnectionConfig(t *testing.T) {
 	}
 
 	var stdout, stderr strings.Builder
-	if code := cli.Run(context.Background(), []string{"validate", path}, &stdout, &stderr); code != 0 {
+	if code := cli.Run(context.Background(), []string{"validate", path}, noInput, &stdout, &stderr); code != 0 {
 		t.Fatalf("validate exited %d with no connection config, want 0\nstderr: %s", code, stderr.String())
 	}
 }

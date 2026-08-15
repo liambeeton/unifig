@@ -224,6 +224,15 @@ func (r *rig) seedNetwork(t *testing.T, conf map[string]any) {
 	t.Helper()
 	name, _ := conf["name"].(string)
 	r.deleteNetworksNamed(t, name)
+	r.addNetwork(t, conf)
+}
+
+// addNetwork creates a networkconf entry without clearing same-named ones
+// first, which is how a test sets up the live duplicate names that unifig has
+// to refuse to choose between. The Controller allows them; unifig does not.
+func (r *rig) addNetwork(t *testing.T, conf map[string]any) {
+	t.Helper()
+	name, _ := conf["name"].(string)
 
 	body, err := json.Marshal(conf)
 	if err != nil {
@@ -239,23 +248,44 @@ func (r *rig) seedNetwork(t *testing.T, conf map[string]any) {
 
 func (r *rig) deleteNetworksNamed(t *testing.T, name string) {
 	t.Helper()
+	for _, n := range r.networksNamed(t, name) {
+		id, _ := n["_id"].(string)
+		del := r.controllerDo(t, http.MethodDelete, "/api/s/default/rest/networkconf/"+id, nil)
+		del.Body.Close()
+	}
+}
+
+// liveNetwork reads one network back off the Controller as the raw JSON the
+// Controller stores, which is how a test checks what an apply actually did.
+// Reading it through unifig would only prove unifig agrees with itself.
+func (r *rig) liveNetwork(t *testing.T, name string) map[string]any {
+	t.Helper()
+	found := r.networksNamed(t, name)
+	if len(found) != 1 {
+		t.Fatalf("the Controller has %d networks named %q, want exactly 1", len(found), name)
+	}
+	return found[0]
+}
+
+func (r *rig) networksNamed(t *testing.T, name string) []map[string]any {
+	t.Helper()
 	resp := r.controllerDo(t, http.MethodGet, "/api/s/default/rest/networkconf", nil)
 	defer resp.Body.Close()
+
 	var list struct {
-		Data []struct {
-			ID   string `json:"_id"`
-			Name string `json:"name"`
-		} `json:"data"`
+		Data []map[string]any `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 		t.Fatalf("listing networks: %v", err)
 	}
+
+	var found []map[string]any
 	for _, n := range list.Data {
-		if n.Name == name {
-			del := r.controllerDo(t, http.MethodDelete, "/api/s/default/rest/networkconf/"+n.ID, nil)
-			del.Body.Close()
+		if n["name"] == name {
+			found = append(found, n)
 		}
 	}
+	return found
 }
 
 func (r *rig) controllerDo(t *testing.T, method, path string, body io.Reader) *http.Response {
@@ -280,9 +310,18 @@ type result struct {
 	Stderr   []byte
 }
 
-// runUnifig executes the real unifig binary with a clean environment. extraEnv
-// entries override the rig defaults, and setting a variable to "" removes it.
+// runUnifig executes the real unifig binary with a clean environment and
+// nothing on stdin. extraEnv entries override the rig defaults, and setting a
+// variable to "" removes it.
 func (r *rig) runUnifig(t *testing.T, args []string, extraEnv map[string]string) result {
+	t.Helper()
+	return r.runUnifigWithInput(t, args, extraEnv, "")
+}
+
+// runUnifigWithInput is runUnifig for a verb that asks the operator something.
+// stdin is a closed pipe carrying exactly what the operator typed, so an empty
+// string is the operator who answered nothing at all.
+func (r *rig) runUnifigWithInput(t *testing.T, args []string, extraEnv map[string]string, stdin string) result {
 	t.Helper()
 	env := map[string]string{
 		"PATH":            os.Getenv("PATH"),
@@ -304,6 +343,7 @@ func (r *rig) runUnifig(t *testing.T, args []string, extraEnv map[string]string)
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	var stdout, stderr bytes.Buffer
+	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
