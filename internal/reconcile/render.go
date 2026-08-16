@@ -19,7 +19,7 @@ func (p Plan) Write(out io.Writer) error {
 	for _, change := range p.Changes {
 		// The mark leads each line so a long plan can be skimmed down the
 		// left margin without reading a word of it.
-		fmt.Fprintf(&b, "  %s %s %q\n", actions[change.Action].mark, change.Resource, change.Name)
+		fmt.Fprintf(&b, "  %s %s %q\n", actions[change.Action].mark, change.Kind, change.Name)
 		width := change.fieldWidth()
 		for _, field := range change.Fields {
 			fmt.Fprintf(&b, "      %-*s %s\n", width, field.Name+":", change.render(field))
@@ -28,6 +28,13 @@ func (p Plan) Write(out io.Writer) error {
 				// to the field above it rather than as another field.
 				fmt.Fprintf(&b, "      %-*s %s\n", width, "", field.Note)
 			}
+		}
+		// A Risky change says what it risks, under its fields and marked with
+		// its own character, because an operator about to approve a plan should
+		// not have to know which kinds are the dangerous ones. Apply asks about
+		// this change on its own, and this is where that stops being a surprise.
+		if change.Risk != "" {
+			fmt.Fprintf(&b, "      ! %s\n", change.Risk)
 		}
 		b.WriteString("\n")
 	}
@@ -48,6 +55,10 @@ func (p Plan) Write(out io.Writer) error {
 // in the output — a field is in a change only because it is changing, so the
 // entry says the passphrase is being replaced, and the null says unifig will
 // not be the thing that writes it into a build log.
+//
+// A Risky change carries `"risk"` with the same sentence the prose plan prints,
+// so a pipeline can gate on the changes that can cut a site off the internet
+// without keeping its own list of which kinds those are.
 func (p Plan) WriteJSON(out io.Writer) error {
 	if p.Changes == nil {
 		p.Changes = []Change{}
@@ -55,6 +66,18 @@ func (p Plan) WriteJSON(out io.Writer) error {
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(p)
+}
+
+// Summary is the change as a single line — its mark, its kind and its name —
+// the way the plan's own heading line reads.
+//
+// It is exported because a change gets talked about outside a plan: apply says
+// which ones it did not reach, and the command layer asks the operator about a
+// Risky one by name. All three have to be recognisably the same change, and the
+// way to guarantee that is for there to be one place that says what a change
+// looks like.
+func (c Change) Summary() string {
+	return fmt.Sprintf("%s %s %q", actions[c.Action].mark, c.Kind, c.Name)
 }
 
 // fieldWidth is how wide the field-name column has to be for this change's

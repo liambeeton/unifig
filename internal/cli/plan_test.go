@@ -109,6 +109,26 @@ func TestPlanAndApplyAcceptPrune(t *testing.T) {
 	}
 }
 
+// --allow-risky answers a question only apply asks. Plan changes nothing, so
+// accepting it there would promise an approval that applied to nothing.
+func TestAllowRiskyIsApplysFlagAlone(t *testing.T) {
+	if res := run(t, "plan", "--allow-risky"); res.exitCode != 1 {
+		t.Errorf("plan --allow-risky exited %d, want 1", res.exitCode)
+	}
+	for _, args := range [][]string{{"export", "--allow-risky"}, {"validate", "--allow-risky"}} {
+		if res := run(t, args...); res.exitCode != 1 {
+			t.Errorf("%v exited %d, want 1", args, res.exitCode)
+		}
+	}
+
+	// That apply does accept it is proved by what happens next: the config error
+	// is a thing only a verb that got past its own flags can report.
+	res := run(t, "apply", "--allow-risky", writeConfig(t, brokenConfig))
+	if !strings.Contains(res.stderr, "networks[0].subnet") {
+		t.Errorf("apply --allow-risky never got as far as reading the config, got: %s", res.stderr)
+	}
+}
+
 func TestPlanWithTooManyFilesPrintsUsage(t *testing.T) {
 	res := run(t, "plan", "one.yaml", "two.yaml")
 
@@ -123,7 +143,10 @@ func TestPlanWithTooManyFilesPrintsUsage(t *testing.T) {
 func TestUsageListsEveryVerbAndExitCode(t *testing.T) {
 	res := run(t, "nonsense")
 
-	for _, fragment := range []string{"plan", "apply", "export", "validate", "--json", "--auto-approve", "--prune", "2"} {
+	for _, fragment := range []string{
+		"plan", "apply", "export", "validate",
+		"--json", "--auto-approve", "--allow-risky", "--prune", "2",
+	} {
 		if !strings.Contains(res.stderr, fragment) {
 			t.Errorf("usage should mention %q, got:\n%s", fragment, res.stderr)
 		}

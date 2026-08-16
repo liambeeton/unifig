@@ -134,6 +134,18 @@ func describe(invalid *jsonschema.ValidationError, doc document) []Problem {
 		}
 		return []Problem{{Line: at.line, Path: at.path, Message: text}}
 
+	case *kind.Enum:
+		// A closed set of values, so the message is the set: an operator who
+		// mistyped one needs to see what was on offer, and there is no better
+		// place to learn it than the complaint itself. The value is quoted for
+		// the same reason a pattern failure quotes one, and withheld for a
+		// secret for the same reason too.
+		text := "must be " + orJoin(k.Want)
+		if !secretFields[fieldShape(at.path)] {
+			text = fmt.Sprintf("%s %s", literal(k.Got), text)
+		}
+		return []Problem{{Line: at.line, Path: at.path, Message: text}}
+
 	case *kind.MinLength:
 		if k.Want == 1 {
 			return []Problem{{Line: at.line, Path: at.path, Message: "must not be empty"}}
@@ -168,6 +180,9 @@ func describe(invalid *jsonschema.ValidationError, doc document) []Problem {
 var patternHints = map[string]string{
 	"networks.subnet":  "a gateway address and prefix length, e.g. 10.20.0.1/24",
 	"wlans.passphrase": "printable ASCII only — no accented letters, tabs or emoji",
+	"wan.slot":         "the Controller's own name for an uplink, such as WAN, WAN2 or WAN_LTE_FAILOVER",
+	"wan.username":     "the username as the ISP issued it, with no quotes or spaces",
+	"wan.password":     "no quotes or spaces — the Controller refuses them",
 }
 
 // secretFields are the fields whose value must never appear in a message,
@@ -180,6 +195,30 @@ var patternHints = map[string]string{
 // little detail from one message, while a secret left out of it is printed.
 var secretFields = map[string]bool{
 	"wlans.passphrase": true,
+	"wan.password":     true,
+}
+
+// orJoin lists the values a closed field accepts the way they would be read
+// aloud: `"dhcp", "pppoe" or "disabled"`.
+func orJoin(values []any) string {
+	literals := make([]string, 0, len(values))
+	for _, value := range values {
+		literals = append(literals, literal(value))
+	}
+	if len(literals) < 2 {
+		return strings.Join(literals, "")
+	}
+	return strings.Join(literals[:len(literals)-1], ", ") + " or " + literals[len(literals)-1]
+}
+
+// literal renders a value as the operator would have typed it: quoted for text,
+// bare for anything else, so a message about a number does not invent quotes
+// around it.
+func literal(value any) string {
+	if text, ok := value.(string); ok {
+		return fmt.Sprintf("%q", text)
+	}
+	return fmt.Sprint(value)
 }
 
 var arrayIndex = regexp.MustCompile(`\[\d+\]`)

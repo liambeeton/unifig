@@ -49,10 +49,18 @@ func TestRedactReplacesEveryPassphraseWithAReferenceToTheVariableItNames(t *test
 // The config handed in is the one the caller may still want to write with
 // --with-secrets, so redaction must not reach back into it.
 func TestRedactLeavesTheConfigItWasGivenAlone(t *testing.T) {
-	original := config.Config{WLANs: []config.WLAN{wlan("Home", "correct horse battery")}}
+	original := config.Config{
+		WLANs: []config.WLAN{wlan("Home", "correct horse battery")},
+		WAN:   []config.WANSlot{{Slot: "WAN", Type: "pppoe", Password: "the-isp-password"}},
+	}
 
-	if _, _ = export.Redact(original); original.WLANs[0].Passphrase != "correct horse battery" {
+	_, _ = export.Redact(original)
+
+	if original.WLANs[0].Passphrase != "correct horse battery" {
 		t.Errorf("Redact rewrote its argument: %+v", original.WLANs[0])
+	}
+	if original.WAN[0].Password != "the-isp-password" {
+		t.Errorf("Redact rewrote its argument: %+v", original.WAN[0])
 	}
 }
 
@@ -181,15 +189,86 @@ func TestNothingLeftOutMeansNoOmissionNotice(t *testing.T) {
 	}
 }
 
+// A PPPoE password is a secret on the same terms as a passphrase, and the
+// variable is named after the slot because that is what an operator would have
+// called it themselves.
+func TestRedactReplacesAPPPoEPasswordWithAReferenceNamedAfterItsSlot(t *testing.T) {
+	redacted, vars := export.Redact(config.Config{WAN: []config.WANSlot{
+		{Slot: "WAN", Type: "pppoe", Username: "isp-user", Password: "the-isp-password"},
+		{Slot: "WAN2", Type: "dhcp"},
+	}})
+
+	if len(vars) != 1 || vars[0] != "UNIFIG_WAN_PASSWORD" {
+		t.Fatalf("redacted %v, want just UNIFIG_WAN_PASSWORD", vars)
+	}
+	if got := redacted.WAN[0].Password; got != "${UNIFIG_WAN_PASSWORD}" {
+		t.Errorf("wan[0].password = %q, want a reference to UNIFIG_WAN_PASSWORD", got)
+	}
+	// The username is not a secret, and a config missing it would not describe
+	// the uplink at all.
+	if redacted.WAN[0].Username != "isp-user" || redacted.WAN[0].Type != "pppoe" {
+		t.Errorf("redaction changed how the slot connects: %+v", redacted.WAN[0])
+	}
+}
+
+func TestEverySecretInOneFileGetsItsOwnVariable(t *testing.T) {
+	_, vars := export.Redact(config.Config{
+		WLANs: []config.WLAN{wlan("Home", "correct horse battery")},
+		WAN: []config.WANSlot{
+			{Slot: "WAN", Type: "pppoe", Password: "the-isp-password"},
+			{Slot: "WAN2", Type: "pppoe", Password: "the-backup-password"},
+		},
+	})
+
+	want := []string{"UNIFIG_WLAN_HOME_PASSPHRASE", "UNIFIG_WAN_PASSWORD", "UNIFIG_WAN2_PASSWORD"}
+	if len(vars) != len(want) {
+		t.Fatalf("redacted %d secrets, want %d: %v", len(vars), len(want), vars)
+	}
+	for i, name := range want {
+		if vars[i] != name {
+			t.Errorf("vars[%d] = %q, want %q", i, vars[i], name)
+		}
+	}
+}
+
+// A WAN slot unifig can only name is in the file so the operator can see it
+// exists, and the notice is what stops that reading as "unifig manages this".
+func TestThePartialSlotNoticeNamesTheSlotsItCouldOnlyName(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WritePartialWANSlots(&notice, []string{"WAN", "WAN2"}); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+
+	written := notice.String()
+	for _, fragment := range []string{`"WAN"`, `"WAN2"`, "2 WAN slots", "does not model"} {
+		if !strings.Contains(written, fragment) {
+			t.Errorf("the notice should mention %q, got:\n%s", fragment, written)
+		}
+	}
+}
+
+func TestNoPartialSlotsMeansNoNotice(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WritePartialWANSlots(&notice, nil); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+	if notice.Len() != 0 {
+		t.Errorf("an export that described every slot should say nothing, got:\n%s", notice.String())
+	}
+}
+
 // The whole point, stated on its own: after redaction the secret is not in the
 // document anywhere.
-func TestNoPassphraseSurvivesRedaction(t *testing.T) {
+func TestNoSecretSurvivesRedaction(t *testing.T) {
 	const secret = "correct horse battery"
 
-	redacted, _ := export.Redact(config.Config{WLANs: []config.WLAN{
-		wlan("Home", secret),
-		wlan("Home Guest", secret),
-	}})
+	redacted, _ := export.Redact(config.Config{
+		WLANs: []config.WLAN{
+			wlan("Home", secret),
+			wlan("Home Guest", secret),
+		},
+		WAN: []config.WANSlot{{Slot: "WAN", Type: "pppoe", Password: secret}},
+	})
 
 	var written strings.Builder
 	if err := config.WriteYAML(&written, redacted); err != nil {

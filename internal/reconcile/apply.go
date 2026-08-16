@@ -37,15 +37,13 @@ func (p Plan) Apply(ctx context.Context, client unifi.Client, site string, out i
 			// to act on without going and looking.
 			_, _ = fmt.Fprintf(out, "\nApplied %s. These were not applied:\n", count(i, len(p.Changes)))
 			for _, skipped := range p.Changes[i:] {
-				_, _ = fmt.Fprintf(out, "  %s %s %q\n",
-					actions[skipped.Action].mark, skipped.Resource, skipped.Name)
+				_, _ = fmt.Fprintf(out, "  %s\n", skipped.Summary())
 			}
 			_, _ = fmt.Fprint(out,
 				"\nNothing was rolled back; apply is safe to run again once this is fixed.\n")
-			return fmt.Errorf("%s %s %q: %w", change.Action, change.Resource, change.Name, err)
+			return fmt.Errorf("%s %s %q: %w", change.Action, change.Kind, change.Name, err)
 		}
-		_, _ = fmt.Fprintf(out, "  %s %s %q %s\n",
-			actions[change.Action].mark, change.Resource, change.Name, actions[change.Action].past)
+		_, _ = fmt.Fprintf(out, "  %s %s\n", change.Summary(), actions[change.Action].past)
 	}
 
 	_, _ = fmt.Fprintf(out, "\nApplied %s.\n", count(len(p.Changes), len(p.Changes)))

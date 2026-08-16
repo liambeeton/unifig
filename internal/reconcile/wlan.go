@@ -120,10 +120,10 @@ func fromLiveWLAN(wlan unifi.WLAN, bound bindings) config.WLAN {
 // createWLAN is the Change for a WLAN the Controller does not have.
 func createWLAN(desired config.WLAN, bound bindings) Change {
 	return Change{
-		Action:   Create,
-		Resource: WLAN,
-		Name:     desired.Name,
-		Fields:   setWLANFields(desired),
+		Action: Create,
+		Kind:   WLAN,
+		Name:   desired.Name,
+		Fields: setWLANFields(desired),
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// Read at the moment of writing rather than the moment of
 			// planning: the network this WLAN joins may have been created by a
@@ -152,10 +152,10 @@ func updateWLAN(desired config.WLAN, live unifi.WLAN, bound bindings) (Change, b
 	}
 
 	return Change{
-		Action:   Update,
-		Resource: WLAN,
-		Name:     desired.Name,
-		Fields:   fields,
+		Action: Update,
+		Kind:   WLAN,
+		Name:   desired.Name,
+		Fields: fields,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			networkID, err := bound.networkID(desired.Network)
 			if err != nil {
@@ -197,10 +197,10 @@ func pruneWLANs(live map[string]unifi.WLAN, named map[string]bool, bound binding
 func deleteWLAN(live unifi.WLAN, bound bindings) Change {
 	current := fromLiveWLAN(live, bound)
 	return Change{
-		Action:   Delete,
-		Resource: WLAN,
-		Name:     live.Name,
-		Fields:   []Field{{Name: "network", From: current.Network}},
+		Action: Delete,
+		Kind:   WLAN,
+		Name:   live.Name,
+		Fields: []Field{{Name: "network", From: current.Network}},
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			return client.DeleteWLAN(ctx, site, live.ID)
 		},

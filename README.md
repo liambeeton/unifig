@@ -2,7 +2,7 @@
 
 Declarative configuration for a UniFi Network application (the Controller) on a UniFi Dream Router, from human-readable YAML. See `CONTEXT.md` for the domain glossary and [issue #1](https://github.com/liambeeton/unifig/issues/1) for the v1 spec.
 
-Current state: networks and WLANs reconcile end to end — `unifig plan` and `unifig apply`, with WLAN passphrases supplied by `${ENV_VAR}` — alongside `unifig export` to adopt a configured Controller and `unifig validate` to check a config file offline.
+Current state: networks, WLANs and WAN slots reconcile end to end — `unifig plan` and `unifig apply`, with WLAN passphrases and PPPoE credentials supplied by `${ENV_VAR}` — alongside `unifig export` to adopt a configured Controller and `unifig validate` to check a config file offline.
 
 ## Usage
 
@@ -29,7 +29,7 @@ On the UDR: UniFi OS → Control Plane → Admins & Users → your admin → Cre
 
 One `unifig.yaml` describes the Controller's configuration. `examples/unifig.yaml` is a working starting point; `schema/unifig.schema.json` is the contract.
 
-Sections reconcile as they land. `networks` and `wlans` are the sections every verb handles today; the rest of the v1 catalogue — WAN slots, Encrypted DNS, firewall Zones and Policies, port forwards, DHCP reservations — follows.
+Sections reconcile as they land. `networks`, `wlans` and `wan` are the sections every verb handles today; the rest of the v1 catalogue — Encrypted DNS, firewall Zones and Policies, port forwards, DHCP reservations — follows.
 
 A WLAN names the network its clients join, and that reference is checked offline:
 
@@ -43,7 +43,23 @@ wlans:
   - name: Home IoT
     network: IoT                       # must be a network defined above
     passphrase: ${WIFI_IOT_PASSPHRASE} # never the passphrase itself — see below
+
+wan:
+  - slot: WAN                          # the router's own name for the uplink
+    type: pppoe
+    username: ${WAN_PPPOE_USERNAME}
+    password: ${WAN_PPPOE_PASSWORD}
 ```
+
+### WAN slots are Settings, not Resources
+
+Your router has the uplinks it has. So `wan` entries are matched by `slot` — `WAN`, `WAN2`, `WAN_LTE_FAILOVER`, the Controller's own names, whatever you renamed the connection to in the UI — and unifig only ever **updates** one:
+
+- **It never creates a slot.** Naming a slot your Controller does not have is an error that lists the ones it does, not a request to invent an uplink.
+- **It never deletes or prunes one.** A slot your file leaves out is one unifig does not manage; `--prune` does not see it.
+- **Every WAN change is confirmed on its own** before it is applied — see [Risky changes](#risky-changes).
+
+`type` is `dhcp`, `pppoe` or `disabled`. Static addressing, DS-Lite and MAP-E are not modelled yet, so a slot configured that way is left to the Controller entirely: `export` writes it as `- slot: WAN` and says so, and unifig changes nothing about how it connects.
 
 Every verb that reads config takes an optional file argument, defaulting to `./unifig.yaml`:
 
@@ -94,7 +110,9 @@ Interpolation keeps a secret out of the file. What keeps it out of everything el
 - **Validation messages never print one.** A passphrase outside the Controller's own 8-to-64-character bound is reported as a length, never as the value.
 - **Export redacts by default.** See [Export](#export).
 
-Where a secret does have to be readable, it is because reconcile could not work otherwise: the Controller hands a WLAN's passphrase back in the clear, which is what lets unifig tell "already correct" from "needs rotating" with no state file (`docs/adr/0007-secrets-read-back-so-they-diff-normally.md`).
+The modelled secrets today are a WLAN's `passphrase` and a WAN slot's PPPoE `password`, and both behave identically.
+
+Where a secret does have to be readable, it is because reconcile could not work otherwise: the Controller hands a WLAN's passphrase and a slot's PPPoE password back in the clear, which is what lets unifig tell "already correct" from "needs rotating" with no state file (`docs/adr/0007-secrets-read-back-so-they-diff-normally.md`).
 
 ## Plan and apply
 
@@ -121,6 +139,30 @@ Plan: 2 to create, 1 to update.
 ./unifig apply                 # prints the plan, then asks
 ./unifig apply --auto-approve  # for a pipeline, or an operator who has already looked
 ```
+
+### Risky changes
+
+A change that can cut this site off the internet — anything touching a WAN slot — is confirmed **on its own**, even under `--auto-approve`. The plan says so before you approve anything:
+
+```
+  ~ wan "WAN"
+      type:     dhcp -> pppoe
+      username: (none) -> isp-user
+      password: (hidden)
+      ! this is the site's internet uplink, and changing it can cut the connection until the new settings work
+```
+
+and apply asks about that one change before making it:
+
+```
+Risky change: ~ wan "WAN"
+  this is the site's internet uplink, and changing it can cut the connection until the new settings work.
+Apply it? [y/N]
+```
+
+Saying no skips that change and applies the rest — the question was about that change, not about your file. Nothing is ever hard-blocked: `--allow-risky` says yes in advance, which is what an unattended pipeline needs (`./unifig apply --auto-approve --allow-risky`). Without it, an apply with nobody to answer leaves the Risky change unapplied and says so, and the next `plan` still exits 2.
+
+`plan --json` carries the same sentence as `"risk"` on the change, so a pipeline can gate on the dangerous ones without keeping a list of which kinds those are. The reasoning is in `docs/adr/0009-risky-changes-are-confirmed-one-at-a-time.md`.
 
 There is no state file. Every run diffs your file against the live Controller directly (see `docs/adr/0001-stateless-reconcile.md`), which means:
 
@@ -174,7 +216,7 @@ Four things `--prune` will not do:
 
 - **Reach a section your file doesn't have.** A file with no `wlans:` key says nothing about WLANs, so prune deletes none of them — the same rule as an omitted field, one level up (see `docs/adr/0006-prune-reaches-only-the-sections-the-file-has.md`). Write `wlans: []` to say there should be none; that is a statement, and prune acts on it.
 - **Delete what the Controller says it owns.** The built-in Default network is marked undeletable on the Controller itself, and unifig reads that marker rather than keeping a list of names (see `docs/adr/0005-builtin-exemption-from-the-controller.md`). It is never pruned, whether or not your file names it.
-- **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, and prune does not see them. Nor does it see a WLAN attached to something that isn't one of your LANs — unifig has no name to write for it, so it can't be exported either, and the two go together on purpose: a WLAN adoption couldn't describe is not one prune may delete.
+- **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, so unifig updates them and never deletes one, whether or not your file names them. Nor does prune see a WLAN attached to something that isn't one of your LANs — unifig has no name to write for it, so it can't be exported either, and the two go together on purpose: a WLAN adoption couldn't describe is not one prune may delete.
 - **Persist.** The flag applies to the run you passed it to. There is no state file, so nothing remembers it.
 
 ## Export
@@ -210,6 +252,15 @@ no network for unifig to name in the config. It manages nothing about them, and
 `--prune` will not delete them.
 ```
 
+A WAN slot that connects in a way unifig does not model gets the other half of the same promise: the slot is in the file so you can see it exists, with nothing under it and a notice saying why.
+
+```
+Wrote 1 WAN slot with nothing but the slot: "WAN2".
+Each connects in a way unifig does not model — static addressing, for example —
+so there is nothing for the config to say about it. unifig will match the slot
+and change nothing about how it connects.
+```
+
 ### In a pipeline
 
 `plan` distinguishes its outcomes in its exit code, so a CI job or a git hook can gate on drift without reading the output:
@@ -227,7 +278,7 @@ no network for unifig to name in the config. It manages nothing about them, and
   "changes": [
     {
       "action": "update",
-      "resource": "network",
+      "kind": "network",
       "name": "IoT",
       "fields": [
         { "name": "subnet", "from": "10.20.0.1/24", "to": "192.168.20.1/24" }
@@ -235,15 +286,27 @@ no network for unifig to name in the config. It manages nothing about them, and
     },
     {
       "action": "update",
-      "resource": "wlan",
+      "kind": "wlan",
       "name": "Home IoT",
       "fields": [
         { "name": "passphrase", "from": null, "to": null, "secret": true }
       ]
+    },
+    {
+      "action": "update",
+      "kind": "wan",
+      "name": "WAN",
+      "fields": [
+        { "name": "type", "from": "dhcp", "to": "pppoe" },
+        { "name": "password", "from": null, "to": null, "secret": true }
+      ],
+      "risk": "this is the site's internet uplink, and changing it can cut the connection until the new settings work"
     }
   ]
 }
 ```
+
+`kind` is the managed type — `network`, `wlan`, `wan` — covering both the Resources unifig creates and deletes and the Settings it only updates. `risk` is present only on a change that needs individual confirmation.
 
 Changes are listed in the order apply will run them, so a consumer reading the array is reading the sequence.
 
@@ -261,6 +324,8 @@ make run ARGS="export"   # run against a live Controller, credentials from the e
 Requirements: Go for `make check`, plus Docker for `make e2e`. `make` installs its own pinned golangci-lint (which carries gofumpt) into `bin/`; the pin lives in the Makefile.
 
 Tests drive the whole tool at the process boundary against a real dockerized Controller (see `docs/adr/0003-apikey-auth-os-gate.md` for the rig design). That suite is `make e2e`; `make test` runs everything else, skipping it. The Controller version pin lives in `e2e/rig_test.go` (`defaultControllerImage`) and in the CI matrix.
+
+WAN slots are the one thing that container cannot stand in for — with no gateway it has no WAN entries at all — so those tests run against recorded Controller responses served at the same base URL, through the same API-key header, to the same real binary (`e2e/replay_test.go`). The recordings live in `e2e/testdata/udr/`, along with the one command that re-records them from a real router; `docs/adr/0008-wan-slots-replay-recorded-responses.md` explains the design and what it does not yet prove.
 
 Validate's tests are the exception, and deliberately so: it is offline by design, and requiring Docker to prove no Controller is needed would be an odd way to demonstrate it. They sit at the highest Docker-free seam instead — `cli.Run`, driven from an external test package in `internal/cli/` so they cannot reach past it.
 

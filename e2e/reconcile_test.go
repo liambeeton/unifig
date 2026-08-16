@@ -285,10 +285,10 @@ func TestPlanJSONDescribesTheSameChangesMachineReadably(t *testing.T) {
 
 	var out struct {
 		Changes []struct {
-			Action   string `json:"action"`
-			Resource string `json:"resource"`
-			Name     string `json:"name"`
-			Fields   []struct {
+			Action string `json:"action"`
+			Kind   string `json:"kind"`
+			Name   string `json:"name"`
+			Fields []struct {
 				Name string `json:"name"`
 				From any    `json:"from"`
 				To   any    `json:"to"`
@@ -303,7 +303,7 @@ func TestPlanJSONDescribesTheSameChangesMachineReadably(t *testing.T) {
 		t.Fatalf("plan reported %d changes, want 1\nstdout: %s", len(out.Changes), res.Stdout)
 	}
 	change := out.Changes[0]
-	if change.Action != "create" || change.Resource != "network" || change.Name != "Plan JSON" {
+	if change.Action != "create" || change.Kind != "network" || change.Name != "Plan JSON" {
 		t.Errorf("change = %+v, want a create of network %q", change, "Plan JSON")
 	}
 
@@ -837,10 +837,10 @@ func TestPlanJSONDescribesADeletionAsALossNotAMove(t *testing.T) {
 
 	var out struct {
 		Changes []struct {
-			Action   string `json:"action"`
-			Resource string `json:"resource"`
-			Name     string `json:"name"`
-			Fields   []struct {
+			Action string `json:"action"`
+			Kind   string `json:"kind"`
+			Name   string `json:"name"`
+			Fields []struct {
 				Name string `json:"name"`
 				From any    `json:"from"`
 				To   any    `json:"to"`
@@ -855,7 +855,7 @@ func TestPlanJSONDescribesADeletionAsALossNotAMove(t *testing.T) {
 	}
 
 	change := out.Changes[0]
-	if change.Action != "delete" || change.Resource != "network" || change.Name != "Prune JSON" {
+	if change.Action != "delete" || change.Kind != "network" || change.Name != "Prune JSON" {
 		t.Fatalf("change = %+v, want a delete of network %q", change, "Prune JSON")
 	}
 	for _, field := range change.Fields {

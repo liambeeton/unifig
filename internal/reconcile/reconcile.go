@@ -26,6 +26,17 @@
 //     section the file leaves out entirely is out of prune's reach (ADR-0006).
 //     This is the same rule as the one above, one level up: the file states
 //     what unifig manages, not what may exist.
+//
+// Two kinds of thing go through all of that, and only one of them has the
+// lifecycle those rules describe. A Resource is created, updated and — on
+// request — deleted. A Setting is a fixed slot the Controller always has, such
+// as a WAN slot: it is only ever updated, no planner here can bring one into
+// existence, and prune cannot see one. Both reach a plan as a Change, because
+// what an operator reads and approves is the same either way.
+//
+// One thing sits above both: a Change that can cut the site off the internet
+// carries the sentence that says so (Change.Risk), which is what makes the
+// command layer stop and ask about that change on its own (ADR-0009).
 package reconcile
 
 import (
@@ -75,35 +86,48 @@ var actions = map[Action]struct {
 	Delete: {order: 2, mark: "-", past: "deleted"},
 }
 
-// Resource is a managed type, as it appears in a plan.
+// Kind is a managed type, as it appears in a plan.
+//
+// It covers both of the things unifig manages — Resources, which have a full
+// create/update/delete lifecycle, and Settings, which are fixed slots that can
+// only be updated — because a plan is a list of changes and a change to either
+// reads the same way. Which one a kind is shows up in what its planner can
+// produce: nothing plans a WAN slot into existence.
 //
 // It is a named type rather than a bare string for the same reason Action is:
 // everything the engine needs to know about a type beyond its name lives in one
 // table keyed by it, and a typo in a literal would otherwise be a silent
 // mis-sort rather than a compile error.
-type Resource string
+type Kind string
 
 const (
-	Network Resource = "network"
-	WLAN    Resource = "wlan"
+	Network Kind = "network"
+	WLAN    Kind = "wlan"
+	WANSlot Kind = "wan"
 )
 
-// resources is what the rest of the package needs to know about a managed type:
-// how far it sits from the things it references, and how to name it to an
-// operator in the singular and the plural.
+// kinds is what the rest of the package needs to know about a managed type:
+// where a change to it sits in a plan, and how to name it to an operator in the
+// singular and the plural.
 //
-// The distance is what makes a plan dependency-ordered — a network references
-// nothing, a WLAN references the network its clients join — and apply executes a
-// plan in the order it printed, so the two cannot disagree. The direction flips
-// for deletions: building goes from the ground up, and dismantling goes the
-// other way, because the Controller will not let go of something still
-// referenced.
-var resources = map[Resource]struct {
-	depends   int
+// The order is not cosmetic, because apply executes a plan in the order it
+// printed and the two therefore cannot disagree. Among Resources it is
+// dependency distance — a network references nothing, a WLAN references the
+// network its clients join — so building goes from the ground up. The direction
+// flips for deletions, because the Controller will not let go of something
+// still referenced.
+//
+// A WAN slot references nothing and nothing references it, so its place is
+// decided by its risk instead: it goes after the rest, which means an apply
+// that fails earlier has not touched the uplink, and one that gets there has
+// already done all the safe work.
+var kinds = map[Kind]struct {
+	order     int
 	one, many string
 }{
-	Network: {depends: 0, one: "network", many: "networks"},
-	WLAN:    {depends: 1, one: "WLAN", many: "WLANs"},
+	Network: {order: 0, one: "network", many: "networks"},
+	WLAN:    {order: 1, one: "WLAN", many: "WLANs"},
+	WANSlot: {order: 2, one: "WAN slot", many: "WAN slots"},
 }
 
 // Options are the choices a verb makes on the operator's behalf for a whole
@@ -122,16 +146,23 @@ type Plan struct {
 	Changes []Change `json:"changes"`
 }
 
-// Change is one Resource apply would create, update or delete, in the terms an
+// Change is one thing apply would create, update or delete, in the terms an
 // operator reads and a pipeline parses.
 type Change struct {
 	Action Action `json:"action"`
-	// Resource is the managed type, e.g. "network".
-	Resource Resource `json:"resource"`
-	// Name is the Resource's natural key — how unifig matched it, and the
-	// only identity that appears anywhere outside this package.
+	// Kind is the managed type, e.g. "network".
+	Kind Kind `json:"kind"`
+	// Name is how unifig matched this one — a Resource's natural key, a
+	// Setting's slot — and the only identity that appears anywhere outside
+	// this package.
 	Name   string  `json:"name"`
 	Fields []Field `json:"fields"`
+	// Risk is what an operator stands to lose by applying this change, in the
+	// plain words they need to see it coming, and empty for the ordinary
+	// changes that risk nothing. It is the whole of what makes a change Risky:
+	// the plan prints it, apply asks about the change on its own before making
+	// it, and a pipeline reading the JSON can gate on its presence.
+	Risk string `json:"risk,omitempty"`
 
 	// write performs this one change against the Controller.
 	//
@@ -241,8 +272,13 @@ func (b bindings) networkName(id string) string { return b.names[id] }
 func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg config.Config, opts Options) (Plan, error) {
 	// Networks are read whichever sections the config has, because a WLAN's
 	// binding is stated as a network name and stored as a network ID, and
-	// nothing can translate between the two without them.
-	live, err := listNetworks(ctx, client, site)
+	// nothing can translate between the two without them. The WAN slots come
+	// out of the same read (see listNetworkConf).
+	all, err := listNetworkConf(ctx, client, site)
+	if err != nil {
+		return Plan{}, err
+	}
+	live, err := lans(all)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -263,6 +299,13 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 		}
 		changes = append(changes, wlans...)
 	}
+	if cfg.WAN != nil {
+		slots, err := planWANSlots(cfg, all)
+		if err != nil {
+			return Plan{}, err
+		}
+		changes = append(changes, slots...)
+	}
 
 	sortChanges(changes)
 	return Plan{Changes: changes}, nil
@@ -277,15 +320,19 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 // as an operator's freshly exported file planning dirty. There is one answer,
 // and both verbs read it from here.
 //
-// The second return names the WLANs left out because unifig cannot describe
-// them (see listWLANs). Plan says nothing about those — a Resource unifig does
+// The Notices are what the file could not say, so that one which came back
+// short says so. Plan is silent about the same things — something unifig does
 // not manage is not a change, and a plan is a list of changes — but export is
-// the adoption path, and a file that quietly came back short is one an operator
-// should hear about while they are still adopting.
-func Project(ctx context.Context, client unifi.Client, site string) (config.Config, []string, error) {
-	live, err := listNetworks(ctx, client, site)
+// the adoption path, and an operator being told a file describes their
+// Controller should not discover otherwise later.
+func Project(ctx context.Context, client unifi.Client, site string) (config.Config, Notices, error) {
+	all, err := listNetworkConf(ctx, client, site)
 	if err != nil {
-		return config.Config{}, nil, err
+		return config.Config{}, Notices{}, err
+	}
+	live, err := lans(all)
+	if err != nil {
+		return config.Config{}, Notices{}, err
 	}
 	networks := make([]config.Network, 0, len(live))
 	for _, network := range live {
@@ -296,7 +343,7 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 	bound := newBindings(live)
 	liveWLANs, indescribable, err := listWLANs(ctx, client, site, bound)
 	if err != nil {
-		return config.Config{}, nil, err
+		return config.Config{}, Notices{}, err
 	}
 	wlans := make([]config.WLAN, 0, len(liveWLANs))
 	for _, wlan := range liveWLANs {
@@ -304,7 +351,29 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 	}
 	slices.SortFunc(wlans, func(a, b config.WLAN) int { return strings.Compare(a.Name, b.Name) })
 
-	return config.Config{Networks: networks, WLANs: wlans}, indescribable, nil
+	slots, partial, err := projectWANSlots(all)
+	if err != nil {
+		return config.Config{}, Notices{}, err
+	}
+
+	return config.Config{Networks: networks, WLANs: wlans, WAN: slots},
+		Notices{IndescribableWLANs: indescribable, PartialWANSlots: partial}, nil
+}
+
+// Notices are the things export has to say out loud about the config it just
+// wrote, because they are the places where the file is not the whole truth
+// about the Controller.
+//
+// They are not failures and not warnings. Each names something unifig
+// deliberately does not manage, which is also why prune leaves them alone.
+type Notices struct {
+	// IndescribableWLANs names the WLANs left out of the config entirely,
+	// because there is no network unifig manages for them to name (see
+	// listWLANs).
+	IndescribableWLANs []string
+	// PartialWANSlots names the WAN slots written as nothing but a slot,
+	// because the way they connect is not one unifig models.
+	PartialWANSlots []string
 }
 
 // uniquelyNamed reports whether any two live Resources share the name unifig
@@ -317,7 +386,7 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 // Controller's UI. Every duplicate goes into the one message, and the message
 // says the rule rather than just the instance, so an operator can see that the
 // list is the whole job and make that trip to the UI once.
-func uniquelyNamed(resource Resource, names []string) error {
+func uniquelyNamed(kind Kind, names []string) error {
 	counts := make(map[string]int, len(names))
 	for _, name := range names {
 		counts[name]++
@@ -340,7 +409,17 @@ func uniquelyNamed(resource Resource, names []string) error {
 	}
 	return fmt.Errorf(
 		"unifig matches %s on the Controller by name, so every %s needs a name of its own: this site has %s; rename or remove the extras in the Controller's UI, then run again",
-		resources[resource].many, resources[resource].one, andJoin(found))
+		kinds[kind].many, kinds[kind].one, andJoin(found))
+}
+
+// quoted is the same values with quotes around them, for a message that lists
+// what an operator wrote or what the Controller holds.
+func quoted(values []string) []string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, fmt.Sprintf("%q", value))
+	}
+	return quoted
 }
 
 // andJoin joins phrases the way they would be said aloud: "a", "a and b",
@@ -354,21 +433,21 @@ func andJoin(phrases []string) string {
 
 // sortChanges makes plan output depend on what is changing rather than on the
 // order the operator happened to list things in: creates first, then updates,
-// then deletions, each group in dependency order and alphabetical within a
-// type. Two runs against the same Controller and config print byte-identical
-// plans, which is what lets CI diff one against another.
+// then deletions, each group in the order the kinds table gives and
+// alphabetical within a kind. Two runs against the same Controller and config
+// print byte-identical plans, which is what lets CI diff one against another.
 //
-// The dependency ordering is not cosmetic. Apply walks this slice in order, so
-// a network is created before the WLAN that joins it and a WLAN is deleted
-// before the network it was on — which is what lets a config that declares both
-// apply in one pass.
+// None of it is cosmetic. Apply walks this slice in order, so a network is
+// created before the WLAN that joins it, a WLAN is deleted before the network
+// it was on, and the WAN slot that can cut the site off the internet is left
+// until the safe work is done.
 func sortChanges(changes []Change) {
 	slices.SortStableFunc(changes, func(a, b Change) int {
 		if a.Action != b.Action {
 			return actions[a.Action].order - actions[b.Action].order
 		}
-		if a.Resource != b.Resource {
-			distance := resources[a.Resource].depends - resources[b.Resource].depends
+		if a.Kind != b.Kind {
+			distance := kinds[a.Kind].order - kinds[b.Kind].order
 			if a.Action == Delete {
 				return -distance
 			}

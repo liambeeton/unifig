@@ -22,3 +22,18 @@ wlans:
     # the secret lives in your direnv .envrc instead. `unifig export` writes
     # exactly this form.
     passphrase: ${WIFI_IOT_PASSPHRASE}
+
+wan:
+  # A WAN slot is a Setting, not a Resource: the router has the slots it has, so
+  # unifig only ever updates one — it never creates, deletes or prunes a slot.
+  # `slot` is the Controller's own name for the uplink, and how unifig matches
+  # it, whatever you have renamed the connection to in the UI.
+  - slot: WAN
+    type: pppoe
+    username: ${WAN_PPPOE_USERNAME}
+    password: ${WAN_PPPOE_PASSWORD}
+
+  # Naming a slot and nothing else means "this is mine to match, and I am not
+  # managing anything about it" — the same as `- name:` on a network.
+  - slot: WAN2
+

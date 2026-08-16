@@ -36,6 +36,11 @@ commands:
 flags:
   --json            plan only: write the plan as JSON instead of prose
   --auto-approve    apply only: do not ask before changing the Controller
+  --allow-risky     apply only: apply Risky changes — anything that can cut the
+                    site off the internet, such as a WAN slot — without stopping
+                    to ask about each one. Without it, every Risky change is
+                    confirmed on its own, even under --auto-approve, and one
+                    that is refused is skipped while the rest are applied
   --prune           plan and apply: delete Resources the config does not name.
                     Off by default; only sections the config file has are at
                     stake, and objects the Controller marks undeletable, such
@@ -162,8 +167,17 @@ func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
 // runApply shows the plan and then executes it. It always plans first, and
 // always shows what it planned: there is no way to reach the Controller
 // through unifig without the changes having been printed first.
+//
+// There are two approvals, and the second is not a repeat of the first. The
+// plan as a whole is approved once, and --auto-approve is the operator saying
+// they have already looked. A Risky change is then approved on its own, because
+// "yes, apply my config" and "yes, take the internet down while my WAN slot
+// reconnects" are different answers to different questions — which is why
+// --auto-approve does not cover the second one and --allow-risky is its own
+// flag.
 func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	flags, positional, err := splitFlags(args, boolean("auto-approve"), boolean("prune"))
+	flags, positional, err := splitFlags(args,
+		boolean("auto-approve"), boolean("allow-risky"), boolean("prune"))
 	if err != nil {
 		return err
 	}
@@ -183,8 +197,9 @@ func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return nil
 	}
 
+	asking := newPrompt(stdin, stdout)
 	if !flags.has("auto-approve") {
-		approved, err := confirm(stdin, stdout)
+		approved, err := asking.ask("\nApply these changes to the Controller? [y/N] ")
 		if err != nil {
 			return err
 		}
@@ -192,7 +207,56 @@ func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			return errors.New("apply cancelled; the Controller was not changed")
 		}
 	}
+
+	plan, err = approveRisky(asking, plan, flags.has("allow-risky"))
+	if err != nil {
+		return err
+	}
+	if plan.Empty() {
+		_, _ = fmt.Fprint(stdout, "\nNothing left to apply; the Controller was not changed.\n")
+		return nil
+	}
 	return plan.Apply(ctx, client, site, stdout)
+}
+
+// approveRisky asks about each Risky change on its own and returns the plan
+// with the refused ones left out, in the order the rest were already in.
+//
+// Refusing one skips that change rather than cancelling the apply, because the
+// question asked was about that change: an operator who says no to a WAN slot
+// has not withdrawn the VLAN they asked for in the same file. Nothing is ever
+// refused on the operator's behalf — --allow-risky is how a pipeline says yes
+// in advance, and there is no flag or condition that turns a Risky change into
+// one unifig will not make.
+//
+// An unattended apply with no answer to give gets EOF, which reads as no. That
+// is the same rule as the whole-plan confirmation and for the same reason: the
+// alternative is a WAN slot changing because nobody was there to object.
+func approveRisky(asking *prompt, plan reconcile.Plan, allowed bool) (reconcile.Plan, error) {
+	if allowed {
+		return plan, nil
+	}
+
+	kept := make([]reconcile.Change, 0, len(plan.Changes))
+	for _, change := range plan.Changes {
+		if change.Risk == "" {
+			kept = append(kept, change)
+			continue
+		}
+
+		approved, err := asking.ask(fmt.Sprintf(
+			"\nRisky change: %s\n  %s.\nApply it? [y/N] ", change.Summary(), change.Risk))
+		if err != nil {
+			return reconcile.Plan{}, err
+		}
+		if approved {
+			kept = append(kept, change)
+			continue
+		}
+		asking.say("\nLeaving %s unapplied. `--allow-risky` applies Risky changes without asking.\n",
+			change.Summary())
+	}
+	return reconcile.Plan{Changes: kept}, nil
 }
 
 // options turns the flags a verb was given into the engine's terms. Both verbs
@@ -226,13 +290,29 @@ func computePlan(ctx context.Context, path string, opts reconcile.Options) (unif
 	return client, plan, nil
 }
 
-// confirm asks before anything is changed. Only an explicit yes counts:
-// anything else — a bare newline, a typo, or a closed stdin — means no, so an
-// apply that finds itself running unattended without --auto-approve stops
-// rather than guesses.
-func confirm(stdin io.Reader, stdout io.Writer) (bool, error) {
-	_, _ = fmt.Fprint(stdout, "\nApply these changes to the Controller? [y/N] ")
-	answer, err := bufio.NewReader(stdin).ReadString('\n')
+// prompt is the operator at the other end of stdin.
+//
+// It exists as a type for one reason: a run can ask more than one question, and
+// a fresh bufio.Reader per question would buffer whatever came after the first
+// answer and then throw it away, so the second question would read nothing and
+// silently take it for a no. One reader for the whole run is what makes several
+// answers on one stdin work.
+type prompt struct {
+	in  *bufio.Reader
+	out io.Writer
+}
+
+func newPrompt(stdin io.Reader, stdout io.Writer) *prompt {
+	return &prompt{in: bufio.NewReader(stdin), out: stdout}
+}
+
+// ask puts a yes-or-no question before anything is changed. Only an explicit
+// yes counts: anything else — a bare newline, a typo, or a closed stdin — means
+// no, so an apply that finds itself running unattended with nobody to answer
+// stops rather than guesses.
+func (p *prompt) ask(question string) (bool, error) {
+	_, _ = fmt.Fprint(p.out, question)
+	answer, err := p.in.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, fmt.Errorf("reading confirmation: %w", err)
 	}
@@ -243,6 +323,13 @@ func confirm(stdin io.Reader, stdout io.Writer) (bool, error) {
 	default:
 		return false, nil
 	}
+}
+
+// say tells the operator what came of their answer, on the same stream the
+// question was asked on. Half a conversation on one stream and half on another
+// is not a conversation.
+func (p *prompt) say(format string, args ...any) {
+	_, _ = fmt.Fprintf(p.out, format, args...)
 }
 
 // runExport writes the Controller's configuration as config unifig can read
@@ -267,7 +354,7 @@ func runExport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return fmt.Errorf("connecting to Controller at %s: %w", conn.url, err)
 	}
-	cfg, indescribable, err := reconcile.Project(ctx, client, site)
+	cfg, notices, err := reconcile.Project(ctx, client, site)
 	if err != nil {
 		return fmt.Errorf("exporting the Controller's configuration: %w", err)
 	}
@@ -284,12 +371,15 @@ func runExport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return err
 	}
 
-	// Both notices go to stderr, so that `unifig export > unifig.yaml` still
+	// Every notice goes to stderr, so that `unifig export > unifig.yaml` still
 	// reaches the operator's terminal while stdout carries nothing but YAML.
 	if err := export.WriteVariables(stderr, vars); err != nil {
 		return err
 	}
-	return export.WriteOmissions(stderr, indescribable)
+	if err := export.WriteOmissions(stderr, notices.IndescribableWLANs); err != nil {
+		return err
+	}
+	return export.WritePartialWANSlots(stderr, notices.PartialWANSlots)
 }
 
 // writeConfig writes the config to path, or to stdout when there is no path.

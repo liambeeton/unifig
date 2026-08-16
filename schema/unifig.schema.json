@@ -17,6 +17,12 @@
       "description": "Wireless networks (SSIDs). Matched against the Controller by name, and each bound to the network its clients join.",
       "type": "array",
       "items": { "$ref": "#/$defs/wlan" }
+    },
+    "wan": {
+      "title": "WAN slots",
+      "description": "The Controller's internet uplinks. These are Settings, not Resources: the Controller has a fixed set of WAN slots, so unifig only ever updates one — it never creates, deletes or prunes a slot, and a slot this file leaves out is one it does not manage.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/wanSlot" }
     }
   },
   "$defs": {
@@ -74,6 +80,40 @@
           "minLength": 8,
           "maxLength": 64,
           "pattern": "^[ -~]+$"
+        }
+      }
+    },
+    "wanSlot": {
+      "title": "WAN slot",
+      "description": "One of the Controller's internet uplinks. Changing one can cut this site off the internet, so unifig confirms every WAN change on its own before applying it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot"],
+      "properties": {
+        "slot": {
+          "title": "Slot",
+          "description": "Which uplink this is, in the Controller's own terms: WAN is the primary one, WAN2 the secondary, WAN_LTE_FAILOVER the cellular backup. This is the slot's identity — unifig matches on it. Which slots exist is the router's answer rather than this schema's, so naming one it does not have is reported when unifig reads the Controller, listing the slots it really has.",
+          "type": "string",
+          "pattern": "^(WAN[2-9]?|WAN_LTE_FAILOVER)$"
+        },
+        "type": {
+          "title": "Connection type",
+          "description": "How this uplink connects: dhcp for an address from the ISP, pppoe for one that authenticates first, disabled for a slot that is not in use. Static addressing is not modelled yet, so a slot configured that way in the Controller is left to it — omit this field and unifig manages nothing about how the slot connects.",
+          "enum": ["dhcp", "pppoe", "disabled"]
+        },
+        "username": {
+          "title": "PPPoE username",
+          "description": "The username the ISP issued, for a pppoe slot. No quotes or spaces — the Controller refuses them.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\"' ]+$"
+        },
+        "password": {
+          "title": "PPPoE password",
+          "description": "The password the ISP issued, for a pppoe slot. Write it as a ${ENV_VAR} reference rather than in the file: unifig replaces it from the environment as it loads, so the committed config carries no secret. No quotes or spaces — the Controller refuses them.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\"' ]+$"
         }
       }
     }

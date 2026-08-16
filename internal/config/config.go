@@ -34,6 +34,7 @@ import (
 type Config struct {
 	Networks []Network `yaml:"networks,omitempty"`
 	WLANs    []WLAN    `yaml:"wlans,omitempty"`
+	WAN      []WANSlot `yaml:"wan,omitempty"`
 }
 
 // Network is the operator-facing projection of a Controller network Resource,
@@ -58,6 +59,22 @@ type WLAN struct {
 	Name       string `yaml:"name"`
 	Network    string `yaml:"network"`
 	Passphrase string `yaml:"passphrase,omitempty"`
+}
+
+// WANSlot is one of the Controller's internet uplinks — a Setting rather than a
+// Resource, and the difference shows up in this struct's key. A network is
+// matched by a name the operator chose and can change; a WAN slot is matched by
+// Slot, which is the Controller's own name for a physical uplink it always has.
+// There is no field here that could create one, because nothing creates one.
+//
+// Password is the second secret unifig models and behaves exactly like a WLAN's
+// passphrase: written as a `${ENV_VAR}` reference, resolved by Load, and
+// redacted everywhere it could leave (ADR-0007).
+type WANSlot struct {
+	Slot     string `yaml:"slot"`
+	Type     string `yaml:"type,omitempty"`
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
 }
 
 // DefaultPath is where unifig looks for config when no file is named.

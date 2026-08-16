@@ -28,6 +28,10 @@ func TestWrittenConfigValidates(t *testing.T) {
 		WLANs: []config.WLAN{
 			{Name: "Home IoT", Network: "IoT", Passphrase: "correct horse battery"},
 		},
+		WAN: []config.WANSlot{
+			{Slot: "WAN", Type: "pppoe", Username: "isp-user", Password: "correct-horse-battery"},
+			{Slot: "WAN2"},
+		},
 	}
 
 	path := filepath.Join(t.TempDir(), "unifig.yaml")
@@ -47,7 +51,9 @@ func TestWrittenConfigValidates(t *testing.T) {
 		rendered, _ := os.ReadFile(path)
 		t.Fatalf("config unifig wrote is not config unifig accepts: %v\n%s", err, rendered)
 	}
-	if len(loaded.Networks) != len(written.Networks) || len(loaded.WLANs) != len(written.WLANs) {
+	if len(loaded.Networks) != len(written.Networks) ||
+		len(loaded.WLANs) != len(written.WLANs) ||
+		len(loaded.WAN) != len(written.WAN) {
 		t.Fatalf("loaded %+v, want %+v", loaded, written)
 	}
 	for i, network := range written.Networks {
@@ -60,17 +66,24 @@ func TestWrittenConfigValidates(t *testing.T) {
 			t.Errorf("wlans[%d] loaded as %+v, want %+v", i, loaded.WLANs[i], wlan)
 		}
 	}
+	for i, slot := range written.WAN {
+		if loaded.WAN[i] != slot {
+			t.Errorf("wan[%d] loaded as %+v, want %+v", i, loaded.WAN[i], slot)
+		}
+	}
 }
 
 // The example is what an operator copies to start from, and it carries the
 // modeline that documents how to wire the schema into an editor. If it stops
 // validating, the documentation is wrong.
 //
-// The variable set here is the one the example tells its reader to export, so
-// this is the example being loaded the way it is meant to be — and it fails if
-// the two ever stop naming the same thing.
+// The variables set here are the ones the example tells its reader to export,
+// so this is the example being loaded the way it is meant to be — and it fails
+// if the two ever stop naming the same thing.
 func TestTheShippedExampleValidates(t *testing.T) {
 	t.Setenv("WIFI_IOT_PASSPHRASE", "correct horse battery")
+	t.Setenv("WAN_PPPOE_USERNAME", "isp-user")
+	t.Setenv("WAN_PPPOE_PASSWORD", "correct-horse-battery")
 
 	if _, err := config.Load(filepath.Join("..", "..", "examples", "unifig.yaml")); err != nil {
 		t.Fatalf("examples/unifig.yaml does not validate: %v", err)
@@ -84,8 +97,11 @@ func TestTheShippedExampleKeepsItsSecretInTheEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading example: %v", err)
 	}
-	if !strings.Contains(string(example), "passphrase: ${") {
-		t.Errorf("examples/unifig.yaml should show a passphrase as a ${ENV_VAR} reference:\n%s", example)
+	for _, secret := range []string{"passphrase: ${", "password: ${"} {
+		if !strings.Contains(string(example), secret) {
+			t.Errorf("examples/unifig.yaml should show every secret as a ${ENV_VAR} reference, and %q is missing:\n%s",
+				secret, example)
+		}
 	}
 }
 

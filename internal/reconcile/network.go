@@ -12,9 +12,9 @@ import (
 )
 
 // lanPurposes are the networkconf purposes unifig manages as networks. WAN
-// entries are Settings — fixed slots that are updated, never created (issue
-// #6) — and the VPN purposes are out of scope for v1, so neither is matched,
-// planned, or exported.
+// entries share the collection but are Settings — fixed slots that are updated,
+// never created — and so are matched by wan.go rather than here; the VPN
+// purposes are out of scope for v1 and are not matched at all.
 var lanPurposes = map[string]bool{
 	"corporate": true,
 	"guest":     true,
@@ -47,13 +47,24 @@ func planNetworks(cfg config.Config, live map[string]unifi.Network, bound bindin
 	return changes
 }
 
-// listNetworks reads the site's networks and keeps the ones unifig manages.
-func listNetworks(ctx context.Context, client unifi.Client, site string) ([]unifi.Network, error) {
+// listNetworkConf reads the site's whole networkconf collection: the LANs, the
+// WAN slots and everything else in it.
+//
+// It is unfiltered because two managed types come out of this one collection,
+// and reading it twice would be both a second round trip and a second moment in
+// time — a plan is a statement about the Controller as it was, and two halves of
+// one plan disagreeing about when that was is not a thing worth allowing.
+func listNetworkConf(ctx context.Context, client unifi.Client, site string) ([]unifi.Network, error) {
 	all, err := client.ListNetwork(ctx, site)
 	if err != nil {
 		return nil, fmt.Errorf("listing networks for site %q: %w", site, err)
 	}
+	return all, nil
+}
 
+// lans keeps the networkconf entries unifig manages as networks, refusing a
+// site where two of them share the name unifig matches them by.
+func lans(all []unifi.Network) ([]unifi.Network, error) {
 	kept := make([]unifi.Network, 0, len(all))
 	names := make([]string, 0, len(all))
 	for _, network := range all {
@@ -87,10 +98,10 @@ func fromLiveNetwork(network unifi.Network) config.Network {
 // createNetwork is the Change for a network the Controller does not have.
 func createNetwork(desired config.Network, bound bindings) Change {
 	return Change{
-		Action:   Create,
-		Resource: Network,
-		Name:     desired.Name,
-		Fields:   setNetworkFields(desired),
+		Action: Create,
+		Kind:   Network,
+		Name:   desired.Name,
+		Fields: setNetworkFields(desired),
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			network := newNetwork(desired)
 			created, err := client.CreateNetwork(ctx, site, &network)
@@ -121,10 +132,10 @@ func updateNetwork(desired config.Network, live unifi.Network) (Change, bool) {
 	}
 
 	return Change{
-		Action:   Update,
-		Resource: Network,
-		Name:     desired.Name,
-		Fields:   fields,
+		Action: Update,
+		Kind:   Network,
+		Name:   desired.Name,
+		Fields: fields,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// The live object goes back with only unifig's own fields
 			// changed, so the Controller keeps every setting unifig does not
@@ -169,10 +180,10 @@ func pruneNetworks(live map[string]unifi.Network, named map[string]bool) []Chang
 // of changes.
 func deleteNetwork(live unifi.Network) Change {
 	return Change{
-		Action:   Delete,
-		Resource: Network,
-		Name:     live.Name,
-		Fields:   currentNetworkFields(fromLiveNetwork(live)),
+		Action: Delete,
+		Kind:   Network,
+		Name:   live.Name,
+		Fields: currentNetworkFields(fromLiveNetwork(live)),
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			return client.DeleteNetwork(ctx, site, live.ID)
 		},

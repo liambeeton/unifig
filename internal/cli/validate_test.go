@@ -346,6 +346,78 @@ func TestValidateCatchesDuplicateNetworkNames(t *testing.T) {
 	}
 }
 
+// A WAN slot is a Setting, and its key is the Controller's own name for a
+// physical uplink rather than a name the operator chose — so the file names the
+// slot it means, and unifig only ever updates it.
+func TestValidateAcceptsAWANSlotWithPPPoECredentialsFromTheEnvironment(t *testing.T) {
+	runValidate(t, `wan:
+  - slot: WAN
+    type: pppoe
+    username: isp-user
+    password: ${WAN_PASSWORD}
+`, map[string]string{"WAN_PASSWORD": "correct-horse-battery"}).mustPass(t)
+}
+
+// The same rule as everywhere else (ADR-0004): a field the file leaves out is
+// one unifig does not manage, so `- slot: WAN` is a complete entry.
+func TestValidateAcceptsAWANSlotThatManagesNothingYet(t *testing.T) {
+	runValidate(t, `wan:
+  - slot: WAN
+`, nil).mustPass(t)
+}
+
+// Which slots a router has is the router's answer, not the schema's — so what
+// validate can catch offline is something that is not a slot name at all. A
+// slot the Controller does not have is reported when unifig reads it.
+func TestValidateRejectsSomethingThatIsNotASlotName(t *testing.T) {
+	runValidate(t, `wan:
+  - slot: Fibre
+`, nil).mustFailWith(t, "line 2", "wan[0].slot", `"Fibre"`, "WAN2")
+}
+
+func TestValidateRejectsAConnectionTypeUnifigDoesNotModel(t *testing.T) {
+	runValidate(t, `wan:
+  - slot: WAN
+    type: carrier-pigeon
+`, nil).mustFailWith(t, "line 3", "wan[0].type", `"carrier-pigeon"`, `"pppoe"`)
+}
+
+func TestValidateCatchesTwoEntriesForOneWANSlot(t *testing.T) {
+	res := runValidate(t, `wan:
+  - slot: WAN
+    type: dhcp
+  - slot: WAN
+    type: pppoe
+`, nil).mustFailWith(t, "line 4", "wan[1].slot", "WAN")
+
+	if strings.Count(res.stderr, "already configured") != 1 {
+		t.Errorf("a duplicated slot should be reported once, got:\n%s", res.stderr)
+	}
+}
+
+// A PPPoE password is a secret on exactly the same terms as a WLAN passphrase:
+// the complaint says what was wrong with it, never what it was.
+func TestValidateNeverEchoesAPPPoEPassword(t *testing.T) {
+	const secret = "no spaces allowed"
+	res := runValidate(t, `wan:
+  - slot: WAN
+    type: pppoe
+    username: isp-user
+    password: ${WAN_PASSWORD}
+`, map[string]string{"WAN_PASSWORD": secret})
+
+	if res.exitCode != 1 {
+		t.Fatalf("validate exited %d, want 1 — the Controller refuses a password with spaces in it\nstderr: %s",
+			res.exitCode, res.stderr)
+	}
+	if strings.Contains(res.stderr, secret) {
+		t.Errorf("validate printed the password it was complaining about:\n%s", res.stderr)
+	}
+	if !strings.Contains(res.stderr, "wan[0].password") {
+		t.Errorf("stderr should say which field was wrong, got:\n%s", res.stderr)
+	}
+}
+
 func TestValidateInterpolatesEnvVarsIntoValues(t *testing.T) {
 	runValidate(t, `networks:
   - name: ${IOT_NAME}

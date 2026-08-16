@@ -25,13 +25,15 @@ import (
 // So the safe form is the one you get by default, and the plaintext one is the
 // one you have to ask for.
 //
-// Each variable is named after the WLAN it belongs to, so an operator reading
-// the file can tell at a glance which one is which, and two runs against an
-// unchanged Controller produce the same names.
+// Each variable is named after the thing it belongs to — the WLAN, the WAN slot
+// — so an operator reading the file can tell at a glance which one is which,
+// and two runs against an unchanged Controller produce the same names.
 func Redact(cfg config.Config) (config.Config, []string) {
 	redacted := cfg
 	redacted.WLANs = make([]config.WLAN, len(cfg.WLANs))
 	copy(redacted.WLANs, cfg.WLANs)
+	redacted.WAN = make([]config.WANSlot, len(cfg.WAN))
+	copy(redacted.WAN, cfg.WAN)
 
 	var vars []string
 	taken := map[string]bool{}
@@ -41,6 +43,17 @@ func Redact(cfg config.Config) (config.Config, []string) {
 		}
 		name := unique(taken, envVar("UNIFIG_WLAN", wlan.Name, "PASSPHRASE"))
 		redacted.WLANs[i].Passphrase = "${" + name + "}"
+		vars = append(vars, name)
+	}
+	// A slot's own name needs no prefix beyond unifig's: "WAN" and "WAN2" are
+	// already the Controller's names for the uplinks, so UNIFIG_WAN_PASSWORD is
+	// both unambiguous and the name an operator would have picked.
+	for i, slot := range redacted.WAN {
+		if slot.Password == "" {
+			continue
+		}
+		name := unique(taken, envVar("UNIFIG", slot.Slot, "PASSWORD"))
+		redacted.WAN[i].Password = "${" + name + "}"
 		vars = append(vars, name)
 	}
 	return redacted, vars
@@ -96,6 +109,26 @@ func WriteOmissions(w io.Writer, wlans []string) error {
 	fmt.Fprintf(&b, "\nLeft out %s, which unifig does not manage: %s.\n",
 		count(len(wlans), "WLAN"), quoteAll(wlans))
 	b.WriteString("Each is attached to something that is not one of this site's LANs, so there is no network for unifig to name in the config. It manages nothing about them, and `--prune` will not delete them.\n")
+
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// WritePartialWANSlots names the WAN slots the config describes by slot alone,
+// so that a file which says less than the operator expects says why.
+//
+// It is the same promise as WriteOmissions and a different shape of shortfall:
+// the slot is in the file and unifig will match it, but the way it connects —
+// static addressing, DS-Lite — is not something unifig's config can state, so
+// nothing in the file describes it and nothing unifig does will change it.
+func WritePartialWANSlots(w io.Writer, slots []string) error {
+	if len(slots) == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nWrote %s with nothing but the slot: %s.\n", count(len(slots), "WAN slot"), quoteAll(slots))
+	b.WriteString("Each connects in a way unifig does not model — static addressing, for example — so there is nothing for the config to say about it. unifig will match the slot and change nothing about how it connects.\n")
 
 	_, err := io.WriteString(w, b.String())
 	return err

@@ -18,6 +18,14 @@ _Avoid_: object, entity
 A fixed-slot or singleton configuration area of the Controller that can only be updated — never created, deleted, or pruned. WAN slots and Encrypted DNS are Settings.
 _Avoid_: resource (for these)
 
+**Kind**:
+The managed type a change is about — `network`, `wlan`, `wan` — covering Resources and Settings alike, because an operator reads and approves a change to either the same way. It is the word a Plan line leads with and the field `plan --json` carries.
+_Avoid_: resource (a Setting is not one), type (says nothing about what is being typed)
+
+**WAN slot**:
+One of the Controller's internet uplinks, and the first Setting. Matched by the Controller's own name for the slot — `WAN`, `WAN2`, `WAN_LTE_FAILOVER` — rather than by the entry's name, which an operator can rename to their ISP without it ceasing to be the primary uplink. Every change to one is a Risky change.
+_Avoid_: WAN network (it lives in the same collection as the networks but is not one), WAN interface, uplink port
+
 **WLAN**:
 A wireless network (SSID) the Controller broadcasts. A Resource, matched by name, and bound to the Network its clients join — the reference that makes cross-reference validation necessary.
 _Avoid_: SSID (that names the broadcast identifier, not the configured object), wifi network
