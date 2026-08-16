@@ -16,6 +16,7 @@ import (
 type exportedConfig struct {
 	Networks []exportedNetwork `yaml:"networks"`
 	WLANs    []exportedWLAN    `yaml:"wlans"`
+	WAN      []exportedWANSlot `yaml:"wan"`
 }
 
 type exportedNetwork struct {
@@ -28,6 +29,28 @@ type exportedWLAN struct {
 	Name       string `yaml:"name"`
 	Network    string `yaml:"network"`
 	Passphrase string `yaml:"passphrase"`
+}
+
+// exportedWANSlot is the Setting half of the same shape. Only the WAN suite
+// reads it — the dockerized Controller has no uplinks to export — and it lives
+// here so that what export writes is described in one place.
+type exportedWANSlot struct {
+	Slot     string `yaml:"slot"`
+	Type     string `yaml:"type"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+// exportedYAML parses what export wrote. It lives beside the shape it parses,
+// so that a test which has to know what export said — which secrets it
+// redacted, which slots it wrote — reads the file rather than grepping it.
+func exportedYAML(t *testing.T, exported []byte) exportedConfig {
+	t.Helper()
+	var cfg exportedConfig
+	if err := yaml.Unmarshal(exported, &cfg); err != nil {
+		t.Fatalf("export wrote something that is not YAML: %v\n%s", err, exported)
+	}
+	return cfg
 }
 
 func exportNetworks(t *testing.T) exportedConfig {

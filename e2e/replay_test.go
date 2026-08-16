@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -157,6 +158,167 @@ func (r *replay) write(w http.ResponseWriter, body json.RawMessage) {
 	}
 }
 
+// slotNames names the uplinks the recording holds, in the order the Controller
+// returns them — the names, where slot returns the entry occupying one.
+//
+// This is what keeps a WAN test from being about which router the recording
+// came from. Which slots exist is the router's answer — one gateway has WAN and
+// WAN2, another has WAN and a cellular backup — so a test that named one would
+// fail on a re-recording for a reason that has nothing to do with unifig. It
+// asks instead, and seeds what it needs onto whatever came back.
+func (r *replay) slotNames(t *testing.T) []string {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var slots []string
+	for _, entry := range r.entries {
+		if entry["purpose"] != "wan" {
+			continue
+		}
+		if slot, ok := entry["wan_networkgroup"].(string); ok && slot != "" {
+			slots = append(slots, slot)
+		}
+	}
+	return slots
+}
+
+// aSlot is the first uplink the recording holds — the one a test seeds when
+// what it states is true of any slot, which is most of them.
+//
+// Which uplink it turns out to be does not matter: these tests are about what
+// unifig does to a slot, not about which slot it is. What matters is that a
+// recording from any router holds one, so nothing here has to know whether this
+// router's second uplink is WAN2, a cellular backup, or absent. A recording
+// with no WAN entry at all is one this suite can say nothing with, and it says
+// so here rather than four assertions later.
+func (r *replay) aSlot(t *testing.T) string {
+	t.Helper()
+	slots := r.slotNames(t)
+	if len(slots) == 0 {
+		t.Fatalf("the recording holds no WAN slots, so there is no uplink to test against")
+	}
+	return slots[0]
+}
+
+// absentSlot names a slot the recording does not hold — what a test needs in
+// order to state that unifig refuses to create one.
+//
+// The candidates mirror the slot pattern in schema/unifig.schema.json, so what
+// comes back is a name a config file can legally carry — a slot outside that
+// pattern would fail validation and this test would never reach the answer it
+// is about. Which of them is free is checked against the recording rather than
+// assumed: a recording that already has WAN2 would make a hardcoded WAN2 a test
+// about nothing. If the schema ever narrows, this list goes stale loudly, as a
+// config the validator rejects.
+func (r *replay) absentSlot(t *testing.T) string {
+	t.Helper()
+
+	held := r.slotNames(t)
+	var candidates []string
+	for n := 2; n <= 9; n++ {
+		candidates = append(candidates, fmt.Sprintf("WAN%d", n))
+	}
+	candidates = append(candidates, "WAN_LTE_FAILOVER")
+	for _, candidate := range candidates {
+		if !slices.Contains(held, candidate) {
+			return candidate
+		}
+	}
+
+	t.Fatalf("the recording holds every slot the schema allows (%v), so none is left to be absent", held)
+	return ""
+}
+
+// slotPassword is the PPPoE password the recording holds for a slot — what a
+// test setting the environment for an exported config has to put back, without
+// spelling out a value only the committed recording supplies.
+func (r *replay) slotPassword(t *testing.T, slot string) string {
+	t.Helper()
+	password, _ := r.slot(t, slot)["x_wan_password"].(string)
+	return password
+}
+
+// wlanPassphrase is the same thing for a WLAN. An export redacts every secret
+// it writes, WLAN passphrases included, so a WAN test that plans an exported
+// config needs these whether or not it is about WLANs.
+func (r *replay) wlanPassphrase(t *testing.T, name string) string {
+	t.Helper()
+	for _, wlan := range entries(t, r.wlans) {
+		if wlan["name"] == name {
+			passphrase, _ := wlan["x_passphrase"].(string)
+			return passphrase
+		}
+	}
+	t.Fatalf("the recording has no WLAN named %q", name)
+	return ""
+}
+
+// managedNetworkNames names the networks unifig manages, as opposed to the WAN
+// slots that share the collection with them — what a WAN test needs in order to
+// write a config that leaves the networks entirely settled, so that a prune has
+// nothing at stake but the uplinks.
+//
+// It is rig.managedNetworkNames against the recording instead of against the
+// live Controller, down to the name, and the purposes are spelled out here for
+// the same reason that one spells them out: the stand-in describes the
+// Controller rather than agreeing with the code under test by construction.
+func (r *replay) managedNetworkNames(t *testing.T) []string {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var names []string
+	for _, entry := range r.entries {
+		switch entry["purpose"] {
+		case "corporate", "guest", "vlan-only":
+		default:
+			continue
+		}
+		if name, ok := entry["name"].(string); ok && name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// aNetwork is one of them — what a WAN test needs when it has to put a change
+// that is not the uplink in the same file.
+func (r *replay) aNetwork(t *testing.T) string {
+	t.Helper()
+	names := r.managedNetworkNames(t)
+	if len(names) == 0 {
+		t.Fatalf("the recording holds no network unifig manages, so there is nothing in it to change but the uplinks")
+	}
+	return names[0]
+}
+
+// unusedVLAN is a tag no network in the recording is on, so that a config
+// putting a LAN on it is a change whatever the recording holds. Where it starts
+// counting is arbitrary; that it counts past what is taken is not.
+func (r *replay) unusedVLAN(t *testing.T) int {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	taken := map[int]bool{}
+	for _, entry := range r.entries {
+		if vlan, ok := entry["vlan"].(float64); ok {
+			taken[int(vlan)] = true
+		}
+	}
+	// Any free tag will do, so this counts up from clear of the low numbers a
+	// home router hands out, and stops at the largest the schema accepts.
+	for vlan := 40; vlan <= 4094; vlan++ {
+		if !taken[vlan] {
+			return vlan
+		}
+	}
+
+	t.Fatalf("the recording holds a network on every VLAN tag the schema allows")
+	return 0
+}
+
 // slot is the WAN entry occupying a slot, as the stand-in holds it now — how a
 // WAN test checks what an apply actually wrote, the way rig.liveNetwork does
 // against the real Controller.
@@ -210,23 +372,6 @@ func (r *replay) addSlot(t *testing.T, slot string, fields map[string]any) {
 	r.entries = append(r.entries, entry)
 }
 
-// removeSlot takes a slot off the Controller, which is how a test states "this
-// router does not have that uplink" — the case where unifig has to refuse
-// rather than create one.
-func (r *replay) removeSlot(t *testing.T, slot string) {
-	t.Helper()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for i, entry := range r.entries {
-		if entry["purpose"] == "wan" && entry["wan_networkgroup"] == slot {
-			r.entries = append(r.entries[:i], r.entries[i+1:]...)
-			return
-		}
-	}
-	t.Fatalf("the recording has no %s slot to remove", slot)
-}
-
 // data wraps entries in the envelope every Internal API response carries.
 func data(entries ...map[string]any) json.RawMessage {
 	body, err := json.Marshal(map[string]any{
@@ -250,12 +395,19 @@ func recordedBody(t *testing.T, name string) json.RawMessage {
 
 func recordedEntries(t *testing.T, name string) []map[string]any {
 	t.Helper()
+	return entries(t, recordedBody(t, name))
+}
+
+// entries unwraps a recorded response into the objects it carries, so that a
+// test can ask what the recording holds rather than assuming.
+func entries(t *testing.T, body json.RawMessage) []map[string]any {
+	t.Helper()
 
 	var recorded struct {
 		Data []map[string]any `json:"data"`
 	}
-	if err := json.Unmarshal(recordedBody(t, name), &recorded); err != nil {
-		t.Fatalf("reading %s: %v", name, err)
+	if err := json.Unmarshal(body, &recorded); err != nil {
+		t.Fatalf("reading a recorded response: %v", err)
 	}
 	return recorded.Data
 }

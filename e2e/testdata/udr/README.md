@@ -53,6 +53,19 @@ it. Read the diff before committing anyway: a WAN slot also records the public
 IP the ISP handed out, and only you can say whether that belongs in a public
 repository.
 
-The tests seed the starting values they need onto whatever the recording holds
-(`replay.seedSlot`), so a re-recording does not have to be arranged to suit
-them — it only has to contain the site's real WAN slots.
+## What the tests need from a recording
+
+Only that it holds the site's real WAN slots. Nothing in the WAN suite names a
+slot, a WLAN or a secret value that this recording happens to supply: the tests
+ask the stand-in which uplinks the recording holds (`replay.slots`,
+`replay.aSlot`, `replay.absentSlot`), seed the starting values they need onto a
+slot every router has (`replay.seedSlot`), and read the secrets an export
+redacted back out of the export's own output rather than assuming which ones
+there were. So a re-recording does not have to be arranged to suit them: drop
+the three files in, and the suite states the same things about your router that
+it states about this one.
+
+What it cannot do without is a `purpose: wan` entry and one LAN: an uplink to
+test against, and something that is not the uplink to change beside it. A
+recording missing either is one these tests can say nothing with, and they fail
+saying so rather than four assertions later.
