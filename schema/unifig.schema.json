@@ -14,7 +14,7 @@
     },
     "wlans": {
       "title": "WLANs",
-      "description": "Wireless networks (SSIDs). Not reconciled yet — unifig validates this section but does not plan or apply it.",
+      "description": "Wireless networks (SSIDs). Matched against the Controller by name, and each bound to the network its clients join.",
       "type": "array",
       "items": { "$ref": "#/$defs/wlan" }
     }
@@ -66,6 +66,14 @@
           "description": "The name of the network this WLAN's clients join. Must be the name of a network defined in this file.",
           "type": "string",
           "minLength": 1
+        },
+        "passphrase": {
+          "title": "Passphrase",
+          "description": "The WPA passphrase clients join with, 8 to 64 printable ASCII characters (a 64-character one is read as a hex PSK). Write it as a ${ENV_VAR} reference rather than in the file: unifig replaces it from the environment as it loads, so the committed config carries no secret. Omit it to leave the WLAN's security to the Controller — and note that a WLAN unifig creates without one is an open network anyone in range can join.",
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64,
+          "pattern": "^[ -~]+$"
         }
       }
     }

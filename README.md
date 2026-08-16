@@ -2,7 +2,7 @@
 
 Declarative configuration for a UniFi Network application (the Controller) on a UniFi Dream Router, from human-readable YAML. See `CONTEXT.md` for the domain glossary and [issue #1](https://github.com/liambeeton/unifig/issues/1) for the v1 spec.
 
-Current state: networks reconcile end to end — `unifig plan` and `unifig apply` — alongside `unifig export` to adopt a configured Controller and `unifig validate` to check a config file offline.
+Current state: networks and WLANs reconcile end to end — `unifig plan` and `unifig apply`, with WLAN passphrases supplied by `${ENV_VAR}` — alongside `unifig export` to adopt a configured Controller and `unifig validate` to check a config file offline.
 
 ## Usage
 
@@ -29,7 +29,21 @@ On the UDR: UniFi OS → Control Plane → Admins & Users → your admin → Cre
 
 One `unifig.yaml` describes the Controller's configuration. `examples/unifig.yaml` is a working starting point; `schema/unifig.schema.json` is the contract.
 
-Sections reconcile as they land, and `validate` is ahead of the rest: `networks` is the section `plan`, `apply` and `export` handle today, and `wlans` is validated (including its reference to a network) but not yet planned or applied — see [issue #5](https://github.com/liambeeton/unifig/issues/5).
+Sections reconcile as they land. `networks` and `wlans` are the sections every verb handles today; the rest of the v1 catalogue — WAN slots, Encrypted DNS, firewall Zones and Policies, port forwards, DHCP reservations — follows.
+
+A WLAN names the network its clients join, and that reference is checked offline:
+
+```yaml
+networks:
+  - name: IoT
+    vlan: 20
+    subnet: 10.20.0.1/24
+
+wlans:
+  - name: Home IoT
+    network: IoT                       # must be a network defined above
+    passphrase: ${WIFI_IOT_PASSPHRASE} # never the passphrase itself — see below
+```
 
 Every verb that reads config takes an optional file argument, defaulting to `./unifig.yaml`:
 
@@ -72,6 +86,16 @@ Three rules:
 - **The result is always text.** `${VLAN}` cannot become the number 20 — that rule is what stops a passphrase of `0900` or `true` being read as a number or a boolean.
 - **One pass.** A substituted value is never rescanned, so a secret containing `${...}` is inserted verbatim.
 
+### Secrets, once they are loaded
+
+Interpolation keeps a secret out of the file. What keeps it out of everything else is that unifig treats a secret field as secret however it arrived — a passphrase typed straight into the YAML is redacted exactly like one that came from the environment.
+
+- **Plans never print one.** A changing passphrase shows as `passphrase: (hidden)`; `plan --json` writes `{"name": "passphrase", "from": null, "to": null, "secret": true}`. The field is there because it is changing, so a pipeline can gate on it, and the value is not.
+- **Validation messages never print one.** A passphrase outside the Controller's own 8-to-64-character bound is reported as a length, never as the value.
+- **Export redacts by default.** See [Export](#export).
+
+Where a secret does have to be readable, it is because reconcile could not work otherwise: the Controller hands a WLAN's passphrase back in the clear, which is what lets unifig tell "already correct" from "needs rotating" with no state file (`docs/adr/0007-secrets-read-back-so-they-diff-normally.md`).
+
 ## Plan and apply
 
 `plan` reads the Controller, compares it to your file and prints what it would change. It changes nothing.
@@ -81,10 +105,14 @@ Three rules:
       vlan:   30
       subnet: 192.168.30.1/24
 
+  + wlan "Home Guest"
+      network:    Guest
+      passphrase: (hidden)
+
   ~ network "IoT"
       subnet: 10.20.0.1/24 -> 192.168.20.1/24
 
-Plan: 1 to create, 1 to update.
+Plan: 2 to create, 1 to update.
 ```
 
 `apply` does the same and then executes it, after asking:
@@ -100,12 +128,28 @@ There is no state file. Every run diffs your file against the live Controller di
 - **Nothing is destroyed implicitly.** A network the Controller has and your file does not is left alone. Deleting it is [`--prune`](#pruning)'s job, and you have to ask.
 - **Only the fields your file models are written.** An apply that changes a subnet leaves the DHCP server, DNS entries and everything else on that network exactly as you set them in the Controller. The single exception announces itself in the plan: a DHCP pool cannot stay in a subnet the network no longer has, so a subnet change that strands one moves it.
 - **A field you leave out is a field unifig doesn't manage.** Only `name` is required, so `- name: IoT` is a complete entry meaning "this network is mine to match, and I'm not managing anything about it yet". It never means "clear its VLAN and subnet" — clearing a value is something you do in the Controller.
-- **Re-running is the recovery.** Apply stops at the first error and reports what it got through; the next plan is computed from the Controller as it now stands, so a fixed-and-re-run apply picks up exactly where it stopped.
-- **A network unifig creates is a working LAN.** Your file names three fields; a networkconf has a hundred. The rest come from the Controller's own defaults for a new LAN — NAT and DHCP on, a pool from the sixth address to the last. Those are set on create only, so anything you change afterwards is yours and stays.
+- **Changes run in dependency order.** A network is created before the WLAN that joins it and a WLAN is deleted before the network it was on, so a file that declares both applies in one run. The plan prints the order apply will use, so you see it before you agree to it.
+- **A network unifig creates is a working LAN.** Your file names three fields; a networkconf has a hundred. The rest come from the Controller's own defaults for a new LAN — NAT and DHCP on, a pool from the sixth address to the last. Those are set on create only, so anything you change afterwards is yours and stays. The same goes for a WLAN: it is enabled, on the default AP group, and everything else is the Controller's own choice.
+
+### When an apply stops partway
+
+There is no rollback, so apply's contract is that it tells you exactly where it got to. It stops at the first error, having attempted nothing after it:
+
+```
+  + network "Guest" created
+
+Applied 1 of 3 changes. These were not applied:
+  + wlan "Home Guest"
+  - network "Old Lab"
+
+Nothing was rolled back; apply is safe to run again once this is fixed.
+```
+
+The error itself goes to stderr, and the exit code is 1. Re-running *is* the recovery: the next plan is computed from the Controller as it now stands, including the part that succeeded, so a fixed-and-re-run apply picks up exactly where this one stopped without being told anything about it.
 
 ### Pruning
 
-By default your file is a list of what unifig manages, not a list of everything that may exist. `--prune` makes it the second thing: every network of a managed type that the file does not name becomes a deletion.
+By default your file is a list of what unifig manages, not a list of everything that may exist. `--prune` makes it the second thing: every Resource of a managed type that the file does not name becomes a deletion.
 
 ```sh
 ./unifig plan --prune    # see what would go, change nothing
@@ -126,11 +170,45 @@ Deletions appear in the plan like any other change, showing what was in the netw
 Plan: 1 to create, 1 to delete.
 ```
 
-Three things `--prune` will not do:
+Four things `--prune` will not do:
 
+- **Reach a section your file doesn't have.** A file with no `wlans:` key says nothing about WLANs, so prune deletes none of them — the same rule as an omitted field, one level up (see `docs/adr/0006-prune-reaches-only-the-sections-the-file-has.md`). Write `wlans: []` to say there should be none; that is a statement, and prune acts on it.
 - **Delete what the Controller says it owns.** The built-in Default network is marked undeletable on the Controller itself, and unifig reads that marker rather than keeping a list of names (see `docs/adr/0005-builtin-exemption-from-the-controller.md`). It is never pruned, whether or not your file names it.
-- **Touch anything of a type unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, and prune does not see them.
+- **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, and prune does not see them. Nor does it see a WLAN attached to something that isn't one of your LANs — unifig has no name to write for it, so it can't be exported either, and the two go together on purpose: a WLAN adoption couldn't describe is not one prune may delete.
 - **Persist.** The flag applies to the run you passed it to. There is no state file, so nothing remembers it.
+
+## Export
+
+`export` reads the Controller and writes the config that describes it — the way to adopt a router you have already configured by hand, without transcribing anything. What it writes is config the other verbs accept, by construction: `plan`, `apply` and `export` share one answer about which live Resources are in scope and what each looks like in YAML, so a freshly exported file plans clean.
+
+```sh
+./unifig export > unifig.yaml       # stdout by default
+./unifig export -o unifig.yaml      # or straight to a file, created 0600
+./unifig export --with-secrets      # passphrases in plaintext instead of redacted
+```
+
+Secrets are redacted to `${ENV_VAR}` references unless you ask otherwise, because export's output goes into a git repository and a file that arrives with a live passphrase in it has already been committed by the time anyone notices. The variables it invented are listed on stderr, so `export > unifig.yaml` still tells you what to set while stdout carries nothing but YAML:
+
+```
+$ ./unifig export > unifig.yaml
+
+Redacted 1 secret. Set it before running unifig:
+
+  export UNIFIG_WLAN_HOME_IOT_PASSPHRASE=...
+
+The values are on the Controller; `unifig export --with-secrets` prints them inline instead.
+```
+
+An export that fails prints no YAML and writes no file — so pointing `-o` at your existing `unifig.yaml` cannot lose it to an unreachable Controller or a bad key.
+
+If your Controller holds something unifig can't describe in config, export says so rather than quietly coming up short — a WLAN attached to anything that isn't one of your LANs has no network for unifig to name:
+
+```
+Left out 1 WLAN, which unifig does not manage: "Guest Portal".
+Each is attached to something that is not one of this site's LANs, so there is
+no network for unifig to name in the config. It manages nothing about them, and
+`--prune` will not delete them.
+```
 
 ### In a pipeline
 
@@ -154,10 +232,20 @@ Three things `--prune` will not do:
       "fields": [
         { "name": "subnet", "from": "10.20.0.1/24", "to": "192.168.20.1/24" }
       ]
+    },
+    {
+      "action": "update",
+      "resource": "wlan",
+      "name": "Home IoT",
+      "fields": [
+        { "name": "passphrase", "from": null, "to": null, "secret": true }
+      ]
     }
   ]
 }
 ```
+
+Changes are listed in the order apply will run them, so a consumer reading the array is reading the sequence.
 
 ## Development
 

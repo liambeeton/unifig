@@ -318,6 +318,145 @@ func (r *rig) managedNetworkNames(t *testing.T) []string {
 	return names
 }
 
+// seedWLAN creates a wlanconf entry on the live Controller through its own API,
+// clearing same-named entries first so seeding is idempotent across reused
+// controllers. Its conf is raw Controller JSON for the same reason seedNetwork's
+// is: the rig describes the Controller, not unifig's model of it.
+func (r *rig) seedWLAN(t *testing.T, conf map[string]any) {
+	t.Helper()
+	name, _ := conf["name"].(string)
+	r.deleteWLANsNamed(t, name)
+	r.addWLAN(t, conf)
+}
+
+// addWLAN creates a wlanconf entry without clearing same-named ones first,
+// which is how a test sets up the live duplicate names unifig has to refuse to
+// choose between. The Controller allows them; unifig does not.
+func (r *rig) addWLAN(t *testing.T, conf map[string]any) {
+	t.Helper()
+	name, _ := conf["name"].(string)
+
+	// Two fields every wlanconf needs and no test cares about: the Controller
+	// refuses a WLAN with no AP group to broadcast from, and rejects a null
+	// schedule_with_duration outright.
+	if _, ok := conf["ap_group_ids"]; !ok {
+		conf["ap_group_ids"] = []string{r.defaultAPGroupID(t)}
+	}
+	conf["schedule_with_duration"] = []any{}
+
+	body, err := json.Marshal(conf)
+	if err != nil {
+		t.Fatalf("marshaling WLAN conf: %v", err)
+	}
+	resp := r.controllerDo(t, http.MethodPost, "/api/s/default/rest/wlanconf", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("seeding WLAN %q: status %d: %s", name, resp.StatusCode, b)
+	}
+}
+
+func (r *rig) deleteWLANsNamed(t *testing.T, name string) {
+	t.Helper()
+	for _, w := range r.wlansNamed(t, name) {
+		id, _ := w["_id"].(string)
+		del := r.controllerDo(t, http.MethodDelete, "/api/s/default/rest/wlanconf/"+id, nil)
+		del.Body.Close()
+	}
+}
+
+// liveWLAN reads one WLAN back off the Controller as the raw JSON the Controller
+// stores — how a test checks what an apply actually did, including whether the
+// passphrase that went in is the one that came out.
+func (r *rig) liveWLAN(t *testing.T, name string) map[string]any {
+	t.Helper()
+	found := r.wlansNamed(t, name)
+	if len(found) != 1 {
+		t.Fatalf("the Controller has %d WLANs named %q, want exactly 1", len(found), name)
+	}
+	return found[0]
+}
+
+func (r *rig) wlansNamed(t *testing.T, name string) []map[string]any {
+	t.Helper()
+	var found []map[string]any
+	for _, w := range r.wlans(t) {
+		if w["name"] == name {
+			found = append(found, w)
+		}
+	}
+	return found
+}
+
+func (r *rig) wlans(t *testing.T) []map[string]any {
+	t.Helper()
+	resp := r.controllerDo(t, http.MethodGet, "/api/s/default/rest/wlanconf", nil)
+	defer resp.Body.Close()
+
+	var list struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatalf("listing WLANs: %v", err)
+	}
+	return list.Data
+}
+
+// networkID is the Controller ID of a live network — what a seeded WLAN needs
+// in order to name the network its clients join. Tests never see this ID
+// themselves; it goes straight back into a seed.
+func (r *rig) networkID(t *testing.T, name string) string {
+	t.Helper()
+	id, _ := r.liveNetwork(t, name)["_id"].(string)
+	if id == "" {
+		t.Fatalf("the network %q on the Controller has no ID", name)
+	}
+	return id
+}
+
+// managedNetworkNamesByID is the reverse: what a test needs in order to say, in
+// config terms, which network a live WLAN is already on. Only the LAN purposes
+// are in it, spelled out here rather than imported from the engine for the same
+// reason managedNetworkNames spells them out — so the rig describes the
+// Controller rather than agreeing with the code under test by construction.
+func (r *rig) managedNetworkNamesByID(t *testing.T) map[string]string {
+	t.Helper()
+	names := map[string]string{}
+	for _, n := range r.networks(t) {
+		switch n["purpose"] {
+		case "corporate", "guest", "vlan-only":
+		default:
+			continue
+		}
+		id, _ := n["_id"].(string)
+		name, _ := n["name"].(string)
+		names[id] = name
+	}
+	return names
+}
+
+// defaultAPGroupID is the "All APs" group the Controller puts every new WLAN
+// on. It lives under the v2 API rather than /api/s/<site>/rest, which is why it
+// does not go through controllerDo's response shape.
+func (r *rig) defaultAPGroupID(t *testing.T) string {
+	t.Helper()
+	resp := r.controllerDo(t, http.MethodGet, "/v2/api/site/default/apgroups", nil)
+	defer resp.Body.Close()
+
+	var groups []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&groups); err != nil {
+		t.Fatalf("listing AP groups: %v", err)
+	}
+	for _, group := range groups {
+		if group["attr_hidden_id"] == "default" {
+			id, _ := group["_id"].(string)
+			return id
+		}
+	}
+	t.Fatalf("the Controller has no default AP group: %v", groups)
+	return ""
+}
+
 func (r *rig) controllerDo(t *testing.T, method, path string, body io.Reader) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(method, r.controllerURL+path, body)

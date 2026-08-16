@@ -253,6 +253,86 @@ wlans:
 `, nil).mustPass(t)
 }
 
+// The whole point of `${ENV_VAR}`: a committed config file that carries a
+// passphrase without carrying the passphrase.
+func TestValidateAcceptsAPassphraseSuppliedByTheEnvironment(t *testing.T) {
+	runValidate(t, `networks:
+  - name: Guest
+    vlan: 30
+wlans:
+  - name: Home Guest
+    network: Guest
+    passphrase: ${GUEST_PASSPHRASE}
+`, map[string]string{"GUEST_PASSPHRASE": "correct horse battery"}).mustPass(t)
+}
+
+// A passphrase the config leaves out is a passphrase unifig does not manage,
+// the same rule as every other omitted field (ADR-0004).
+func TestValidateAcceptsAWLANWithNoPassphrase(t *testing.T) {
+	runValidate(t, `networks:
+  - name: Guest
+    vlan: 30
+wlans:
+  - name: Home Guest
+    network: Guest
+`, nil).mustPass(t)
+}
+
+// The bounds are the Controller's own: it refuses a WPA-PSK passphrase outside
+// 8 to 64 characters, so unifig refuses one offline rather than letting an
+// apply get halfway and stop.
+func TestValidateRejectsAPassphraseTheControllerWouldRefuse(t *testing.T) {
+	for _, supplied := range []struct{ what, value, want string }{
+		{"too short", "short", "8 characters"},
+		{"too long", strings.Repeat("a", 65), "64 characters"},
+		// Caught here rather than by the Controller partway through an apply.
+		{"not printable ASCII", "pässwörd123", "printable ASCII"},
+	} {
+		t.Run(supplied.what, func(t *testing.T) {
+			runValidate(t, `networks:
+  - name: Guest
+    vlan: 30
+wlans:
+  - name: Home Guest
+    network: Guest
+    passphrase: ${GUEST_PASSPHRASE}
+`, map[string]string{"GUEST_PASSPHRASE": supplied.value}).
+				mustFailWith(t, "line 7", "wlans[0].passphrase", supplied.want)
+		})
+	}
+}
+
+// A validation message is printed, logged and pasted into bug reports, so the
+// one thing it must never contain is the secret it is complaining about.
+func TestValidateNeverEchoesAPassphrase(t *testing.T) {
+	const secret = "sh0rt"
+	for _, supplied := range []struct{ what, body, value string }{
+		{"too short", "passphrase: ${GUEST_PASSPHRASE}\n", secret},
+		{"too long", "passphrase: ${GUEST_PASSPHRASE}\n", strings.Repeat(secret, 20)},
+		// The one that pays for the secretFields list: a pattern failure quotes
+		// what it rejected everywhere else in unifig.
+		{"not printable ASCII", "passphrase: ${GUEST_PASSPHRASE}\n", "pässwörd" + secret},
+		{"the wrong type", "passphrase:\n      - ${GUEST_PASSPHRASE}\n", secret},
+	} {
+		t.Run(supplied.what, func(t *testing.T) {
+			res := runValidate(t, `networks:
+  - name: Guest
+    vlan: 30
+wlans:
+  - name: Home Guest
+    network: Guest
+    `+supplied.body, map[string]string{"GUEST_PASSPHRASE": supplied.value})
+
+			if res.exitCode != 1 {
+				t.Fatalf("validate exited %d, want 1\nstderr: %s", res.exitCode, res.stderr)
+			}
+			if strings.Contains(res.stderr, secret) {
+				t.Errorf("validate printed the passphrase it was complaining about:\n%s", res.stderr)
+			}
+		})
+	}
+}
+
 func TestValidateCatchesDuplicateNetworkNames(t *testing.T) {
 	res := runValidate(t, `networks:
   - name: IoT

@@ -12,7 +12,13 @@ networks:
     vlan: 20
     subnet: 10.20.0.1/24
 
-# Validated but not yet reconciled — `network` must name a network above.
 wlans:
+  # `network` must name a network above — that reference is checked offline by
+  # `unifig validate`, before anything touches the Controller.
   - name: Home IoT
     network: IoT
+    # Never the passphrase itself. unifig replaces ${ENV_VAR} references from
+    # the environment as it loads the file, so this line is safe to commit and
+    # the secret lives in your direnv .envrc instead. `unifig export` writes
+    # exactly this form.
+    passphrase: ${WIFI_IOT_PASSPHRASE}

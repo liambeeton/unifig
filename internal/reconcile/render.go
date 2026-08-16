@@ -43,6 +43,11 @@ func (p Plan) Write(out io.Writer) error {
 // An empty plan is `{"changes": []}` and a change with nothing to list is
 // `"fields": []`, never null, so a consumer can count and iterate without
 // special-casing the quiet cases.
+//
+// Secret fields carry `"secret": true` with both ends null. That is not a hole
+// in the output — a field is in a change only because it is changing, so the
+// entry says the passphrase is being replaced, and the null says unifig will
+// not be the thing that writes it into a build log.
 func (p Plan) WriteJSON(out io.Writer) error {
 	if p.Changes == nil {
 		p.Changes = []Change{}
@@ -68,7 +73,16 @@ func (c Change) fieldWidth() int {
 // the move. Only an update gets the arrow, because only an update is a move —
 // rendering a delete as `10.20.0.1/24 -> (none)` would read as a subnet being
 // cleared on a network that survives.
+//
+// A secret says only that it is a secret, at either end and for every action. A
+// field appears in a change at all only because it is changing, so `(hidden)`
+// under a `~` already carries the whole message — the passphrase is being
+// replaced, and unifig is not going to print it into a terminal, a CI log or a
+// pasted ticket to say so.
 func (c Change) render(field Field) string {
+	if field.Secret {
+		return "(hidden)"
+	}
 	switch c.Action {
 	case Create:
 		return value(field.To)

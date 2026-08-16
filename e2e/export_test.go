@@ -15,12 +15,19 @@ import (
 // Default network, and networks the rig seeds through the Controller's API.
 type exportedConfig struct {
 	Networks []exportedNetwork `yaml:"networks"`
+	WLANs    []exportedWLAN    `yaml:"wlans"`
 }
 
 type exportedNetwork struct {
 	Name   string `yaml:"name"`
 	VLAN   int    `yaml:"vlan"`
 	Subnet string `yaml:"subnet"`
+}
+
+type exportedWLAN struct {
+	Name       string `yaml:"name"`
+	Network    string `yaml:"network"`
+	Passphrase string `yaml:"passphrase"`
 }
 
 func exportNetworks(t *testing.T) exportedConfig {
@@ -150,6 +157,152 @@ func TestExportRefusesAControllerWithTwoNetworksSharingAName(t *testing.T) {
 	}
 	if !strings.Contains(string(res.Stderr), "Export Twice") {
 		t.Errorf("stderr should name the ambiguous network, got: %s", res.Stderr)
+	}
+}
+
+// Export's output goes straight into a git repository, so the safe form is the
+// one you get without asking. A file that arrived with a live passphrase in it
+// has already been committed by the time anyone notices.
+func TestExportRedactsPassphrasesAndNamesTheVariablesToSet(t *testing.T) {
+	seedWLANOn(t, "Export Redacted", "Default", testPassphrase)
+
+	res := testRig.runUnifig(t, []string{"export"}, nil)
+	if res.ExitCode != 0 {
+		t.Fatalf("unifig export exited %d\nstderr: %s", res.ExitCode, res.Stderr)
+	}
+
+	stdout := string(res.Stdout)
+	if strings.Contains(stdout, testPassphrase) {
+		t.Fatalf("export wrote the passphrase into the config it just told you to commit:\n%s", stdout)
+	}
+
+	const wantVar = "UNIFIG_WLAN_EXPORT_REDACTED_PASSPHRASE"
+	if !strings.Contains(stdout, "${"+wantVar+"}") {
+		t.Errorf("export should redact the passphrase to ${%s}, got:\n%s", wantVar, stdout)
+	}
+	// On stderr, so `unifig export > unifig.yaml` still tells the operator what
+	// to set while leaving stdout carrying nothing but YAML.
+	if !strings.Contains(string(res.Stderr), wantVar) {
+		t.Errorf("export should name the variable to set, got: %s", res.Stderr)
+	}
+	if strings.Contains(string(res.Stderr), testPassphrase) {
+		t.Errorf("export printed the passphrase it had just redacted: %s", res.Stderr)
+	}
+}
+
+func TestExportWithSecretsWritesThePassphraseInline(t *testing.T) {
+	seedWLANOn(t, "Export Plaintext", "Default", testPassphrase)
+
+	res := testRig.runUnifig(t, []string{"export", "--with-secrets"}, nil)
+	if res.ExitCode != 0 {
+		t.Fatalf("unifig export --with-secrets exited %d\nstderr: %s", res.ExitCode, res.Stderr)
+	}
+
+	var cfg exportedConfig
+	if err := yaml.Unmarshal(res.Stdout, &cfg); err != nil {
+		t.Fatalf("stdout is not valid YAML: %v\nstdout: %s", err, res.Stdout)
+	}
+	for _, wlan := range cfg.WLANs {
+		if wlan.Name != "Export Plaintext" {
+			continue
+		}
+		if wlan.Passphrase != testPassphrase {
+			t.Errorf("passphrase = %q, want the Controller's own %q", wlan.Passphrase, testPassphrase)
+		}
+		if wlan.Network != "Default" {
+			t.Errorf("network = %q, want %q", wlan.Network, "Default")
+		}
+		// Nothing was redacted, so there is nothing to tell the operator to set.
+		if strings.Contains(string(res.Stderr), "export UNIFIG_WLAN") {
+			t.Errorf("--with-secrets should not ask for variables it did not create: %s", res.Stderr)
+		}
+		return
+	}
+	t.Errorf("exported WLANs %v do not include the seeded one", cfg.WLANs)
+}
+
+// The brownfield path, end to end and with a secret in it: export a configured
+// Controller, put the passphrase it asked for into the environment, and the
+// very first plan is empty.
+func TestARedactedExportPlansCleanOnceItsVariablesAreSet(t *testing.T) {
+	seedWLANOn(t, "Export Round Trip WLAN", "Default", testPassphrase)
+
+	exported := testRig.runUnifig(t, []string{"export"}, nil)
+	if exported.ExitCode != 0 {
+		t.Fatalf("unifig export exited %d\nstderr: %s", exported.ExitCode, exported.Stderr)
+	}
+
+	path := filepath.Join(t.TempDir(), "unifig.yaml")
+	if err := os.WriteFile(path, exported.Stdout, 0o600); err != nil {
+		t.Fatalf("writing exported config: %v", err)
+	}
+
+	res := planEnv(t, map[string]string{
+		"UNIFIG_WLAN_EXPORT_ROUND_TRIP_WLAN_PASSPHRASE": testPassphrase,
+	}, path)
+	if res.ExitCode != exitNoChanges {
+		t.Fatalf("plan of a freshly exported config exited %d, want %d\nexported:\n%s\nplan:\n%s",
+			res.ExitCode, exitNoChanges, exported.Stdout, res.Stdout)
+	}
+}
+
+func TestExportWritesToTheFileNamedByMinusO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "unifig.yaml")
+
+	res := testRig.runUnifig(t, []string{"export", "-o", path}, nil)
+	if res.ExitCode != 0 {
+		t.Fatalf("unifig export -o exited %d\nstderr: %s", res.ExitCode, res.Stderr)
+	}
+	if len(res.Stdout) != 0 {
+		t.Errorf("stdout should stay empty when the config went to a file, got: %s", res.Stdout)
+	}
+
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("export wrote no file: %v", err)
+	}
+	var cfg exportedConfig
+	if err := yaml.Unmarshal(written, &cfg); err != nil {
+		t.Fatalf("the file export wrote is not valid YAML: %v\n%s", err, written)
+	}
+	if len(cfg.Networks) == 0 {
+		t.Errorf("the file export wrote describes no networks:\n%s", written)
+	}
+
+	// It may hold plaintext secrets under --with-secrets, so it is the owner's
+	// to read and nobody else's — and one mode either way means there is no
+	// case where the strict one was the one that got forgotten.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("export wrote %s with mode %04o, want 0600", path, mode)
+	}
+}
+
+// An export that cannot reach the Controller must not take the operator's
+// existing config with it. The file is opened only once everything that could
+// fail has succeeded.
+func TestAFailedExportLeavesTheOutputFileAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "unifig.yaml")
+	const existing = "networks:\n  - name: Written By Hand\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	res := testRig.runUnifig(t, []string{"export", "-o", path},
+		map[string]string{"UNIFIG_API_KEY": "not-the-rigs-key"})
+
+	if res.ExitCode != 1 {
+		t.Errorf("exit code = %d, want 1", res.ExitCode)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the file back: %v", err)
+	}
+	if string(after) != existing {
+		t.Errorf("a failed export overwrote the file it was pointed at:\n%s", after)
 	}
 }
 

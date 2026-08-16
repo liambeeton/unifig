@@ -36,9 +36,13 @@ commands:
 flags:
   --json            plan only: write the plan as JSON instead of prose
   --auto-approve    apply only: do not ask before changing the Controller
-  --prune           plan and apply: delete networks the config does not name.
-                    Off by default; objects the Controller marks undeletable,
-                    such as the built-in Default network, are never pruned
+  --prune           plan and apply: delete Resources the config does not name.
+                    Off by default; only sections the config file has are at
+                    stake, and objects the Controller marks undeletable, such
+                    as the built-in Default network, are never pruned
+  -o <file>         export only: write the config to a file instead of stdout
+  --with-secrets    export only: write passphrases in plaintext instead of as
+                    the ${ENV_VAR} references export redacts them to
 
 exit codes:
   0  success; for plan, the Controller already matches the config
@@ -67,7 +71,7 @@ var errChangesPending = errors.New("changes pending")
 // Run executes one unifig invocation and returns its process exit code:
 // 0 on success, 1 on any error, and 2 when plan found changes pending.
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	err := dispatch(ctx, args, stdin, stdout)
+	err := dispatch(ctx, args, stdin, stdout, stderr)
 	switch {
 	case errors.Is(err, errUsage):
 		_, _ = fmt.Fprint(stderr, usage)
@@ -81,7 +85,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	return 0
 }
 
-func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errUsage
 	}
@@ -92,10 +96,7 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	case "apply":
 		return runApply(ctx, rest, stdin, stdout)
 	case "export":
-		if len(rest) != 0 {
-			return errUsage
-		}
-		return runExport(ctx, stdout)
+		return runExport(ctx, rest, stdout, stderr)
 	case "validate":
 		return runValidate(rest, stdout)
 	default:
@@ -130,7 +131,7 @@ func connectionFromEnv() (connection, error) {
 // runPlan shows what apply would do and says so in its exit code, so that a
 // pipeline or a git hook can gate on drift without reading the output.
 func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
-	flags, positional, err := splitFlags(args, "json", "prune")
+	flags, positional, err := splitFlags(args, boolean("json"), boolean("prune"))
 	if err != nil {
 		return err
 	}
@@ -144,7 +145,7 @@ func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 
-	if flags["json"] {
+	if flags.has("json") {
 		err = plan.WriteJSON(stdout)
 	} else {
 		err = plan.Write(stdout)
@@ -162,7 +163,7 @@ func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
 // always shows what it planned: there is no way to reach the Controller
 // through unifig without the changes having been printed first.
 func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	flags, positional, err := splitFlags(args, "auto-approve", "prune")
+	flags, positional, err := splitFlags(args, boolean("auto-approve"), boolean("prune"))
 	if err != nil {
 		return err
 	}
@@ -182,7 +183,7 @@ func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return nil
 	}
 
-	if !flags["auto-approve"] {
+	if !flags.has("auto-approve") {
 		approved, err := confirm(stdin, stdout)
 		if err != nil {
 			return err
@@ -197,8 +198,8 @@ func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 // options turns the flags a verb was given into the engine's terms. Both verbs
 // go through it so that `plan --prune` and `apply --prune` cannot come to mean
 // different things, which is the same reason they share computePlan.
-func options(flags map[string]bool) reconcile.Options {
-	return reconcile.Options{Prune: flags["prune"]}
+func options(flags flags) reconcile.Options {
+	return reconcile.Options{Prune: flags.has("prune")}
 }
 
 // computePlan is the whole read-only half of a reconcile: load the config,
@@ -218,7 +219,7 @@ func computePlan(ctx context.Context, path string, opts reconcile.Options) (unif
 	if err != nil {
 		return nil, reconcile.Plan{}, fmt.Errorf("connecting to Controller at %s: %w", conn.url, err)
 	}
-	plan, err := reconcile.Networks(ctx, client, site, cfg, opts)
+	plan, err := reconcile.ComputePlan(ctx, client, site, cfg, opts)
 	if err != nil {
 		return nil, reconcile.Plan{}, err
 	}
@@ -244,7 +245,20 @@ func confirm(stdin io.Reader, stdout io.Writer) (bool, error) {
 	}
 }
 
-func runExport(ctx context.Context, stdout io.Writer) error {
+// runExport writes the Controller's configuration as config unifig can read
+// back, with its secrets replaced by ${ENV_VAR} references unless asked
+// otherwise.
+func runExport(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	flags, positional, err := splitFlags(args, boolean("with-secrets"), valued("o"))
+	if err != nil {
+		return err
+	}
+	if len(positional) != 0 {
+		// Export takes no file argument: what it reads is the Controller, and
+		// where it writes is -o.
+		return errUsage
+	}
+
 	conn, err := connectionFromEnv()
 	if err != nil {
 		return err
@@ -253,11 +267,54 @@ func runExport(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("connecting to Controller at %s: %w", conn.url, err)
 	}
-	cfg, err := export.Networks(ctx, client, site)
+	cfg, indescribable, err := reconcile.Project(ctx, client, site)
 	if err != nil {
-		return fmt.Errorf("exporting networks: %w", err)
+		return fmt.Errorf("exporting the Controller's configuration: %w", err)
 	}
-	return config.WriteYAML(stdout, cfg)
+
+	var vars []string
+	if !flags.has("with-secrets") {
+		cfg, vars = export.Redact(cfg)
+	}
+
+	// Everything that could fail has failed by now, which is why the file is
+	// only opened here: an export that could not reach the Controller must not
+	// have truncated the operator's existing unifig.yaml on the way past.
+	if err := writeConfig(flags.value("o"), stdout, cfg); err != nil {
+		return err
+	}
+
+	// Both notices go to stderr, so that `unifig export > unifig.yaml` still
+	// reaches the operator's terminal while stdout carries nothing but YAML.
+	if err := export.WriteVariables(stderr, vars); err != nil {
+		return err
+	}
+	return export.WriteOmissions(stderr, indescribable)
+}
+
+// writeConfig writes the config to path, or to stdout when there is no path.
+//
+// The file is created readable only by its owner. That matters for
+// --with-secrets, where it holds passphrases in the clear, and applying the
+// same mode either way means there is no case where the strict one was the one
+// that got forgotten.
+func writeConfig(path string, stdout io.Writer, cfg config.Config) error {
+	if path == "" {
+		return config.WriteYAML(stdout, cfg)
+	}
+
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("opening %s to write: %w", path, err)
+	}
+	if err := config.WriteYAML(file, cfg); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
 }
 
 // runValidate is config.Load and nothing else. That is the point: validate's
@@ -296,30 +353,82 @@ func configPath(positional []string) (string, error) {
 	}
 }
 
+// flagSpec is one flag a verb accepts. boolean flags stand alone; a valued one
+// takes the argument after it, or the text after an `=`.
+type flagSpec struct {
+	name  string
+	takes bool
+}
+
+func boolean(name string) flagSpec { return flagSpec{name: name} }
+func valued(name string) flagSpec  { return flagSpec{name: name, takes: true} }
+
+// flags is what one verb was actually given.
+type flags struct {
+	given  map[string]bool
+	values map[string]string
+}
+
+func (f flags) has(name string) bool     { return f.given[name] }
+func (f flags) value(name string) string { return f.values[name] }
+
 // splitFlags separates the flags a verb accepts from its positional
 // arguments, in whichever order they were given.
 //
-// unifig's flags are all plain booleans, and hand-rolling the split buys the
-// one thing an operator would notice: `unifig plan unifig.yaml --json` does
-// what it looks like. The standard library's flag package stops parsing at the
-// first non-flag argument, so the same command there would silently ignore
-// --json and print prose.
-func splitFlags(args []string, accepted ...string) (map[string]bool, []string, error) {
-	set := make(map[string]bool, len(accepted))
+// Hand-rolling the split buys the one thing an operator would notice: `unifig
+// plan unifig.yaml --json` does what it looks like. The standard library's flag
+// package stops parsing at the first non-flag argument, so the same command
+// there would silently ignore --json and print prose.
+//
+// A flag a verb does not accept is a usage error rather than something ignored,
+// and so is a value given to a boolean or missing from a valued one: every one
+// of those is an operator who meant something unifig is not about to do.
+func splitFlags(args []string, accepted ...flagSpec) (flags, []string, error) {
+	parsed := flags{given: map[string]bool{}, values: map[string]string{}}
 	var positional []string
 
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if !strings.HasPrefix(arg, "-") {
 			positional = append(positional, arg)
 			continue
 		}
-		name := strings.TrimLeft(arg, "-")
-		if !slices.Contains(accepted, name) {
-			return nil, nil, errUsage
+
+		name, attached, joined := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		spec, ok := accept(accepted, name)
+		if !ok {
+			return flags{}, nil, errUsage
 		}
-		set[name] = true
+		parsed.given[name] = true
+		if !spec.takes {
+			if joined {
+				return flags{}, nil, errUsage
+			}
+			continue
+		}
+
+		value := attached
+		if !joined {
+			i++
+			if i == len(args) {
+				return flags{}, nil, errUsage
+			}
+			value = args[i]
+		}
+		if value == "" {
+			return flags{}, nil, errUsage
+		}
+		parsed.values[name] = value
 	}
-	return set, positional, nil
+	return parsed, positional, nil
+}
+
+func accept(accepted []flagSpec, name string) (flagSpec, bool) {
+	i := slices.IndexFunc(accepted, func(spec flagSpec) bool { return spec.name == name })
+	if i < 0 {
+		return flagSpec{}, false
+	}
+	return accepted[i], true
 }
 
 func connect(conn connection) (unifi.Client, error) {

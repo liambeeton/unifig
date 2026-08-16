@@ -58,6 +58,10 @@ Offline schema and cross-reference checking of the config files; touches no API.
 Replacing `${ENV_VAR}` references in config values from the environment as the file loads. Values only, never keys; the result is always text; substituted values are never rescanned. This is how secrets stay out of the committed file.
 _Avoid_: substitution, templating (the latter implies logic, of which there is none)
 
+**Secret**:
+A modelled field whose value unifig will not print — a WLAN passphrase, a PPPoE password, a DNS stamp. It is a property of the field, not of where the value came from: a passphrase typed straight into the YAML is redacted exactly like one Interpolation supplied. Secrets are read back from the Controller so they can be diffed, and redacted everywhere they could leave: Plan prose and JSON, validation messages, and Export.
+_Avoid_: credential (too narrow), sensitive field
+
 **Export**:
 Generating YAML config from the live Controller state. The brownfield adoption path.
 _Avoid_: import (direction is Controller → files)

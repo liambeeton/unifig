@@ -26,7 +26,7 @@ func TestWrittenConfigValidates(t *testing.T) {
 			{Name: "IoT", VLAN: 20, Subnet: "10.20.0.1/24"},
 		},
 		WLANs: []config.WLAN{
-			{Name: "Home IoT", Network: "IoT"},
+			{Name: "Home IoT", Network: "IoT", Passphrase: "correct horse battery"},
 		},
 	}
 
@@ -65,9 +65,27 @@ func TestWrittenConfigValidates(t *testing.T) {
 // The example is what an operator copies to start from, and it carries the
 // modeline that documents how to wire the schema into an editor. If it stops
 // validating, the documentation is wrong.
+//
+// The variable set here is the one the example tells its reader to export, so
+// this is the example being loaded the way it is meant to be — and it fails if
+// the two ever stop naming the same thing.
 func TestTheShippedExampleValidates(t *testing.T) {
+	t.Setenv("WIFI_IOT_PASSPHRASE", "correct horse battery")
+
 	if _, err := config.Load(filepath.Join("..", "..", "examples", "unifig.yaml")); err != nil {
 		t.Fatalf("examples/unifig.yaml does not validate: %v", err)
+	}
+}
+
+// And the other half: an example whose secret is written inline would be an
+// example teaching the operator to commit one.
+func TestTheShippedExampleKeepsItsSecretInTheEnvironment(t *testing.T) {
+	example, err := os.ReadFile(filepath.Join("..", "..", "examples", "unifig.yaml"))
+	if err != nil {
+		t.Fatalf("reading example: %v", err)
+	}
+	if !strings.Contains(string(example), "passphrase: ${") {
+		t.Errorf("examples/unifig.yaml should show a passphrase as a ${ENV_VAR} reference:\n%s", example)
 	}
 }
 

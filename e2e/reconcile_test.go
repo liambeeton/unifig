@@ -25,20 +25,30 @@ const (
 	exitChangesPending = 2
 )
 
-// managedNetwork writes a config file describing one network, and deletes that
-// network from the Controller when the test ends. Tests use distinct names so
-// that one test's leftovers cannot become another's live state.
-func managedNetwork(t *testing.T, body string, names ...string) string {
+// configFile writes a config file for the test and returns its path.
+func configFile(t *testing.T, body string) string {
 	t.Helper()
-	for _, name := range names {
-		t.Cleanup(func() { testRig.deleteNetworksNamed(t, name) })
-	}
-
 	path := filepath.Join(t.TempDir(), "unifig.yaml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("writing config: %v", err)
 	}
 	return path
+}
+
+// managedNetwork writes a config file describing networks, and deletes the
+// named ones from the Controller when the test ends. Tests use distinct names
+// so that one test's leftovers cannot become another's live state.
+func managedNetwork(t *testing.T, body string, names ...string) string {
+	t.Helper()
+	cleanupNetworks(t, names...)
+	return configFile(t, body)
+}
+
+func cleanupNetworks(t *testing.T, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		t.Cleanup(func() { testRig.deleteNetworksNamed(t, name) })
+	}
 }
 
 // liveNetworksExcept is a config body naming every network unifig manages on
@@ -64,9 +74,66 @@ func liveNetworksExcept(t *testing.T, excluded ...string) string {
 	return b.String()
 }
 
+// liveWLANEntriesExcept is liveNetworksExcept for the other section, minus the
+// section header so a test can add entries of its own. A WLAN entry needs the
+// network it is on as well as its name, so this reads the binding back off the
+// Controller rather than assuming one.
+//
+// A WLAN bound to a network unifig does not manage — or, on the demo Controller,
+// to none at all — is skipped, because there is no name to write for it. That
+// mirrors what unifig does with the same WLAN, and the mirroring is deliberate:
+// the config a prune test writes has to name everything unifig would otherwise
+// delete, so an entry unifig cannot even see must not appear in it.
+func liveWLANEntriesExcept(t *testing.T, excluded ...string) string {
+	t.Helper()
+
+	networks := testRig.managedNetworkNamesByID(t)
+	var entries strings.Builder
+	for _, wlan := range testRig.wlans(t) {
+		name, _ := wlan["name"].(string)
+		if slices.Contains(excluded, name) {
+			continue
+		}
+		id, _ := wlan["networkconf_id"].(string)
+		if networks[id] == "" {
+			continue
+		}
+		fmt.Fprintf(&entries, "  - name: %q\n    network: %q\n", name, networks[id])
+	}
+	return entries.String()
+}
+
+// wlanSection wraps WLAN entries in the section header they belong to, writing
+// the `wlans: []` form when there are none.
+//
+// The empty form matters: a section the file leaves out and one it declares
+// empty are different statements (ADR-0006), and a prune test that means to put
+// WLANs at stake needs the second.
+func wlanSection(entries string) string {
+	if entries == "" {
+		return "wlans: []\n"
+	}
+	return "wlans:\n" + entries
+}
+
+// liveConfigExcept is a whole config body naming every Resource unifig manages
+// on the Controller right now, apart from the named ones — both sections, so a
+// prune test puts exactly its exclusions at stake and nothing else.
+func liveConfigExcept(t *testing.T, excluded ...string) string {
+	t.Helper()
+	return liveNetworksExcept(t, excluded...) + wlanSection(liveWLANEntriesExcept(t, excluded...))
+}
+
 func plan(t *testing.T, args ...string) result {
 	t.Helper()
-	res := testRig.runUnifig(t, append([]string{"plan"}, args...), nil)
+	return planEnv(t, nil, args...)
+}
+
+// planEnv is plan for a config whose ${ENV_VAR} references have to resolve to
+// something — which, for anything with a passphrase in it, is all of them.
+func planEnv(t *testing.T, env map[string]string, args ...string) result {
+	t.Helper()
+	res := testRig.runUnifig(t, append([]string{"plan"}, args...), env)
 	t.Logf("unifig plan %v -> exit %d\n%s", args, res.ExitCode, res.Stdout)
 	return res
 }
@@ -75,7 +142,12 @@ func plan(t *testing.T, args ...string) result {
 // thing to test on its own, not a thing to work around in every other test.
 func apply(t *testing.T, args ...string) result {
 	t.Helper()
-	res := testRig.runUnifig(t, append([]string{"apply", "--auto-approve"}, args...), nil)
+	return applyEnv(t, nil, args...)
+}
+
+func applyEnv(t *testing.T, env map[string]string, args ...string) result {
+	t.Helper()
+	res := testRig.runUnifig(t, append([]string{"apply", "--auto-approve"}, args...), env)
 	t.Logf("unifig apply %v -> exit %d\n%s\n%s", args, res.ExitCode, res.Stdout, res.Stderr)
 	if res.ExitCode != 0 {
 		t.Fatalf("unifig apply exited %d\nstdout: %s\nstderr: %s", res.ExitCode, res.Stdout, res.Stderr)
@@ -991,7 +1063,12 @@ func TestPlanWithABadAPIKeyIsAnErrorNotChangesPending(t *testing.T) {
 // about the reconcile that was actually asked for.
 func assertNoChangesPending(t *testing.T, args ...string) {
 	t.Helper()
-	res := plan(t, args...)
+	assertNoChangesPendingEnv(t, nil, args...)
+}
+
+func assertNoChangesPendingEnv(t *testing.T, env map[string]string, args ...string) {
+	t.Helper()
+	res := planEnv(t, env, args...)
 	if res.ExitCode != exitNoChanges {
 		t.Errorf("re-planning after apply exited %d, want %d — apply is not idempotent\nplan:\n%s",
 			res.ExitCode, exitNoChanges, res.Stdout)

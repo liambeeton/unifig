@@ -118,8 +118,18 @@ func describe(invalid *jsonschema.ValidationError, doc document) []Problem {
 		return []Problem{{Line: at.line, Path: at.path, Message: text}}
 
 	case *kind.Pattern:
-		text := fmt.Sprintf("%q is not in the expected format", k.Got)
-		if hint, ok := patternHints[fieldShape(at.path)]; ok {
+		// The offending value is quoted, because "10.20.0.1 is not in the
+		// expected format" is what tells an operator which of the things on
+		// that line was wrong — unless the field is a secret, which is printed,
+		// logged and pasted into bug reports, and is none of those things. A
+		// secret gets the expectation without the value, so the schema can
+		// constrain one without validate leaking it.
+		shape := fieldShape(at.path)
+		text := "is not in the expected format"
+		if !secretFields[shape] {
+			text = fmt.Sprintf("%q %s", k.Got, text)
+		}
+		if hint, ok := patternHints[shape]; ok {
 			text += "; expected " + hint
 		}
 		return []Problem{{Line: at.line, Path: at.path, Message: text}}
@@ -130,6 +140,13 @@ func describe(invalid *jsonschema.ValidationError, doc document) []Problem {
 		}
 		return []Problem{{Line: at.line, Path: at.path, Message: fmt.Sprintf(
 			"must be at least %d characters", k.Want)}}
+
+	// Length failures name the bound and never the value, so they are safe to
+	// report about a passphrase without any of the care the Pattern case above
+	// needs.
+	case *kind.MaxLength:
+		return []Problem{{Line: at.line, Path: at.path, Message: fmt.Sprintf(
+			"must be at most %d characters", k.Want)}}
 
 	case *kind.Minimum:
 		return []Problem{{Line: at.line, Path: at.path, Message: fmt.Sprintf(
@@ -149,7 +166,20 @@ func describe(invalid *jsonschema.ValidationError, doc document) []Problem {
 // A pattern with no hint still reports the offending value, just without the
 // example — so adding a pattern to the schema can never break this file.
 var patternHints = map[string]string{
-	"networks.subnet": "a gateway address and prefix length, e.g. 10.20.0.1/24",
+	"networks.subnet":  "a gateway address and prefix length, e.g. 10.20.0.1/24",
+	"wlans.passphrase": "printable ASCII only — no accented letters, tabs or emoji",
+}
+
+// secretFields are the fields whose value must never appear in a message,
+// keyed the same way as patternHints. Nothing here changes what is *accepted*;
+// it changes only what a complaint is allowed to quote.
+//
+// It is a list rather than something read off the schema because JSON Schema
+// has no way to say "secret" — and the consequence of the two drifting is bad
+// enough in one direction only: a field added here that is not secret loses a
+// little detail from one message, while a secret left out of it is printed.
+var secretFields = map[string]bool{
+	"wlans.passphrase": true,
 }
 
 var arrayIndex = regexp.MustCompile(`\[\d+\]`)

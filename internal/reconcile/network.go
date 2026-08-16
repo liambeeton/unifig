@@ -21,18 +21,62 @@ var lanPurposes = map[string]bool{
 	"vlan-only": true,
 }
 
-// Managed reports whether a live networkconf entry is one of the Network
+// managed reports whether a live networkconf entry is one of the Network
 // Resources unifig manages.
-func Managed(network unifi.Network) bool { return lanPurposes[network.Purpose] }
+func managed(network unifi.Network) bool { return lanPurposes[network.Purpose] }
 
-// FromLive projects a live network into the config that would describe it.
+// planNetworks is the network half of a reconcile.
+func planNetworks(cfg config.Config, live map[string]unifi.Network, bound bindings, opts Options) []Change {
+	changes := make([]Change, 0, len(cfg.Networks))
+	named := make(map[string]bool, len(cfg.Networks))
+	for _, desired := range cfg.Networks {
+		named[desired.Name] = true
+
+		current, exists := live[desired.Name]
+		if !exists {
+			changes = append(changes, createNetwork(desired, bound))
+			continue
+		}
+		if change, differs := updateNetwork(desired, current); differs {
+			changes = append(changes, change)
+		}
+	}
+	if opts.Prune {
+		changes = append(changes, pruneNetworks(live, named)...)
+	}
+	return changes
+}
+
+// listNetworks reads the site's networks and keeps the ones unifig manages.
+func listNetworks(ctx context.Context, client unifi.Client, site string) ([]unifi.Network, error) {
+	all, err := client.ListNetwork(ctx, site)
+	if err != nil {
+		return nil, fmt.Errorf("listing networks for site %q: %w", site, err)
+	}
+
+	kept := make([]unifi.Network, 0, len(all))
+	names := make([]string, 0, len(all))
+	for _, network := range all {
+		if managed(network) {
+			kept = append(kept, network)
+			names = append(names, network.Name)
+		}
+	}
+	if err := uniquelyNamed(Network, names); err != nil {
+		return nil, err
+	}
+	return kept, nil
+}
+
+// fromLiveNetwork projects a live network into the config that would describe
+// it.
 //
 // Export uses this too, and that is the point rather than a coincidence. The
 // config export writes has to be config that plans clean, and the only way to
 // guarantee that is for the projection export writes and the projection plan
 // compares against to be one function — a second implementation could drift,
 // and the symptom would be an operator's brand-new export showing changes.
-func FromLive(network unifi.Network) config.Network {
+func fromLiveNetwork(network unifi.Network) config.Network {
 	desired := config.Network{Name: network.Name, Subnet: network.IPSubnet}
 	if network.VLANEnabled {
 		desired.VLAN = network.VLAN
@@ -41,16 +85,23 @@ func FromLive(network unifi.Network) config.Network {
 }
 
 // createNetwork is the Change for a network the Controller does not have.
-func createNetwork(desired config.Network) Change {
+func createNetwork(desired config.Network, bound bindings) Change {
 	return Change{
 		Action:   Create,
-		Resource: "network",
+		Resource: Network,
 		Name:     desired.Name,
-		Fields:   setFields(desired),
+		Fields:   setNetworkFields(desired),
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			network := newNetwork(desired)
-			_, err := client.CreateNetwork(ctx, site, &network)
-			return err
+			created, err := client.CreateNetwork(ctx, site, &network)
+			if err != nil {
+				return err
+			}
+			// A WLAN planned onto this network has been waiting for exactly
+			// this: until now there was no ID to attach it to. Recording it
+			// here is what lets the two apply in one pass.
+			bound.ids[desired.Name] = created.ID
+			return nil
 		},
 	}
 }
@@ -58,7 +109,7 @@ func createNetwork(desired config.Network) Change {
 // updateNetwork is the Change that brings a live network in line with the
 // config, and whether there is one to make at all.
 func updateNetwork(desired config.Network, live unifi.Network) (Change, bool) {
-	fields := changedFields(FromLive(live), desired)
+	fields := changedNetworkFields(fromLiveNetwork(live), desired)
 	if len(fields) == 0 {
 		return Change{}, false
 	}
@@ -71,7 +122,7 @@ func updateNetwork(desired config.Network, live unifi.Network) (Change, bool) {
 
 	return Change{
 		Action:   Update,
-		Resource: "network",
+		Resource: Network,
 		Name:     desired.Name,
 		Fields:   fields,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
@@ -81,7 +132,7 @@ func updateNetwork(desired config.Network, live unifi.Network) (Change, bool) {
 			// instead of having them reset by an object unifig built from
 			// scratch. It also carries the Controller ID the update needs.
 			updated := live
-			overwriteManaged(&updated, desired)
+			overwriteManagedNetwork(&updated, desired)
 			if relocated {
 				updated.DHCPDStart, updated.DHCPDStop = pool.start, pool.stop
 			}
@@ -92,7 +143,7 @@ func updateNetwork(desired config.Network, live unifi.Network) (Change, bool) {
 }
 
 // pruneNetworks is the Changes that would delete every live network the config
-// does not name — prune, and the only place in the engine that proposes
+// does not name — prune, and one of the two places in the engine that proposes
 // destroying anything.
 //
 // It walks the live networks rather than the config, which is the whole shape
@@ -101,7 +152,7 @@ func updateNetwork(desired config.Network, live unifi.Network) (Change, bool) {
 func pruneNetworks(live map[string]unifi.Network, named map[string]bool) []Change {
 	changes := make([]Change, 0, len(live))
 	for name, network := range live {
-		if named[name] || !prunable(network) {
+		if named[name] || network.NoDelete {
 			continue
 		}
 		changes = append(changes, deleteNetwork(network))
@@ -109,21 +160,19 @@ func pruneNetworks(live map[string]unifi.Network, named map[string]bool) []Chang
 	return changes
 }
 
-// prunable reports whether the Controller would let this network be deleted.
-//
-// ADR-0005: the exemption is the Controller's own attr_no_delete marker, not a
-// list of built-in names unifig keeps. An exempt network is then left out of
-// the plan rather than listed as a change that will not happen — it is not a
-// change, and a plan is a list of changes.
-func prunable(network unifi.Network) bool { return !network.NoDelete }
-
 // deleteNetwork is the Change that removes a live network.
+//
+// Whether the Controller would allow it at all is read off the object's own
+// attr_no_delete marker rather than from a list of built-in names unifig keeps
+// (ADR-0005), and an exempt network is left out of the plan rather than listed
+// as a change that will not happen — it is not a change, and a plan is a list
+// of changes.
 func deleteNetwork(live unifi.Network) Change {
 	return Change{
 		Action:   Delete,
-		Resource: "network",
+		Resource: Network,
 		Name:     live.Name,
-		Fields:   currentFields(FromLive(live)),
+		Fields:   currentNetworkFields(fromLiveNetwork(live)),
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			return client.DeleteNetwork(ctx, site, live.ID)
 		},
@@ -177,23 +226,10 @@ func within(subnet, address string) bool {
 	return prefix.Contains(addr)
 }
 
-// annotate attaches a note to the named field, and does nothing if the change
-// does not include it. A consequence with nothing to hang it off is a
-// consequence of something that is not happening, which is not a case worth
-// distinguishing from having nothing to say.
-func annotate(fields []Field, name, note string) {
-	for i := range fields {
-		if fields[i].Name == name {
-			fields[i].Note = note
-			return
-		}
-	}
-}
-
-// setFields lists what a create would set. Name is left out: it is the
+// setNetworkFields lists what a create would set. Name is left out: it is the
 // Resource's identity, already named by the Change itself, and repeating it as
 // a field would read as though it were being changed.
-func setFields(desired config.Network) []Field {
+func setNetworkFields(desired config.Network) []Field {
 	fields := make([]Field, 0, 2)
 	if desired.VLAN != 0 {
 		fields = append(fields, Field{Name: "vlan", To: desired.VLAN})
@@ -204,14 +240,14 @@ func setFields(desired config.Network) []Field {
 	return fields
 }
 
-// currentFields is setFields' mirror: what a delete would take away, on the
-// From side because there is no value on the other one.
+// currentNetworkFields is setNetworkFields' mirror: what a delete would take
+// away, on the From side because there is no value on the other one.
 //
 // A delete lists fields at all because of who reads it. Prune's plan is the
 // only place an operator sees what is inside a network before agreeing to lose
 // it, and "the VLAN 20 one on 10.20.0.1/24" is how they will recognise whether
 // it is the network they meant.
-func currentFields(current config.Network) []Field {
+func currentNetworkFields(current config.Network) []Field {
 	fields := make([]Field, 0, 2)
 	if current.VLAN != 0 {
 		fields = append(fields, Field{Name: "vlan", From: current.VLAN})
@@ -222,7 +258,7 @@ func currentFields(current config.Network) []Field {
 	return fields
 }
 
-// changedFields lists the managed fields on which the Controller and the
+// changedNetworkFields lists the managed fields on which the Controller and the
 // config disagree — nothing else is a change, however different the two
 // objects are elsewhere.
 //
@@ -232,7 +268,7 @@ func currentFields(current config.Network) []Field {
 // must match a CIDR — so reading omission as removal would delete a setting
 // the operator could never have asked to delete, which is the one thing this
 // tool exists not to do.
-func changedFields(current, desired config.Network) []Field {
+func changedNetworkFields(current, desired config.Network) []Field {
 	fields := make([]Field, 0, 2)
 	if desired.VLAN != 0 && current.VLAN != desired.VLAN {
 		fields = append(fields, Field{Name: "vlan", From: number(current.VLAN), To: desired.VLAN})
@@ -243,33 +279,16 @@ func changedFields(current, desired config.Network) []Field {
 	return fields
 }
 
-// number and text render a field the Controller does not have yet as nothing
-// at all rather than as 0 or "", so that putting a VLAN on an untagged network
-// reads as `(none) -> 20` instead of the `0 -> 20` that would look like a VLAN
-// ID the network used to have.
-func number(value int) any {
-	if value == 0 {
-		return nil
-	}
-	return value
-}
-
-func text(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
-}
-
-// overwriteManaged writes the config's values onto a Controller network and
-// touches nothing else. It is the single place that decides which fields
+// overwriteManagedNetwork writes the config's values onto a Controller network
+// and touches nothing else. It is the single place that decides which fields
 // unifig owns, which is what stops plan (what would change) and apply (what
 // does change) from ever disagreeing about the answer.
 //
-// "Owns" is per field and per file, not per type: the omissions changedFields
-// declines to report are the same omissions this declines to write, so a
-// network named in the config keeps every setting the config did not name.
-func overwriteManaged(network *unifi.Network, desired config.Network) {
+// "Owns" is per field and per file, not per type: the omissions
+// changedNetworkFields declines to report are the same omissions this declines
+// to write, so a network named in the config keeps every setting the config did
+// not name.
+func overwriteManagedNetwork(network *unifi.Network, desired config.Network) {
 	network.Name = desired.Name
 	if desired.VLAN != 0 {
 		network.VLAN = desired.VLAN
@@ -290,7 +309,7 @@ func overwriteManaged(network *unifi.Network, desired config.Network) {
 //
 // They apply on create only. An operator who afterwards changes the DHCP
 // range, turns off mDNS or narrows the lease time keeps those edits forever:
-// updates go through overwriteManaged, which never touches anything here.
+// updates go through overwriteManagedNetwork, which never touches anything here.
 func newNetwork(desired config.Network) unifi.Network {
 	network := unifi.Network{
 		Purpose:               "corporate",
@@ -302,7 +321,7 @@ func newNetwork(desired config.Network) unifi.Network {
 		DomainName:            "localdomain",
 		IPV6InterfaceType:     "none",
 	}
-	overwriteManaged(&network, desired)
+	overwriteManagedNetwork(&network, desired)
 
 	// A subnet too small to hold a pool (or absent altogether) gets no DHCP
 	// server rather than a broken one.

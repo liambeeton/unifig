@@ -25,6 +25,12 @@ import (
 // Config is the whole unifig.yaml document. It grows one section per managed
 // area; the shape here is mirrored field-for-field by the published JSON
 // Schema, which is what actually validates a file.
+//
+// A nil section and an empty one mean different things, and the difference is
+// load-bearing for prune: a file with no `wlans:` key at all states nothing
+// about WLANs, while `wlans: []` states that there should be none. Load
+// preserves that distinction, so nothing here may normalise a nil section into
+// an empty slice.
 type Config struct {
 	Networks []Network `yaml:"networks,omitempty"`
 	WLANs    []WLAN    `yaml:"wlans,omitempty"`
@@ -38,17 +44,20 @@ type Network struct {
 	Subnet string `yaml:"subnet,omitempty"`
 }
 
-// WLAN is a wireless network Resource, keyed by name and bound to the Network
-// its clients land on.
+// WLAN is a wireless network Resource, keyed by name (the SSID) and bound to
+// the Network its clients land on.
 //
-// Only the natural key and the cross-reference are modelled so far: WLANs are
-// not reconciled yet (issue #5 owns that), and this exists now because a
-// reference between Resources is the thing cross-reference validation has to
-// check. The schema rejects any other WLAN field rather than accepting config
-// unifig would silently ignore.
+// Passphrase is the first secret unifig models, and the reason it can live in a
+// committed file at all is that it is written as a `${ENV_VAR}` reference and
+// resolved by Load. Nothing downstream distinguishes a passphrase that came
+// from the environment from one typed into the file — by the time this struct
+// exists, interpolation has already happened — so everywhere the value could
+// escape (plan output, export) treats it as a secret regardless of where it
+// came from.
 type WLAN struct {
-	Name    string `yaml:"name"`
-	Network string `yaml:"network"`
+	Name       string `yaml:"name"`
+	Network    string `yaml:"network"`
+	Passphrase string `yaml:"passphrase,omitempty"`
 }
 
 // DefaultPath is where unifig looks for config when no file is named.
