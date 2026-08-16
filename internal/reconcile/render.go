@@ -64,12 +64,19 @@ func (c Change) fieldWidth() int {
 }
 
 // render writes one field the way the action means it: a create states the
-// value it will set, an update states both ends of the move.
+// value it will set, a delete the value being lost, and an update both ends of
+// the move. Only an update gets the arrow, because only an update is a move —
+// rendering a delete as `10.20.0.1/24 -> (none)` would read as a subnet being
+// cleared on a network that survives.
 func (c Change) render(field Field) string {
-	if c.Action == Create {
+	switch c.Action {
+	case Create:
 		return value(field.To)
+	case Delete:
+		return value(field.From)
+	default:
+		return value(field.From) + " -> " + value(field.To)
 	}
-	return value(field.From) + " -> " + value(field.To)
 }
 
 func value(v any) string {
@@ -87,7 +94,7 @@ func (p Plan) summary() string {
 		counts[change.Action]++
 	}
 	var parts []string
-	for _, action := range []Action{Create, Update} {
+	for _, action := range []Action{Create, Update, Delete} {
 		if counts[action] > 0 {
 			parts = append(parts, fmt.Sprintf("%d to %s", counts[action], action))
 		}

@@ -36,6 +36,9 @@ commands:
 flags:
   --json            plan only: write the plan as JSON instead of prose
   --auto-approve    apply only: do not ask before changing the Controller
+  --prune           plan and apply: delete networks the config does not name.
+                    Off by default; objects the Controller marks undeletable,
+                    such as the built-in Default network, are never pruned
 
 exit codes:
   0  success; for plan, the Controller already matches the config
@@ -127,7 +130,7 @@ func connectionFromEnv() (connection, error) {
 // runPlan shows what apply would do and says so in its exit code, so that a
 // pipeline or a git hook can gate on drift without reading the output.
 func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
-	flags, positional, err := splitFlags(args, "json")
+	flags, positional, err := splitFlags(args, "json", "prune")
 	if err != nil {
 		return err
 	}
@@ -136,7 +139,7 @@ func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 
-	_, plan, err := computePlan(ctx, path)
+	_, plan, err := computePlan(ctx, path, options(flags))
 	if err != nil {
 		return err
 	}
@@ -159,7 +162,7 @@ func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
 // always shows what it planned: there is no way to reach the Controller
 // through unifig without the changes having been printed first.
 func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	flags, positional, err := splitFlags(args, "auto-approve")
+	flags, positional, err := splitFlags(args, "auto-approve", "prune")
 	if err != nil {
 		return err
 	}
@@ -168,7 +171,7 @@ func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return err
 	}
 
-	client, plan, err := computePlan(ctx, path)
+	client, plan, err := computePlan(ctx, path, options(flags))
 	if err != nil {
 		return err
 	}
@@ -191,11 +194,18 @@ func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	return plan.Apply(ctx, client, site, stdout)
 }
 
+// options turns the flags a verb was given into the engine's terms. Both verbs
+// go through it so that `plan --prune` and `apply --prune` cannot come to mean
+// different things, which is the same reason they share computePlan.
+func options(flags map[string]bool) reconcile.Options {
+	return reconcile.Options{Prune: flags["prune"]}
+}
+
 // computePlan is the whole read-only half of a reconcile: load the config,
 // connect, compare. plan and apply share it so that what apply is about to do is
 // literally what plan just showed, and it hands back the client because apply
 // needs to keep talking to the same Controller it just read.
-func computePlan(ctx context.Context, path string) (unifi.Client, reconcile.Plan, error) {
+func computePlan(ctx context.Context, path string, opts reconcile.Options) (unifi.Client, reconcile.Plan, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, reconcile.Plan{}, err
@@ -208,7 +218,7 @@ func computePlan(ctx context.Context, path string) (unifi.Client, reconcile.Plan
 	if err != nil {
 		return nil, reconcile.Plan{}, fmt.Errorf("connecting to Controller at %s: %w", conn.url, err)
 	}
-	plan, err := reconcile.Networks(ctx, client, site, cfg)
+	plan, err := reconcile.Networks(ctx, client, site, cfg, opts)
 	if err != nil {
 		return nil, reconcile.Plan{}, err
 	}
@@ -254,7 +264,15 @@ func runExport(ctx context.Context, stdout io.Writer) error {
 // promise is that a file it accepts is a file the other verbs can load, and
 // the only way to keep that promise is for it to be the very same call.
 func runValidate(args []string, stdout io.Writer) error {
-	path, err := configPath(args)
+	// Validate takes no flags, but its arguments still go through the splitter:
+	// otherwise a flag meant for another verb would be read as a filename, and
+	// `unifig validate --prune` would report that there is no config file named
+	// "--prune" rather than that validate has nothing to prune.
+	_, positional, err := splitFlags(args)
+	if err != nil {
+		return err
+	}
+	path, err := configPath(positional)
 	if err != nil {
 		return err
 	}

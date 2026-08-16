@@ -2,8 +2,10 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -39,6 +41,29 @@ func managedNetwork(t *testing.T, body string, names ...string) string {
 	return path
 }
 
+// liveNetworksExcept is a config body naming every network unifig manages on
+// the Controller right now, apart from the named ones.
+//
+// Prune's targets are decided by what is live rather than by what the test
+// wrote, so a prune test that listed only its own networks would also be
+// proposing to delete whatever else the Controller happened to ship with, and
+// its assertions would be about that too. Naming the rest leaves exactly the
+// exclusions at stake. They are named and no more — `- name: X` is a complete
+// entry meaning "match this one, manage nothing about it" — so nothing here
+// proposes an update either.
+func liveNetworksExcept(t *testing.T, excluded ...string) string {
+	t.Helper()
+
+	var b strings.Builder
+	b.WriteString("networks:\n")
+	for _, name := range testRig.managedNetworkNames(t) {
+		if !slices.Contains(excluded, name) {
+			fmt.Fprintf(&b, "  - name: %q\n", name)
+		}
+	}
+	return b.String()
+}
+
 func plan(t *testing.T, args ...string) result {
 	t.Helper()
 	res := testRig.runUnifig(t, append([]string{"plan"}, args...), nil)
@@ -48,10 +73,10 @@ func plan(t *testing.T, args ...string) result {
 
 // apply runs an apply the operator has already approved. Confirmation is a
 // thing to test on its own, not a thing to work around in every other test.
-func apply(t *testing.T, path string) result {
+func apply(t *testing.T, args ...string) result {
 	t.Helper()
-	res := testRig.runUnifig(t, []string{"apply", "--auto-approve", path}, nil)
-	t.Logf("unifig apply -> exit %d\n%s\n%s", res.ExitCode, res.Stdout, res.Stderr)
+	res := testRig.runUnifig(t, append([]string{"apply", "--auto-approve"}, args...), nil)
+	t.Logf("unifig apply %v -> exit %d\n%s\n%s", args, res.ExitCode, res.Stdout, res.Stderr)
 	if res.ExitCode != 0 {
 		t.Fatalf("unifig apply exited %d\nstdout: %s\nstderr: %s", res.ExitCode, res.Stdout, res.Stderr)
 	}
@@ -330,6 +355,50 @@ func TestPlanRefusesToGuessBetweenTwoNetworksSharingAName(t *testing.T) {
 	}
 	if !strings.Contains(string(res.Stderr), "Plan Twice") {
 		t.Errorf("stderr should name the ambiguous network, got: %s", res.Stderr)
+	}
+}
+
+// Every duplicate at once rather than the first one found. Resolving them is a
+// trip to the Controller's UI, and an operator should have to make it once:
+// a run that reported one duplicate, was fixed, and then reported the next
+// would be spending the operator's afternoon one name at a time.
+func TestPlanNamesEveryDuplicatedNetworkNameAtOnce(t *testing.T) {
+	for _, twin := range []struct {
+		name string
+		vlan int
+	}{{"Plan Twice Alpha", 146}, {"Plan Twice Zulu", 147}} {
+		testRig.seedNetwork(t, map[string]any{
+			"name": twin.name, "purpose": "corporate", "enabled": true,
+			"vlan_enabled": true, "vlan": twin.vlan,
+			"ip_subnet": fmt.Sprintf("10.%d.0.1/24", twin.vlan),
+		})
+		// seedNetwork clears same-named entries first, so the twin goes in
+		// through the Controller's own API directly.
+		testRig.addNetwork(t, map[string]any{
+			"name": twin.name, "purpose": "corporate", "enabled": true,
+			"vlan_enabled": true, "vlan": twin.vlan + 100,
+			"ip_subnet": fmt.Sprintf("10.%d.0.1/24", twin.vlan+100),
+		})
+		t.Cleanup(func() { testRig.deleteNetworksNamed(t, twin.name) })
+	}
+
+	path := managedNetwork(t, `networks:
+  - name: Default
+    subnet: 192.168.1.1/24
+`)
+
+	res := plan(t, path)
+
+	if res.ExitCode != exitError {
+		t.Fatalf("plan exited %d, want %d — it picked between networks sharing a name\nstdout: %s",
+			res.ExitCode, exitError, res.Stdout)
+	}
+	stderr := string(res.Stderr)
+	for _, fragment := range []string{"Plan Twice Alpha", "Plan Twice Zulu", "UI"} {
+		if !strings.Contains(stderr, fragment) {
+			t.Errorf("stderr should mention %q, so every duplicate is fixed in one trip to the UI, got: %s",
+				fragment, stderr)
+		}
 	}
 }
 
@@ -615,6 +684,260 @@ func TestApplyProceedsWhenTheOperatorAgrees(t *testing.T) {
 	}
 }
 
+// Prune is the destructive half of reconcile, and its default is the whole
+// point. TestPlanLeavesNetworksTheConfigDoesNotMentionAlone says the plan is
+// silent about an unlisted network; this says the apply behind it does nothing
+// to one either, which is where the difference would actually cost something.
+func TestApplyWithoutPruneLeavesUnlistedNetworksAlone(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Prune Untouched", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 141, "ip_subnet": "10.141.0.1/24",
+	})
+	t.Cleanup(func() { testRig.deleteNetworksNamed(t, "Prune Untouched") })
+
+	path := managedNetwork(t, `networks:
+  - name: Prune Listed
+    vlan: 142
+    subnet: 10.142.0.1/24
+`, "Prune Listed")
+
+	res := apply(t, path)
+
+	if strings.Contains(string(res.Stdout), "Prune Untouched") {
+		t.Errorf("apply should say nothing about a network the config does not list, got:\n%s", res.Stdout)
+	}
+	if found := testRig.networksNamed(t, "Prune Untouched"); len(found) != 1 {
+		t.Fatalf("apply deleted an unlisted network nobody asked it to delete: %v", found)
+	}
+}
+
+// The deletions are in the plan, and the plan comes first: an operator sees
+// every network they are about to lose — and what is in it — before they are
+// asked to approve anything. Computing that plan still mutates nothing, however
+// destructive the changes it describes.
+func TestPlanWithPruneShowsWhatItWouldDeleteAndDeletesNothing(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Prune Planned", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 143, "ip_subnet": "10.143.0.1/24",
+	})
+	t.Cleanup(func() { testRig.deleteNetworksNamed(t, "Prune Planned") })
+
+	path := managedNetwork(t, liveNetworksExcept(t, "Prune Planned"))
+
+	res := plan(t, "--prune", path)
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan --prune exited %d, want %d\nstdout: %s\nstderr: %s",
+			res.ExitCode, exitChangesPending, res.Stdout, res.Stderr)
+	}
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{`- network "Prune Planned"`, "10.143.0.1/24", "1 to delete"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("plan --prune should show %q — an operator about to lose a network needs to see what was in it, got:\n%s",
+				fragment, stdout)
+		}
+	}
+	if found := testRig.networksNamed(t, "Prune Planned"); len(found) != 1 {
+		t.Errorf("plan deleted something; plan is read-only: %v", found)
+	}
+}
+
+// A pipeline gating on destructive change reads the plan rather than the prose,
+// so a deletion has to be as legible to a machine as a create is. The values go
+// on the from side with nothing opposite them: a delete is not a move to a new
+// value, and `"to": null` would read as a field being cleared on a network that
+// survives.
+func TestPlanJSONDescribesADeletionAsALossNotAMove(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Prune JSON", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 151, "ip_subnet": "10.151.0.1/24",
+	})
+	t.Cleanup(func() { testRig.deleteNetworksNamed(t, "Prune JSON") })
+
+	path := managedNetwork(t, liveNetworksExcept(t, "Prune JSON"))
+
+	res := plan(t, "--json", "--prune", path)
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan --json --prune exited %d, want %d\nstderr: %s",
+			res.ExitCode, exitChangesPending, res.Stderr)
+	}
+
+	var out struct {
+		Changes []struct {
+			Action   string `json:"action"`
+			Resource string `json:"resource"`
+			Name     string `json:"name"`
+			Fields   []struct {
+				Name string `json:"name"`
+				From any    `json:"from"`
+				To   any    `json:"to"`
+			} `json:"fields"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(res.Stdout, &out); err != nil {
+		t.Fatalf("plan --json --prune is not valid JSON: %v\nstdout: %s", err, res.Stdout)
+	}
+	if len(out.Changes) != 1 {
+		t.Fatalf("plan reported %d changes, want 1\nstdout: %s", len(out.Changes), res.Stdout)
+	}
+
+	change := out.Changes[0]
+	if change.Action != "delete" || change.Resource != "network" || change.Name != "Prune JSON" {
+		t.Fatalf("change = %+v, want a delete of network %q", change, "Prune JSON")
+	}
+	for _, field := range change.Fields {
+		if field.To != nil {
+			t.Errorf("%s field has to = %#v; a delete moves nothing to a new value", field.Name, field.To)
+		}
+	}
+	fields := map[string]any{}
+	for _, field := range change.Fields {
+		fields[field.Name] = field.From
+	}
+	if vlan, ok := fields["vlan"].(float64); !ok || vlan != 151 {
+		t.Errorf("vlan field = %#v, want the number 151 on the from side", fields["vlan"])
+	}
+	if fields["subnet"] != "10.151.0.1/24" {
+		t.Errorf("subnet field = %#v, want %q on the from side", fields["subnet"], "10.151.0.1/24")
+	}
+}
+
+func TestApplyWithPruneDeletesNetworksTheConfigDoesNotName(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Prune Applied", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 144, "ip_subnet": "10.144.0.1/24",
+	})
+	t.Cleanup(func() { testRig.deleteNetworksNamed(t, "Prune Applied") })
+
+	path := managedNetwork(t, liveNetworksExcept(t, "Prune Applied"))
+
+	res := apply(t, "--prune", path)
+
+	if !strings.Contains(string(res.Stdout), `- network "Prune Applied" deleted`) {
+		t.Errorf("apply --prune should report what it deleted, got:\n%s", res.Stdout)
+	}
+	if found := testRig.networksNamed(t, "Prune Applied"); len(found) != 0 {
+		t.Fatalf("apply --prune left a network the config does not name: %v", found)
+	}
+
+	assertNoChangesPending(t, "--prune", path)
+}
+
+// Deletions join the other changes rather than replacing them, and they come
+// last — which is the order apply executes in, and matters because apply stops
+// at the first failure. This asserts the order the plan prints; that the plan
+// and apply cannot disagree about it is structural, since both read the same
+// sorted Changes.
+func TestPlanWithPruneListsDeletionsAfterTheChangesThatBuildThings(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Prune Ordered Old", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 148, "ip_subnet": "10.148.0.1/24",
+	})
+	t.Cleanup(func() { testRig.deleteNetworksNamed(t, "Prune Ordered Old") })
+
+	path := managedNetwork(t, liveNetworksExcept(t, "Prune Ordered Old")+`  - name: Prune Ordered New
+    vlan: 149
+    subnet: 10.149.0.1/24
+`, "Prune Ordered New")
+
+	res := plan(t, "--prune", path)
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan --prune exited %d, want %d\nstderr: %s", res.ExitCode, exitChangesPending, res.Stderr)
+	}
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, "Plan: 1 to create, 1 to delete.") {
+		t.Errorf("plan should summarise both kinds of change, got:\n%s", stdout)
+	}
+	created, deleted := strings.Index(stdout, "Prune Ordered New"), strings.Index(stdout, "Prune Ordered Old")
+	if created < 0 || deleted < 0 {
+		t.Fatalf("plan does not mention both networks:\n%s", stdout)
+	}
+	if created > deleted {
+		t.Errorf("plan lists the deletion before the create; deletions come last, got:\n%s", stdout)
+	}
+}
+
+// The Controller owns some objects outright, and says so on the object itself:
+// the built-in Default network carries attr_no_delete. Prune respects that
+// whether or not the config names it — an operator whose file has never
+// mentioned Default must not lose their LAN by pruning.
+func TestPruneNeverDeletesTheControllersBuiltInNetwork(t *testing.T) {
+	// unifig reads the Controller's own marker rather than keeping a list of
+	// built-in names, so the test states that first. If this stops holding, the
+	// reason the rest of the test passes has changed, and asserting it here
+	// fails before anything destructive is asked of a real Controller.
+	live := testRig.liveNetwork(t, "Default")
+	if live["attr_no_delete"] != true {
+		t.Fatalf("the Controller no longer marks Default undeletable (attr_no_delete = %#v); unifig's exemption reads that marker",
+			live["attr_no_delete"])
+	}
+
+	// A config that has never heard of Default, pruned. The network it does add
+	// is what makes the plan worth reading: prune ran, produced changes, and
+	// Default is not among them.
+	path := managedNetwork(t, liveNetworksExcept(t, "Default")+`  - name: Prune Exempt
+    vlan: 145
+    subnet: 10.145.0.1/24
+`, "Prune Exempt")
+
+	// Plan before apply, and fatal rather than error on what it says. A
+	// regression in the exemption is caught here, while nothing has happened
+	// yet, instead of by an apply that takes the Controller's LAN with it and
+	// leaves every later test running against a site without one.
+	planned := plan(t, "--prune", path)
+	if !strings.Contains(string(planned.Stdout), `+ network "Prune Exempt"`) {
+		t.Fatalf("the plan under test is not the one intended:\n%s", planned.Stdout)
+	}
+	if strings.Contains(string(planned.Stdout), `network "Default"`) {
+		t.Fatalf("plan --prune proposes deleting the built-in Default network:\n%s", planned.Stdout)
+	}
+
+	apply(t, "--prune", path)
+
+	if found := testRig.networksNamed(t, "Default"); len(found) != 1 {
+		t.Fatalf("prune deleted the built-in Default network: %v", found)
+	}
+}
+
+// Prune only ever deletes Resources of the types unifig manages. WAN slots are
+// Settings — fixed slots that are updated, never created or deleted — and they
+// live in the very same networkconf collection as the LANs, so "of a managed
+// type" is the difference between pruning a spare VLAN and taking the site off
+// the internet.
+func TestPruneLeavesTypesUnifigDoesNotManageAlone(t *testing.T) {
+	// A WAN slot, in the same networkconf collection as the LANs and named by
+	// no config anywhere — which is exactly the shape prune deletes things for.
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Prune WAN Slot", "purpose": "wan", "enabled": true,
+		"wan_networkgroup": "WAN2", "wan_type": "dhcp",
+	})
+	t.Cleanup(func() { testRig.deleteNetworksNamed(t, "Prune WAN Slot") })
+
+	// Something for the prune to actually delete, so this is a test about what
+	// a working prune spares rather than about a prune that did nothing.
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Prune Bystander", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 150, "ip_subnet": "10.150.0.1/24",
+	})
+	t.Cleanup(func() { testRig.deleteNetworksNamed(t, "Prune Bystander") })
+
+	path := managedNetwork(t, liveNetworksExcept(t, "Prune Bystander"))
+
+	res := apply(t, "--prune", path)
+
+	if found := testRig.networksNamed(t, "Prune Bystander"); len(found) != 0 {
+		t.Fatalf("the prune under test did not happen: %v", found)
+	}
+	if strings.Contains(string(res.Stdout), "Prune WAN Slot") {
+		t.Errorf("apply --prune has an opinion about a WAN slot:\n%s", res.Stdout)
+	}
+	if found := testRig.networksNamed(t, "Prune WAN Slot"); len(found) != 1 {
+		t.Fatalf("prune deleted a WAN slot — that is the site's internet connection: %v", found)
+	}
+}
+
 // The brownfield path end to end: adopt a configured Controller with export,
 // and the file that comes out describes it exactly. Anything less means an
 // operator's very first plan shows changes against a Controller they have not
@@ -663,10 +986,12 @@ func TestPlanWithABadAPIKeyIsAnErrorNotChangesPending(t *testing.T) {
 // assertNoChangesPending is the idempotence check: reconciling twice does the
 // work once. It is asserted at the process boundary — a fresh unifig process
 // reading the Controller back through the whole stack — because that is the
-// only way it proves anything about what was actually written.
-func assertNoChangesPending(t *testing.T, path string) {
+// only way it proves anything about what was actually written. It is given the
+// same arguments the apply had, since an apply's idempotence is only a claim
+// about the reconcile that was actually asked for.
+func assertNoChangesPending(t *testing.T, args ...string) {
 	t.Helper()
-	res := plan(t, path)
+	res := plan(t, args...)
 	if res.ExitCode != exitNoChanges {
 		t.Errorf("re-planning after apply exited %d, want %d — apply is not idempotent\nplan:\n%s",
 			res.ExitCode, exitNoChanges, res.Stdout)

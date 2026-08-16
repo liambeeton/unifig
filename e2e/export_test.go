@@ -120,6 +120,39 @@ func TestExportedConfigValidates(t *testing.T) {
 	}
 }
 
+// Export promises that what it writes is config the other verbs can read, and
+// two live networks sharing a name is the one live state that cannot be
+// written as such config: matching is by name (ADR-0001), and the file unifig
+// would emit — the same `- name: X` twice — is a file its own validate
+// rejects. So export stops on the ambiguity, exactly as plan does, rather than
+// handing the operator YAML that cannot be used.
+func TestExportRefusesAControllerWithTwoNetworksSharingAName(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Export Twice", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 152, "ip_subnet": "10.152.0.1/24",
+	})
+	// seedNetwork clears same-named entries first, so the twin goes in through
+	// the Controller's own API directly.
+	testRig.addNetwork(t, map[string]any{
+		"name": "Export Twice", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 252, "ip_subnet": "10.252.0.1/24",
+	})
+	t.Cleanup(func() { testRig.deleteNetworksNamed(t, "Export Twice") })
+
+	res := testRig.runUnifig(t, []string{"export"}, nil)
+
+	if res.ExitCode != 1 {
+		t.Fatalf("export exited %d, want 1 — it wrote config naming one network twice\nstdout: %s",
+			res.ExitCode, res.Stdout)
+	}
+	if len(res.Stdout) != 0 {
+		t.Errorf("stdout should stay empty rather than carry unusable config, got: %s", res.Stdout)
+	}
+	if !strings.Contains(string(res.Stderr), "Export Twice") {
+		t.Errorf("stderr should name the ambiguous network, got: %s", res.Stderr)
+	}
+}
+
 func TestExportWithBadAPIKeyFailsAndPrintsNoYAML(t *testing.T) {
 	res := testRig.runUnifig(t, []string{"export"}, map[string]string{"UNIFIG_API_KEY": "not-the-rigs-key"})
 

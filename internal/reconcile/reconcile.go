@@ -6,18 +6,25 @@
 // a statement about the Controller as it was a moment ago — and is why apply
 // plans afresh rather than consuming a plan someone saved earlier.
 //
-// Two rules give the engine its shape, and both fall out of statelessness:
+// Three rules give the engine its shape, and all three fall out of
+// statelessness:
 //
 //   - Resources are matched by natural key, never by stored ID. A live network
 //     "is" the config's network when the names agree, and Controller IDs stay
 //     inside this package: they never reach the config file, the plan output,
-//     or the operator.
+//     or the operator. Two live Resources sharing one key make the match
+//     ambiguous, and that is where a reconcile stops rather than guesses.
 //   - Only the fields the config actually states are written (ADR-0004). An
 //     update reads the live Resource, overwrites those fields and puts the
 //     whole object back, so everything unifig does not model — DHCP ranges,
 //     DNS servers, IGMP settings — survives an apply rather than being reset
 //     to the zero values of a struct unifig built. A modelled field the file
 //     omits is unmanaged on the same terms, never a request to empty it.
+//   - Nothing is destroyed unless it was asked for. A Resource missing from
+//     the config is unmanaged, not condemned; deleting it takes Options.Prune,
+//     and even then the Controller's own undeletable objects are exempt. This
+//     is the same rule as the one above, one level up: the file states what
+//     unifig manages, not what may exist.
 package reconcile
 
 import (
@@ -33,14 +40,15 @@ import (
 
 // Action is what a Change does to the Controller.
 //
-// Deletion is deliberately absent. Nothing is ever destroyed implicitly, and
-// removing a Resource from the config means only that unifig stops managing
-// it; prune (issue #4) is the separate, explicitly requested thing.
+// Delete only ever reaches a plan because prune was asked for. Removing a
+// Resource from the config does not delete it; it means unifig stops managing
+// it, and the two are different requests.
 type Action string
 
 const (
 	Create Action = "create"
 	Update Action = "update"
+	Delete Action = "delete"
 )
 
 // actions is everything the rest of the package needs to know about an action
@@ -48,8 +56,14 @@ const (
 // how to say it once it has happened.
 //
 // One table rather than three maps in three files, because the alternative is
-// that adding prune's delete (issue #4) means remembering all three, and
-// forgetting one is a silent blank in the output rather than a build failure.
+// that adding an action means remembering all three, and forgetting one is a
+// silent blank in the output rather than a build failure.
+//
+// Delete sorts last, and that is the apply order too, because apply stops at
+// the first failure: with the deletions at the end, an apply that fails partway
+// has not destroyed anything, and the operator's Controller is missing changes
+// rather than missing networks. It also puts the destructive half of a plan
+// directly above the summary, where the eye lands.
 var actions = map[Action]struct {
 	order int
 	mark  string
@@ -57,6 +71,17 @@ var actions = map[Action]struct {
 }{
 	Create: {order: 0, mark: "+", past: "created"},
 	Update: {order: 1, mark: "~", past: "updated"},
+	Delete: {order: 2, mark: "-", past: "deleted"},
+}
+
+// Options are the choices a verb makes on the operator's behalf for a whole
+// reconcile, rather than for one Resource.
+type Options struct {
+	// Prune deletes live Resources of a managed type that the config does not
+	// name. It is off unless explicitly asked for, and that default is the
+	// promise that makes unifig safe to adopt on a configured Controller: a
+	// file naming one network puts no other network at stake.
+	Prune bool
 }
 
 // Plan is the previewed set of changes a reconcile would make. Computing one
@@ -107,18 +132,23 @@ func (p Plan) Empty() bool { return len(p.Changes) == 0 }
 
 // Networks computes the Plan that would make the site's networks match cfg.
 //
-// Live networks the config does not mention are left out of the plan entirely.
-// That is the "nothing is destroyed implicitly" rule rather than an omission:
-// an operator adopting unifig on a configured Controller can start with one
-// network in their file and trust that the rest are not at stake.
-func Networks(ctx context.Context, client unifi.Client, site string, cfg config.Config) (Plan, error) {
+// Without opts.Prune, live networks the config does not mention are left out of
+// the plan entirely. That is the "nothing is destroyed implicitly" rule rather
+// than an omission: an operator adopting unifig on a configured Controller can
+// start with one network in their file and trust that the rest are not at
+// stake. With it, those same networks become deletions — shown in the plan
+// like any other change, so nothing is destroyed unannounced either.
+func Networks(ctx context.Context, client unifi.Client, site string, cfg config.Config, opts Options) (Plan, error) {
 	live, err := liveNetworks(ctx, client, site)
 	if err != nil {
 		return Plan{}, err
 	}
 
 	changes := make([]Change, 0, len(cfg.Networks))
+	named := make(map[string]bool, len(cfg.Networks))
 	for _, desired := range cfg.Networks {
+		named[desired.Name] = true
+
 		current, exists := live[desired.Name]
 		if !exists {
 			changes = append(changes, createNetwork(desired))
@@ -128,6 +158,9 @@ func Networks(ctx context.Context, client unifi.Client, site string, cfg config.
 			changes = append(changes, change)
 		}
 	}
+	if opts.Prune {
+		changes = append(changes, pruneNetworks(live, named)...)
+	}
 	sortChanges(changes)
 	return Plan{Changes: changes}, nil
 }
@@ -136,7 +169,10 @@ func Networks(ctx context.Context, client unifi.Client, site string, cfg config.
 //
 // Export calls this too, for the same reason it shares the projection: the
 // config export writes must be config that plans clean, and it cannot be if
-// the two verbs disagree about which live networks are even in scope.
+// the two verbs disagree about which live networks are even in scope. The
+// uniqueness check below is part of that agreement — an export of a Controller
+// with two networks named the same would write a file that unifig's own
+// validate rejects.
 func ListNetworks(ctx context.Context, client unifi.Client, site string) ([]unifi.Network, error) {
 	all, err := client.ListNetwork(ctx, site)
 	if err != nil {
@@ -149,7 +185,55 @@ func ListNetworks(ctx context.Context, client unifi.Client, site string) ([]unif
 			managed = append(managed, network)
 		}
 	}
+	if err := uniquelyNamed(managed); err != nil {
+		return nil, err
+	}
 	return managed, nil
+}
+
+// uniquelyNamed reports whether any two live networks share the name unifig
+// matches them by, as the error saying so.
+//
+// Matching by natural key is unambiguous only while keys are unique (ADR-0001),
+// so a duplicate is where unifig stops rather than where it guesses. Nothing
+// here can resolve it: which of two identically named networks the operator
+// meant is a fact only they hold, and the place they hold it is the
+// Controller's UI. Every duplicate goes into the one message, and the message
+// says the rule rather than just the instance, so an operator can see that the
+// list is the whole job and make that trip to the UI once.
+func uniquelyNamed(live []unifi.Network) error {
+	counts := make(map[string]int, len(live))
+	for _, network := range live {
+		counts[network.Name]++
+	}
+
+	var shared []string
+	for name, count := range counts {
+		if count > 1 {
+			shared = append(shared, name)
+		}
+	}
+	if len(shared) == 0 {
+		return nil
+	}
+
+	slices.Sort(shared)
+	found := make([]string, 0, len(shared))
+	for _, name := range shared {
+		found = append(found, fmt.Sprintf("%d named %q", counts[name], name))
+	}
+	return fmt.Errorf(
+		"unifig matches networks on the Controller by name, so every network needs a name of its own: this site has %s; rename or remove the extras in the Controller's UI, then run again",
+		andJoin(found))
+}
+
+// andJoin joins phrases the way they would be said aloud: "a", "a and b",
+// "a, b and c".
+func andJoin(phrases []string) string {
+	if len(phrases) < 2 {
+		return strings.Join(phrases, "")
+	}
+	return strings.Join(phrases[:len(phrases)-1], ", ") + " and " + phrases[len(phrases)-1]
 }
 
 // liveNetworks indexes the site's managed networks by their natural key.
@@ -161,15 +245,6 @@ func liveNetworks(ctx context.Context, client unifi.Client, site string) (map[st
 
 	byName := make(map[string]unifi.Network, len(all))
 	for _, network := range all {
-		if _, duplicate := byName[network.Name]; duplicate {
-			// Matching by name is unambiguous only while names are unique, so
-			// a duplicate is where unifig stops rather than where it guesses.
-			// The fix is on the Controller, once, and then every later run is
-			// unambiguous too.
-			return nil, fmt.Errorf(
-				"the Controller has more than one network named %q; unifig matches networks by name, so rename or remove one on the Controller before running again",
-				network.Name)
-		}
 		byName[network.Name] = network
 	}
 	return byName, nil

@@ -91,6 +91,45 @@ func updateNetwork(desired config.Network, live unifi.Network) (Change, bool) {
 	}, true
 }
 
+// pruneNetworks is the Changes that would delete every live network the config
+// does not name — prune, and the only place in the engine that proposes
+// destroying anything.
+//
+// It walks the live networks rather than the config, which is the whole shape
+// of prune: what is at stake is what is on the Controller, and the config's
+// only role is to say which of it stays.
+func pruneNetworks(live map[string]unifi.Network, named map[string]bool) []Change {
+	changes := make([]Change, 0, len(live))
+	for name, network := range live {
+		if named[name] || !prunable(network) {
+			continue
+		}
+		changes = append(changes, deleteNetwork(network))
+	}
+	return changes
+}
+
+// prunable reports whether the Controller would let this network be deleted.
+//
+// ADR-0005: the exemption is the Controller's own attr_no_delete marker, not a
+// list of built-in names unifig keeps. An exempt network is then left out of
+// the plan rather than listed as a change that will not happen — it is not a
+// change, and a plan is a list of changes.
+func prunable(network unifi.Network) bool { return !network.NoDelete }
+
+// deleteNetwork is the Change that removes a live network.
+func deleteNetwork(live unifi.Network) Change {
+	return Change{
+		Action:   Delete,
+		Resource: "network",
+		Name:     live.Name,
+		Fields:   currentFields(FromLive(live)),
+		write: func(ctx context.Context, client unifi.Client, site string) error {
+			return client.DeleteNetwork(ctx, site, live.ID)
+		},
+	}
+}
+
 // dhcpPool is the address range a network's DHCP server hands out.
 type dhcpPool struct{ start, stop string }
 
@@ -161,6 +200,24 @@ func setFields(desired config.Network) []Field {
 	}
 	if desired.Subnet != "" {
 		fields = append(fields, Field{Name: "subnet", To: desired.Subnet})
+	}
+	return fields
+}
+
+// currentFields is setFields' mirror: what a delete would take away, on the
+// From side because there is no value on the other one.
+//
+// A delete lists fields at all because of who reads it. Prune's plan is the
+// only place an operator sees what is inside a network before agreeing to lose
+// it, and "the VLAN 20 one on 10.20.0.1/24" is how they will recognise whether
+// it is the network they meant.
+func currentFields(current config.Network) []Field {
+	fields := make([]Field, 0, 2)
+	if current.VLAN != 0 {
+		fields = append(fields, Field{Name: "vlan", From: current.VLAN})
+	}
+	if current.Subnet != "" {
+		fields = append(fields, Field{Name: "subnet", From: current.Subnet})
 	}
 	return fields
 }

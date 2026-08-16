@@ -97,11 +97,40 @@ Plan: 1 to create, 1 to update.
 There is no state file. Every run diffs your file against the live Controller directly (see `docs/adr/0001-stateless-reconcile.md`), which means:
 
 - **Resources are matched by name.** Controller IDs never appear in your file and are never needed. Renaming a network in YAML means replacing it, and two live networks sharing a name is an error rather than a guess.
-- **Nothing is destroyed implicitly.** A network the Controller has and your file does not is left alone. Deleting is `--prune`'s job, and `--prune` does not exist yet ([issue #4](https://github.com/liambeeton/unifig/issues/4)).
+- **Nothing is destroyed implicitly.** A network the Controller has and your file does not is left alone. Deleting it is [`--prune`](#pruning)'s job, and you have to ask.
 - **Only the fields your file models are written.** An apply that changes a subnet leaves the DHCP server, DNS entries and everything else on that network exactly as you set them in the Controller. The single exception announces itself in the plan: a DHCP pool cannot stay in a subnet the network no longer has, so a subnet change that strands one moves it.
 - **A field you leave out is a field unifig doesn't manage.** Only `name` is required, so `- name: IoT` is a complete entry meaning "this network is mine to match, and I'm not managing anything about it yet". It never means "clear its VLAN and subnet" — clearing a value is something you do in the Controller.
 - **Re-running is the recovery.** Apply stops at the first error and reports what it got through; the next plan is computed from the Controller as it now stands, so a fixed-and-re-run apply picks up exactly where it stopped.
 - **A network unifig creates is a working LAN.** Your file names three fields; a networkconf has a hundred. The rest come from the Controller's own defaults for a new LAN — NAT and DHCP on, a pool from the sixth address to the last. Those are set on create only, so anything you change afterwards is yours and stays.
+
+### Pruning
+
+By default your file is a list of what unifig manages, not a list of everything that may exist. `--prune` makes it the second thing: every network of a managed type that the file does not name becomes a deletion.
+
+```sh
+./unifig plan --prune    # see what would go, change nothing
+./unifig apply --prune   # print the plan, ask, then delete
+```
+
+Deletions appear in the plan like any other change, showing what was in the network so you can recognise it before agreeing to lose it. They come last — after the creates and updates — because apply stops at the first failure: a half-finished apply leaves you missing changes rather than missing networks.
+
+```
+  + network "Guest"
+      vlan:   30
+      subnet: 192.168.30.1/24
+
+  - network "Old Lab"
+      vlan:   90
+      subnet: 10.90.0.1/24
+
+Plan: 1 to create, 1 to delete.
+```
+
+Three things `--prune` will not do:
+
+- **Delete what the Controller says it owns.** The built-in Default network is marked undeletable on the Controller itself, and unifig reads that marker rather than keeping a list of names (see `docs/adr/0005-builtin-exemption-from-the-controller.md`). It is never pruned, whether or not your file names it.
+- **Touch anything of a type unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, and prune does not see them.
+- **Persist.** The flag applies to the run you passed it to. There is no state file, so nothing remembers it.
 
 ### In a pipeline
 

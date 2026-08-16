@@ -81,6 +81,34 @@ func TestPlanRejectsApplysFlagAndViceVersa(t *testing.T) {
 	}
 }
 
+// --prune is a question about a reconcile, so it belongs to the two verbs that
+// run one. export reads and validate never connects; accepting it there would
+// promise a deletion neither verb could perform.
+func TestPruneIsAFlagForPlanAndApplyOnly(t *testing.T) {
+	for _, args := range [][]string{{"export", "--prune"}, {"validate", "--prune"}} {
+		res := run(t, args...)
+		if res.exitCode != 1 {
+			t.Errorf("%v exited %d, want 1", args, res.exitCode)
+		}
+		if !strings.Contains(res.stderr, "usage:") {
+			t.Errorf("%v should print the usage text, got: %s", args, res.stderr)
+		}
+	}
+}
+
+// That plan and apply do accept it is proved by what happens next: the config
+// error is a thing only a verb that got past its own flags can report.
+func TestPlanAndApplyAcceptPrune(t *testing.T) {
+	path := writeConfig(t, brokenConfig)
+
+	for _, verb := range []string{"plan", "apply"} {
+		res := run(t, verb, "--prune", path)
+		if !strings.Contains(res.stderr, "networks[0].subnet") {
+			t.Errorf("%s --prune never got as far as reading the config, got: %s", verb, res.stderr)
+		}
+	}
+}
+
 func TestPlanWithTooManyFilesPrintsUsage(t *testing.T) {
 	res := run(t, "plan", "one.yaml", "two.yaml")
 
@@ -95,7 +123,7 @@ func TestPlanWithTooManyFilesPrintsUsage(t *testing.T) {
 func TestUsageListsEveryVerbAndExitCode(t *testing.T) {
 	res := run(t, "nonsense")
 
-	for _, fragment := range []string{"plan", "apply", "export", "validate", "--json", "--auto-approve", "2"} {
+	for _, fragment := range []string{"plan", "apply", "export", "validate", "--json", "--auto-approve", "--prune", "2"} {
 		if !strings.Contains(res.stderr, fragment) {
 			t.Errorf("usage should mention %q, got:\n%s", fragment, res.stderr)
 		}

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -269,6 +270,20 @@ func (r *rig) liveNetwork(t *testing.T, name string) map[string]any {
 
 func (r *rig) networksNamed(t *testing.T, name string) []map[string]any {
 	t.Helper()
+	var found []map[string]any
+	for _, n := range r.networks(t) {
+		if n["name"] == name {
+			found = append(found, n)
+		}
+	}
+	return found
+}
+
+// networks reads every networkconf entry the Controller holds, whatever its
+// purpose. WAN slots share this collection with the LANs unifig manages, so a
+// test that wants to prove prune left them alone has to be able to see them.
+func (r *rig) networks(t *testing.T) []map[string]any {
+	t.Helper()
 	resp := r.controllerDo(t, http.MethodGet, "/api/s/default/rest/networkconf", nil)
 	defer resp.Body.Close()
 
@@ -278,14 +293,29 @@ func (r *rig) networksNamed(t *testing.T, name string) []map[string]any {
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 		t.Fatalf("listing networks: %v", err)
 	}
+	return list.Data
+}
 
-	var found []map[string]any
-	for _, n := range list.Data {
-		if n["name"] == name {
-			found = append(found, n)
+// managedNetworkNames names the live networkconf entries unifig manages as
+// networks — the LAN purposes, and not the WAN slots or VPN purposes that share
+// the collection with them. The purposes are spelled out again here rather than
+// imported from the engine, so that the rig describes the Controller rather
+// than agreeing with the code under test by construction.
+func (r *rig) managedNetworkNames(t *testing.T) []string {
+	t.Helper()
+	var names []string
+	for _, n := range r.networks(t) {
+		switch n["purpose"] {
+		case "corporate", "guest", "vlan-only":
+		default:
+			continue
+		}
+		if name, ok := n["name"].(string); ok {
+			names = append(names, name)
 		}
 	}
-	return found
+	slices.Sort(names)
+	return names
 }
 
 func (r *rig) controllerDo(t *testing.T, method, path string, body io.Reader) *http.Response {
