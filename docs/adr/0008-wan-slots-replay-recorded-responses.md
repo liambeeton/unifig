@@ -13,7 +13,7 @@ This is the third assumption deferred off the real hardware (ADR-0003 for auth, 
 - **PPPoE credentials read back in the clear.** `x_wan_password` comes back byte-identical on a plain `GET /rest/networkconf` from the dockerized Controller, so ADR-0007's finding holds for the second secret unifig models and no write-only fallback is built. A UDR that withheld it would make every WAN plan non-empty, which the idempotence tests catch immediately rather than subtly.
 - **`wan_pppoe_username_enabled` / `wan_pppoe_password_enabled`.** unifig switches these on when it writes the credential beside them, on the same reasoning as a WLAN passphrase implying WPA-PSK: a credential stored next to a flag saying it is unused is an uplink that quietly does not sign in. The Controller stores the two independently, so which combination the UDR actually acts on is a fact only the UDR has.
 
-Which field identifies a slot is a separate decision, taken against the same recordings and recorded in ADR-0010.
+Which field identifies a slot is a separate decision, taken against the same recordings and recorded in ADR-0010. How much of a recording has to come from the router at all — and what is left of an uplink once the household is taken out of it — is ADR-0011, which is also where the command named above ended up living.
 
 ## Considered Options
 

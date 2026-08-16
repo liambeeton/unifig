@@ -1,0 +1,695 @@
+package main
+
+import (
+	"encoding/json"
+	"maps"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// What a recording looks like coming off a real router, before anything has
+// been taken out of it. Every value here is one this repository must never
+// hold: an ISP account name, the address that account was handed, the
+// household's own subnets and SSIDs, and the identifiers that name one
+// console. The tests below are the statement that the scrub takes each of
+// them out — and, just as much, that it leaves everything else alone.
+const rawNetworkconf = `{
+  "meta": { "rc": "ok" },
+  "data": [
+    {
+      "_id": "65f1c0a1d4e2b30af1c00a01",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "name": "Default",
+      "purpose": "corporate",
+      "networkgroup": "LAN",
+      "enabled": true,
+      "ip_subnet": "192.168.4.1/24",
+      "domain_name": "beeton.home",
+      "dhcpd_start": "192.168.4.6",
+      "dhcpd_stop": "192.168.4.254"
+    },
+    {
+      "_id": "65f1c0a1d4e2b30af1c00a02",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "name": "Guest",
+      "purpose": "guest",
+      "enabled": true,
+      "vlan": 30,
+      "vlan_enabled": true,
+      "ip_subnet": "10.20.30.1/24"
+    },
+    {
+      "_id": "65f1c0a1d4e2b30af1c00a03",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "name": "Fibre Co Gigabit",
+      "purpose": "wan",
+      "enabled": true,
+      "attr_no_delete": true,
+      "attr_hidden_id": "WAN",
+      "external_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "wan_networkgroup": "WAN",
+      "wan_type": "pppoe",
+      "wan_username": "user@fibreco.example",
+      "x_wan_password": "hunter2-off-the-router",
+      "wan_pppoe_username_enabled": true,
+      "wan_pppoe_password_enabled": true,
+      "wan_ip": "100.64.11.23",
+      "wan_netmask": "255.255.255.0",
+      "wan_gateway": "100.64.11.1",
+      "wan_dns_preference": "manual",
+      "wan_dns1": "1.1.1.1",
+      "wan_dns2": "9.9.9.9",
+      "wan_vlan_enabled": true,
+      "wan_vlan": 911,
+      "wan_failover_priority": 1,
+      "wan_load_balance_type": "failover-only",
+      "mac_override": "78:45:58:1a:2b:3c",
+      "wan_dhcp_options": [],
+      "wan_type_v6": "dhcpv6",
+      "wan_ipv6": "2c0f:fe38:1234:5678::1",
+      "wan_gateway_v6": "2c0f:fe38:1234:5678::2",
+      "ipv6_wan_delegation_type": "prefix-delegation",
+      "report_wan_event": true,
+      "setting_preference": "manual"
+    },
+    {
+      "_id": "65f1c0a1d4e2b30af1c00a04",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "name": "LTE Failover",
+      "purpose": "wan",
+      "enabled": true,
+      "wan_networkgroup": "WAN_LTE_FAILOVER",
+      "wan_type": "dhcp",
+      "wan_username": "",
+      "x_wan_password": "",
+      "wan_pppoe_username_enabled": false,
+      "wan_pppoe_password_enabled": false,
+      "wan_ip": "0.0.0.0",
+      "wan_failover_priority": 2
+    }
+  ]
+}`
+
+const rawSysinfo = `{
+  "meta": { "rc": "ok" },
+  "data": [
+    {
+      "version": "10.0.162",
+      "build": "atag_10.0.162_32076",
+      "name": "Beeton Home Console",
+      "hostname": "liams-udr",
+      "timezone": "Africa/Johannesburg",
+      "ubnt_device_type": "UDR",
+      "udm_version": "4.3.9",
+      "anonymous_controller_id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+      "sso_app_id": "d1b0f2a4-9b3c-4a51-8f4d-2c0e6a5f1b77",
+      "ip_addrs": ["192.168.4.1", "100.64.11.23"],
+      "uptime": 604800,
+      "https_port": 443,
+      "update_available": false,
+      "data_retention_days": 90
+    }
+  ]
+}`
+
+const rawWlanconf = `{
+  "meta": { "rc": "ok" },
+  "data": [
+    {
+      "_id": "65f1c0a1d4e2b30af1c00b01",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "name": "Beeton Family",
+      "enabled": true,
+      "security": "wpapsk",
+      "x_passphrase": "the-family-wifi-password",
+      "networkconf_id": "65f1c0a1d4e2b30af1c00a01"
+    },
+    {
+      "_id": "65f1c0a1d4e2b30af1c00b02",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "name": "Beeton Guests",
+      "enabled": true,
+      "security": "wpapsk",
+      "x_passphrase": "the-guest-wifi-password",
+      "networkconf_id": "65f1c0a1d4e2b30af1c00a02"
+    }
+  ]
+}`
+
+// The committed recording the scrub takes its LAN from — the one already in
+// e2e/testdata/udr, which came from the dockerized Controller and so describes
+// nobody's house.
+const committedNetworkconf = `{
+  "meta": { "rc": "ok" },
+  "data": [
+    {
+      "_id": "6613a1f0c4b2d90a5e1f0001",
+      "site_id": "6613a1f0c4b2d90a5e1f0000",
+      "name": "Default",
+      "purpose": "corporate",
+      "networkgroup": "LAN",
+      "enabled": true,
+      "attr_no_delete": true,
+      "attr_hidden_id": "LAN",
+      "ip_subnet": "192.168.1.1/24",
+      "domain_name": "localdomain"
+    }
+  ]
+}`
+
+const committedSite = "6613a1f0c4b2d90a5e1f0000"
+
+func TestScrubKeepsTheUplinksAndEverythingUnifigDoesNotModel(t *testing.T) {
+	out := scrubbed(t)
+
+	slots := slotNames(out.networkconf)
+	if want := []string{"WAN", "WAN_LTE_FAILOVER"}; !slices.Equal(slots, want) {
+		t.Fatalf("the scrub kept slots %v, want %v — the uplinks are the one thing only the router can supply", slots, want)
+	}
+
+	// The fields unifig does not model are the reason a recording is worth
+	// having: they are what an apply has to write back untouched.
+	wan := slot(t, out.networkconf, "WAN")
+	for field, want := range map[string]any{
+		"wan_type":              "pppoe",
+		"wan_netmask":           "255.255.255.0",
+		"wan_dns_preference":    "manual",
+		"wan_vlan_enabled":      true,
+		"wan_vlan":              float64(911),
+		"wan_failover_priority": float64(1),
+		"wan_load_balance_type": "failover-only",
+		"attr_hidden_id":        "WAN",
+		"report_wan_event":      true,
+	} {
+		if wan[field] != want {
+			t.Errorf("%s = %#v, want %#v — the scrub changed something that gives nothing away", field, wan[field], want)
+		}
+	}
+}
+
+func TestScrubTakesTheLANFromTheCommittedRecording(t *testing.T) {
+	out := scrubbed(t)
+
+	names := networkNames(out.networkconf)
+	if want := []string{"Default"}; !slices.Equal(names, want) {
+		t.Fatalf("the scrub kept networks %v, want %v — the LAN comes from the committed recording, not the router", names, want)
+	}
+	lan := network(t, out.networkconf, "Default")
+	if lan["ip_subnet"] != "192.168.1.1/24" || lan["domain_name"] != "localdomain" {
+		t.Errorf("the LAN is not the committed one: %#v", lan)
+	}
+
+	// The router's own topology is the thing that must not survive: not the
+	// subnets, not the VLAN layout, not the guest network's existence.
+	for _, gone := range []string{"Guest", "10.20.30.1/24", "192.168.4.1/24", "beeton.home", "192.168.4.6"} {
+		if strings.Contains(string(written(t, out.networkconf)), gone) {
+			t.Errorf("the scrubbed networkconf still holds %q", gone)
+		}
+	}
+}
+
+func TestScrubEmptiesTheWLANs(t *testing.T) {
+	out := scrubbed(t)
+
+	if len(out.wlanconf.Data) != 0 {
+		t.Fatalf("the scrub kept %d WLANs, want none — an SSID is the household's name for itself", len(out.wlanconf.Data))
+	}
+	// Emptied, not removed: the endpoint still answers, and it answers the way
+	// a Controller does.
+	body := string(written(t, out.wlanconf))
+	if !strings.Contains(body, `"rc": "ok"`) || !strings.Contains(body, `"data": []`) {
+		t.Errorf("the emptied wlanconf is not a Controller response: %s", body)
+	}
+}
+
+func TestScrubReplacesTheCredentials(t *testing.T) {
+	out := scrubbed(t)
+	wan := slot(t, out.networkconf, "WAN")
+
+	if password, _ := wan["x_wan_password"].(string); password == "" || password == "hunter2-off-the-router" {
+		t.Errorf("x_wan_password = %q, want a placeholder — and a non-empty one, or the recording stops describing a signed-in uplink", password)
+	}
+	if username, _ := wan["wan_username"].(string); username == "" || strings.Contains(username, "fibreco") {
+		t.Errorf("wan_username = %q, want a placeholder that is not the operator's ISP account", username)
+	}
+
+	// A field with nothing in it has nothing to hide, and filling it in would
+	// turn an uplink with no credentials into one that has them.
+	failover := slot(t, out.networkconf, "WAN_LTE_FAILOVER")
+	for _, field := range []string{"wan_username", "x_wan_password"} {
+		if failover[field] != "" {
+			t.Errorf("%s = %#v on a slot that had none, want it left empty", field, failover[field])
+		}
+	}
+}
+
+func TestScrubReplacesTheISPAddressing(t *testing.T) {
+	out := scrubbed(t)
+	wan := slot(t, out.networkconf, "WAN")
+
+	for _, field := range []string{"wan_ip", "wan_gateway", "wan_dns1", "wan_dns2", "wan_ipv6", "wan_gateway_v6"} {
+		value, _ := wan[field].(string)
+		assertPlaceholderAddress(t, field, value)
+	}
+	// Two resolvers are two resolvers afterwards: collapsing them would change
+	// what the recording says the router was configured with.
+	if wan["wan_dns1"] == wan["wan_dns2"] {
+		t.Errorf("two different DNS servers became one placeholder: %#v", wan["wan_dns1"])
+	}
+	// A netmask says how big a subnet is, not where the site is, and 0.0.0.0
+	// says "none" — replacing either would lose a fact and gain no privacy.
+	if wan["wan_netmask"] != "255.255.255.0" {
+		t.Errorf("wan_netmask = %#v, want it left alone", wan["wan_netmask"])
+	}
+	if failover := slot(t, out.networkconf, "WAN_LTE_FAILOVER"); failover["wan_ip"] != "0.0.0.0" {
+		t.Errorf("wan_ip = %#v, want the unspecified address left alone", failover["wan_ip"])
+	}
+	// The router's own MAC is the identifier an ISP has on file for the line.
+	mac, _ := wan["mac_override"].(string)
+	if mac == "" || strings.HasPrefix(mac, "78:45:58") {
+		t.Errorf("mac_override = %q, want a documentation MAC", mac)
+	}
+}
+
+func TestScrubReplacesTheConsoleIdentifiers(t *testing.T) {
+	out := scrubbed(t)
+	console := out.sysinfo.Data[0]
+
+	for _, field := range []string{"anonymous_controller_id", "sso_app_id"} {
+		value, _ := console[field].(string)
+		if value == "" || strings.Contains(rawSysinfo, value) {
+			t.Errorf("%s = %q, want a placeholder of the same shape", field, value)
+		}
+		if strings.Count(value, "-") != 4 {
+			t.Errorf("%s = %q, want something still shaped like a UUID", field, value)
+		}
+	}
+	if console["anonymous_controller_id"] == console["sso_app_id"] {
+		t.Errorf("two identifiers became one placeholder: %#v", console["sso_app_id"])
+	}
+	// The console's name, its hostname and its timezone are the operator's
+	// words and the operator's city.
+	for field, unwanted := range map[string]string{
+		"name":     "Beeton",
+		"hostname": "liams-udr",
+		"timezone": "Africa",
+	} {
+		value, _ := console[field].(string)
+		if value == "" || strings.Contains(value, unwanted) {
+			t.Errorf("%s = %q, want a placeholder", field, value)
+		}
+	}
+	// What the recording exists to state — which Controller answered — stays.
+	for field, want := range map[string]any{
+		"version": "10.0.162", "ubnt_device_type": "UDR", "udm_version": "4.3.9",
+	} {
+		if console[field] != want {
+			t.Errorf("%s = %#v, want %#v", field, console[field], want)
+		}
+	}
+	// Addresses hide inside arrays too.
+	for _, addr := range console["ip_addrs"].([]any) {
+		assertPlaceholderAddress(t, "ip_addrs", addr.(string))
+	}
+	// One site, and it is the committed recording's — the LAN came from there,
+	// so a WAN entry claiming a different site would describe two routers.
+	if got := slot(t, out.networkconf, "WAN")["site_id"]; got != committedSite {
+		t.Errorf("site_id = %#v, want the committed recording's %q", got, committedSite)
+	}
+}
+
+func TestScrubReplacesTheOperatorsNameForTheirConnection(t *testing.T) {
+	out := scrubbed(t)
+
+	// An operator renames a slot to their ISP. The slot is what the tests match
+	// on, so the slot is what the entry is called afterwards.
+	for _, want := range []string{"WAN", "WAN_LTE_FAILOVER"} {
+		if got := slot(t, out.networkconf, want)["name"]; got != want {
+			t.Errorf("the %s slot is named %#v, want %q", want, got, want)
+		}
+	}
+}
+
+// Every field the router sent is a field the tests can exercise, and a field
+// that vanished is one they stopped exercising — silently, and only for
+// whoever re-recorded.
+func TestScrubNeverRemovesAField(t *testing.T) {
+	raw := rawRecording(t)
+	out := scrubbed(t)
+
+	for _, before := range raw.networkconf.Data {
+		if before["purpose"] != "wan" {
+			continue
+		}
+		assertSameShape(t, "networkconf["+before["wan_networkgroup"].(string)+"]",
+			before, slot(t, out.networkconf, before["wan_networkgroup"].(string)))
+	}
+	assertSameShape(t, "sysinfo", raw.sysinfo.Data[0], out.sysinfo.Data[0])
+}
+
+// The check that makes the rest of this file more than a list of the fields
+// somebody thought of: whatever the scrub took out, it goes looking for
+// afterwards, everywhere, and refuses to write a recording that still has it.
+func TestScrubRefusesARecordingThatStillHoldsAValueItTookOut(t *testing.T) {
+	raw := rawRecording(t)
+	// A field this program has never heard of, carrying the operator's name for
+	// their connection — the shape of every leak a field-by-field scrub misses.
+	slot(t, raw.networkconf, "WAN")["x_isp_note"] = "Fibre Co Gigabit, installed 2024"
+
+	_, err := scrub(raw, parse(t, committedNetworkconf))
+	if err == nil {
+		t.Fatalf("the scrub wrote a recording that still holds the operator's name for their connection")
+	}
+	if !strings.Contains(err.Error(), "x_isp_note") {
+		t.Errorf("the error should name the field that still holds it, got: %v", err)
+	}
+}
+
+// The check above hunts for what the router sent, and only there. A household
+// behind their ISP's own router is addressed out of the same private range the
+// committed LAN uses, and refusing to record that would be this program failing
+// on a coincidence.
+func TestScrubRecordsARouterAddressedOutOfTheCommittedLANsRange(t *testing.T) {
+	raw := rawRecording(t)
+	slot(t, raw.networkconf, "WAN")["wan_gateway"] = "192.168.1.1"
+
+	out, err := scrub(raw, parse(t, committedNetworkconf))
+	if err != nil {
+		t.Fatalf("scrubbing a double-NATted uplink: %v", err)
+	}
+	assertPlaceholderAddress(t, "wan_gateway", slot(t, out.networkconf, "WAN")["wan_gateway"].(string))
+	if lan := network(t, out.networkconf, "Default"); lan["ip_subnet"] != "192.168.1.1/24" {
+		t.Errorf("the committed LAN was scrubbed too: %#v", lan["ip_subnet"])
+	}
+}
+
+// Re-recording an unchanged router is an empty diff. That is what makes the
+// diff worth reading: everything in it is a real difference.
+func TestScrubIsStableAndIdempotent(t *testing.T) {
+	first := scrubbed(t)
+	second := scrubbed(t)
+	for _, files := range []struct {
+		name string
+		a, b document
+	}{
+		{"sysinfo", first.sysinfo, second.sysinfo},
+		{"networkconf", first.networkconf, second.networkconf},
+	} {
+		if !slices.Equal(written(t, files.a), written(t, files.b)) {
+			t.Errorf("two scrubs of one recording disagree about %s:\n%s\n%s",
+				files.name, written(t, files.a), written(t, files.b))
+		}
+	}
+
+	// And scrubbing what the scrub already wrote changes nothing: a placeholder
+	// is not something to find a placeholder for.
+	again, err := scrub(first, parse(t, committedNetworkconf))
+	if err != nil {
+		t.Fatalf("scrubbing a scrubbed recording: %v", err)
+	}
+	if !slices.Equal(written(t, first.networkconf), written(t, again.networkconf)) {
+		t.Errorf("scrubbing a scrubbed recording changed it:\n%s\n%s",
+			written(t, first.networkconf), written(t, again.networkconf))
+	}
+}
+
+func TestScrubRefusesARecordingWithNoUplinkInIt(t *testing.T) {
+	raw := rawRecording(t)
+	raw.networkconf.Data = slices.DeleteFunc(raw.networkconf.Data, func(entry map[string]any) bool {
+		return entry["purpose"] == "wan"
+	})
+
+	_, err := scrub(raw, parse(t, committedNetworkconf))
+	if err == nil || !strings.Contains(err.Error(), "uplink") {
+		t.Fatalf("scrubbing a recording with no WAN entry returned %v, want an error saying so", err)
+	}
+}
+
+func TestScrubRefusesWhenTheCommittedRecordingHasNoLAN(t *testing.T) {
+	committed := parse(t, committedNetworkconf)
+	committed.Data = nil
+
+	_, err := scrub(rawRecording(t), committed)
+	if err == nil || !strings.Contains(err.Error(), "LAN") {
+		t.Fatalf("scrubbing against a recording with no LAN returned %v, want an error saying so", err)
+	}
+}
+
+// The committed recording is this program's other input, so it is worth
+// knowing that the one in the repository is still an input it can use.
+func TestTheCommittedRecordingStillSuppliesALAN(t *testing.T) {
+	// From this package's directory, which is where a Go test runs.
+	body, err := os.ReadFile(filepath.Join("..", "..", recordingDir, "networkconf.json"))
+	if err != nil {
+		t.Fatalf("reading the committed recording: %v", err)
+	}
+
+	out, err := scrub(rawRecording(t), parse(t, string(body)))
+	if err != nil {
+		t.Fatalf("scrubbing against the committed recording: %v", err)
+	}
+	if len(networkNames(out.networkconf)) == 0 {
+		t.Errorf("the scrubbed recording holds no network, so the WAN tests have nothing that is not the uplink")
+	}
+}
+
+func TestTheWrittenRecordingIsJSONAControllerCouldHaveSent(t *testing.T) {
+	out := scrubbed(t)
+
+	body := written(t, out.networkconf)
+	if body[len(body)-1] != '\n' {
+		t.Errorf("the file does not end in a newline")
+	}
+	var round document
+	if err := json.Unmarshal(body, &round); err != nil {
+		t.Fatalf("what the scrub wrote is not JSON: %v", err)
+	}
+	if len(round.Data) != len(out.networkconf.Data) {
+		t.Errorf("the written file holds %d entries, want %d", len(round.Data), len(out.networkconf.Data))
+	}
+}
+
+// scrubbed is the raw recording above, put through the scrub against the
+// committed one — what almost every test here is about.
+func scrubbed(t *testing.T) recording {
+	t.Helper()
+	out, err := scrub(rawRecording(t), parse(t, committedNetworkconf))
+	if err != nil {
+		t.Fatalf("scrubbing the recording: %v", err)
+	}
+	return out
+}
+
+func rawRecording(t *testing.T) recording {
+	t.Helper()
+	return recording{
+		sysinfo:     parse(t, rawSysinfo),
+		networkconf: parse(t, rawNetworkconf),
+		wlanconf:    parse(t, rawWlanconf),
+	}
+}
+
+func parse(t *testing.T, body string) document {
+	t.Helper()
+	doc, err := read([]byte(body))
+	if err != nil {
+		t.Fatalf("reading a recorded response: %v", err)
+	}
+	return doc
+}
+
+func written(t *testing.T, doc document) []byte {
+	t.Helper()
+	body, err := doc.bytes()
+	if err != nil {
+		t.Fatalf("writing a recorded response: %v", err)
+	}
+	return body
+}
+
+func slot(t *testing.T, doc document, name string) map[string]any {
+	t.Helper()
+	for _, entry := range doc.Data {
+		if entry["purpose"] == "wan" && entry["wan_networkgroup"] == name {
+			return entry
+		}
+	}
+	t.Fatalf("the recording holds no %s slot", name)
+	return nil
+}
+
+func network(t *testing.T, doc document, name string) map[string]any {
+	t.Helper()
+	for _, entry := range doc.Data {
+		if entry["purpose"] != "wan" && entry["name"] == name {
+			return entry
+		}
+	}
+	t.Fatalf("the recording holds no network named %q", name)
+	return nil
+}
+
+func slotNames(doc document) []string {
+	var names []string
+	for _, entry := range doc.Data {
+		if entry["purpose"] == "wan" {
+			names = append(names, entry["wan_networkgroup"].(string))
+		}
+	}
+	return names
+}
+
+func networkNames(doc document) []string {
+	var names []string
+	for _, entry := range doc.Data {
+		if entry["purpose"] != "wan" {
+			names = append(names, entry["name"].(string))
+		}
+	}
+	return names
+}
+
+// assertPlaceholderAddress is what "a placeholder of the same type" means for
+// an address: still an address, and one of the ranges the RFCs set aside for
+// documentation, which belong to nobody.
+func assertPlaceholderAddress(t *testing.T, field, value string) {
+	t.Helper()
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		t.Errorf("%s = %q, which is not an address any more", field, value)
+		return
+	}
+	if !documentationAddress(addr) {
+		t.Errorf("%s = %q, want an address from a documentation range", field, value)
+	}
+}
+
+// assertSameShape fails for any field that lost its place or changed type
+// between the recording and the scrub of it.
+func assertSameShape(t *testing.T, where string, before, after map[string]any) {
+	t.Helper()
+	for _, name := range slices.Sorted(maps.Keys(before)) {
+		got, ok := after[name]
+		if !ok {
+			t.Errorf("%s.%s is gone from the scrubbed recording", where, name)
+			continue
+		}
+		switch was := before[name].(type) {
+		case map[string]any:
+			nested, ok := got.(map[string]any)
+			if !ok {
+				t.Errorf("%s.%s is %T after the scrub, was an object", where, name, got)
+				continue
+			}
+			assertSameShape(t, where+"."+name, was, nested)
+		default:
+			if wantType, gotType := typeOf(before[name]), typeOf(got); wantType != gotType {
+				t.Errorf("%s.%s is a %s after the scrub, was a %s", where, name, gotType, wantType)
+			}
+		}
+	}
+}
+
+func typeOf(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case float64:
+		return "number"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	default:
+		return "object"
+	}
+}
+
+// Every shape needs a rule, because the failure mode of a missing one is a
+// field replaced by nothing — the one thing this program promises never to do.
+func TestEveryShapeOfValueHasAPlaceholder(t *testing.T) {
+	for k := shape(0); k < shapeCount; k++ {
+		r, ok := rules[k]
+		if !ok {
+			t.Errorf("shape %d has no rule, so a field of that shape would be emptied", k)
+			continue
+		}
+		given := 0
+		for _, has := range []bool{r.fixed != "", r.counted != "", r.site} {
+			if has {
+				given++
+			}
+		}
+		if given != 1 {
+			t.Errorf("shape %d has %d placeholders, want exactly one: %+v", k, given, r)
+		}
+	}
+}
+
+// The envelope comes off the router like everything else, so it is swept and
+// checked like everything else. It says `{"rc": "ok"}` today, and today is not
+// a guarantee — ADR-0011 promises the check covers everywhere, not everywhere
+// anyone has looked.
+func TestScrubReachesIntoTheResponseEnvelope(t *testing.T) {
+	raw := rawRecording(t)
+	raw.sysinfo.Meta["from"] = "100.64.11.23"
+
+	out, err := scrub(raw, parse(t, committedNetworkconf))
+	if err != nil {
+		t.Fatalf("scrubbing a recording with more in its envelope: %v", err)
+	}
+	if out.sysinfo.Meta["rc"] != "ok" {
+		t.Errorf("the envelope stopped saying the request succeeded: %#v", out.sysinfo.Meta)
+	}
+	assertPlaceholderAddress(t, "meta.from", out.sysinfo.Meta["from"].(string))
+
+	// And the backstop reaches it too: a value taken out of an uplink, sitting
+	// in the envelope, stops the whole recording.
+	raw = rawRecording(t)
+	raw.networkconf.Meta["served_by"] = "Fibre Co Gigabit"
+	if _, err := scrub(raw, parse(t, committedNetworkconf)); err == nil {
+		t.Errorf("the envelope escaped the check that everything else gets")
+	}
+}
+
+// The backstop hunts for what identifies somebody, and a three-letter value is
+// not that. A console whose hostname is its device type used to refuse the
+// whole recording, and the operator could do nothing about it.
+func TestScrubRecordsAConsoleWhoseHostnameCollidesWithSomethingHarmless(t *testing.T) {
+	raw := rawRecording(t)
+	raw.sysinfo.Data[0]["hostname"] = "UDR"
+
+	out, err := scrub(raw, parse(t, committedNetworkconf))
+	if err != nil {
+		t.Fatalf("scrubbing a console named after its own device type: %v", err)
+	}
+	if out.sysinfo.Data[0]["ubnt_device_type"] != "UDR" {
+		t.Errorf("the device type went missing: %#v", out.sysinfo.Data[0]["ubnt_device_type"])
+	}
+	if out.sysinfo.Data[0]["hostname"] != placeholderHostname {
+		t.Errorf("hostname = %#v, want it replaced anyway", out.sysinfo.Data[0]["hostname"])
+	}
+}
+
+// A mask is kept because of the field it is in, not because of how it reads.
+// 255.0.0.0 in wan_ip is somebody's address.
+func TestScrubReplacesAMaskShapedAddressThatIsNotAMask(t *testing.T) {
+	raw := rawRecording(t)
+	slot(t, raw.networkconf, "WAN")["wan_ip"] = "255.0.0.0"
+
+	out, err := scrub(raw, parse(t, committedNetworkconf))
+	if err != nil {
+		t.Fatalf("scrubbing: %v", err)
+	}
+	wan := slot(t, out.networkconf, "WAN")
+	assertPlaceholderAddress(t, "wan_ip", wan["wan_ip"].(string))
+	if wan["wan_netmask"] != "255.255.255.0" {
+		t.Errorf("wan_netmask = %#v, want the mask left alone", wan["wan_netmask"])
+	}
+}

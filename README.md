@@ -319,13 +319,14 @@ make check   # fmt-check + lint + build + test; needs no Docker
 make fmt     # format with gofumpt
 make e2e     # the dockerized suite
 make run ARGS="export"   # run against a live Controller, credentials from the environment
+make record-udr          # re-record e2e/testdata/udr from a real UDR, read-only and scrubbed
 ```
 
 Requirements: Go for `make check`, plus Docker for `make e2e`. `make` installs its own pinned golangci-lint (which carries gofumpt) into `bin/`; the pin lives in the Makefile.
 
 Tests drive the whole tool at the process boundary against a real dockerized Controller (see `docs/adr/0003-apikey-auth-os-gate.md` for the rig design). That suite is `make e2e`; `make test` runs everything else, skipping it. The Controller version pin lives in `e2e/rig_test.go` (`defaultControllerImage`) and in the CI matrix.
 
-WAN slots are the one thing that container cannot stand in for — with no gateway it has no WAN entries at all — so those tests run against recorded Controller responses served at the same base URL, through the same API-key header, to the same real binary (`e2e/replay_test.go`). The recordings live in `e2e/testdata/udr/`, along with the one command that re-records them from a real router; `docs/adr/0008-wan-slots-replay-recorded-responses.md` explains the design and what it does not yet prove.
+WAN slots are the one thing that container cannot stand in for — with no gateway it has no WAN entries at all — so those tests run against recorded Controller responses served at the same base URL, through the same API-key header, to the same real binary (`e2e/replay_test.go`). The recordings live in `e2e/testdata/udr/`. `make record-udr` re-records them from a real router: read-only against the Controller, scrubbed by a program with tests rather than by a filter in prose (`tools/record-udr/`), and stopping to make you read the diff. `docs/adr/0008-wan-slots-replay-recorded-responses.md` explains the design and what it does not yet prove; `docs/adr/0011-a-recording-carries-only-the-uplinks.md` explains how much of a recording has to be real.
 
 Validate's tests are the exception, and deliberately so: it is offline by design, and requiring Docker to prove no Controller is needed would be an odd way to demonstrate it. They sit at the highest Docker-free seam instead — `cli.Run`, driven from an external test package in `internal/cli/` so they cannot reach past it.
 

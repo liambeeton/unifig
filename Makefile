@@ -64,12 +64,19 @@ e2e: ## Run the testcontainers suite against a real Controller (needs Docker)
 # UNIFIG_INSECURE is deliberately unguarded; it is optional and defaults off.
 .PHONY: require-connection
 require-connection:
-	@[ -n "$$UNIFIG_HOST" ] || { echo "make run: UNIFIG_HOST is not set" >&2; exit 1; }
-	@[ -n "$$UNIFIG_API_KEY" ] || { echo "make run: UNIFIG_API_KEY is not set" >&2; exit 1; }
+	@[ -n "$$UNIFIG_HOST" ] || { echo "UNIFIG_HOST is not set" >&2; exit 1; }
+	@[ -n "$$UNIFIG_API_KEY" ] || { echo "UNIFIG_API_KEY is not set" >&2; exit 1; }
 
 .PHONY: run
 run: require-connection build ## Run unifig against a live Controller, e.g. make run ARGS="export"
 	@./$(BINARY) $(ARGS)
+
+# Read-only against the router: three GETs and nothing else. It scrubs what it
+# reads before writing it (tools/record-udr/scrub.go), and stops to make the
+# operator read the diff. See e2e/testdata/udr/README.md.
+.PHONY: record-udr
+record-udr: require-connection ## Re-record e2e/testdata/udr from a real UDR
+	@$(GO) run ./tools/record-udr
 
 $(GOLANGCI_LINT):
 	@mkdir -p $(TOOLS_DIR)
