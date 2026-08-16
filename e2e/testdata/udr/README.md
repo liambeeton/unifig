@@ -20,19 +20,21 @@ it in memory and a `PUT` updates its copy the way the Controller updates its
 own, which is what lets a test apply a change and then plan again to prove the
 apply converged.
 
-## Provenance — read this before trusting them
+## Provenance
 
-**These were not captured from the physical UDR.** They were recorded from the
-same dockerized Controller (Network 10.0.162) the rest of the suite runs
-against, and then extended by hand with the WAN slots that Controller does not
-have, using field names and values taken from the Controller's own responses to
-a seeded `purpose: wan` entry and from the go-unifi field spec.
+**Captured from a physical UniFi Dream Router on 16 August 2026**, running
+Network 10.5.67, with `make record-udr`. The uplink was on PPPoE and signed in
+at the time, which is what let that recording answer the two questions
+`docs/adr/0008-wan-slots-replay-recorded-responses.md` had left open.
 
-So what they prove is that unifig handles the *shape* correctly — matching a
-slot, diffing the fields, writing the whole entry back, keeping what it does not
-model. What they do not yet prove is that a real UDR's factory WAN slots look
-like this. That gap is recorded in `docs/adr/0008-wan-slots-replay-recorded-responses.md`
-and closes the moment the files above are re-recorded.
+The router has one WAN slot, so that is what the recording holds. Nothing in
+the suite depends on that — see "What the tests need from a recording" below —
+and a recording from a router with a second uplink or a cellular backup drops
+in the same way.
+
+An earlier version of these files was recorded from the dockerized Controller
+and extended by hand, and this section used to warn you about it. It is kept in
+the git history rather than here.
 
 ## Re-recording from a real UDR
 

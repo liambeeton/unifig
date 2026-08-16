@@ -1,21 +1,6 @@
 {
-  "meta": { "rc": "ok" },
-  "data": [
-    {
-      "_id": "6613a1f0c4b2d90a5e1f0101",
-      "site_id": "6613a1f0c4b2d90a5e1f0000",
-      "name": "Home",
-      "enabled": true,
-      "security": "wpapsk",
-      "wpa_mode": "wpa2",
-      "wpa_enc": "ccmp",
-      "x_passphrase": "recorded-wlan-passphrase",
-      "networkconf_id": "6613a1f0c4b2d90a5e1f0001",
-      "usergroup_id": "6613a1f0c4b2d90a5e1f0201",
-      "wlan_band": "both",
-      "ap_group_ids": ["6613a1f0c4b2d90a5e1f0301"],
-      "schedule": [],
-      "schedule_with_duration": []
-    }
-  ]
+  "meta": {
+    "rc": "ok"
+  },
+  "data": []
 }

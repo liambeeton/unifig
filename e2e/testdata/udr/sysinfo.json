@@ -1,20 +1,54 @@
 {
-  "meta": { "rc": "ok" },
+  "meta": {
+    "rc": "ok"
+  },
   "data": [
     {
-      "version": "10.0.162",
-      "build": "atag_10.0.162_32076",
-      "name": "UniFi Dream Router",
+      "anonymous_controller_id": "00000000-0000-4000-8000-000000000002",
+      "autobackup": false,
+      "build": "atag_10.5.67_35187",
+      "console_display_version": "5.1.19",
+      "data_retention_days": 90,
+      "data_retention_time_in_hours_for_5minutes_scale": 24,
+      "data_retention_time_in_hours_for_daily_scale": 2160,
+      "data_retention_time_in_hours_for_hourly_scale": 168,
+      "data_retention_time_in_hours_for_monthly_scale": 8760,
+      "data_retention_time_in_hours_for_others": 2160,
+      "debug_device": "warn",
+      "debug_mgmt": "warn",
+      "debug_sdn": "warn",
+      "debug_setting_preference": "auto",
+      "debug_system": "warn",
+      "default_site_device_auth_password_alert": false,
+      "has_webrtc_support": true,
       "hostname": "unifi",
+      "https_port": 8443,
+      "image_maps_use_google_engine": false,
+      "inform_port": 8080,
+      "ip_addrs": [
+        "203.0.113.3",
+        "203.0.113.4",
+        "203.0.113.5",
+        "203.0.113.6"
+      ],
+      "is_cloud_console": false,
+      "live_chat": "super-only",
+      "name": "UniFi Console",
+      "override_inform_host": false,
+      "portal_http_port": 8880,
+      "previous_version": "10.4.57",
+      "radius_disconnect_running": false,
+      "sso_app_id": "00000000-0000-4000-8000-000000000003",
+      "store_enabled": "super-only",
       "timezone": "UTC",
       "ubnt_device_type": "UDR",
-      "udm_version": "4.3.9",
-      "uptime": 604800,
-      "https_port": 443,
-      "inform_port": 8080,
+      "udm_version": "UDR.mt7622.v5.1.19.3fbc1da.260613.0957",
+      "unsupported_device_count": 0,
+      "unsupported_device_list": [],
       "update_available": false,
-      "autobackup": false,
-      "data_retention_days": 90
+      "update_downloaded": false,
+      "uptime": 97888,
+      "version": "10.5.67"
     }
   ]
 }
