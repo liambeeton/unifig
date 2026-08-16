@@ -1,6 +1,11 @@
 # built binary
 /unifig
 
+# the maintainer's own config, describing a real network. Anchored to the root
+# so examples/unifig.yaml — which ships — is unaffected. An operator's own
+# unifig.yaml belongs in git; this is the tool's repo, not an operator's.
+/unifig.yaml
+
 # pinned tools installed by the Makefile
 /bin/
 
