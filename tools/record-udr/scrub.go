@@ -393,7 +393,31 @@ func (s *scrubber) byShape(where, name, text string) string {
 	if _, err := net.ParseMAC(text); err == nil {
 		return s.replace(where, shapeMAC, text)
 	}
+	if isObjectID(text) {
+		return s.replace(where, shapeObjectID, text)
+	}
 	return text
+}
+
+// isObjectID reports whether a value is one of the Controller's own object
+// identifiers: twenty-four hex characters and nothing else.
+//
+// The name table above catches the fields that are known to hold one. This
+// catches the rest, and it is not hypothetical — a real UDR's WAN entry
+// carries `single_network_lan`, holding the id of a network on that console,
+// in a field this program had never heard of. The shape is narrow on purpose:
+// a build string or a version is not an identifier, and replacing one would
+// lose the fact the recording exists to state.
+func isObjectID(text string) bool {
+	if len(text) != 24 {
+		return false
+	}
+	for _, c := range text {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *scrubber) address(where, name string, addr netip.Addr, text string) string {

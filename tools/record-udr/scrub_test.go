@@ -693,3 +693,56 @@ func TestScrubReplacesAMaskShapedAddressThatIsNotAMask(t *testing.T) {
 		t.Errorf("wan_netmask = %#v, want the mask left alone", wan["wan_netmask"])
 	}
 }
+
+// An identifier does not need a field name this program recognises in order to
+// be one. A real UDR's WAN entry carries `single_network_lan`, holding the id
+// of a network on that console — a field nobody here had heard of, holding an
+// identifier that the name table therefore let straight through into a public
+// repository.
+//
+// So the shape is caught as well as the name, the way an address is. Anything
+// shaped like one of the Controller's own object ids is one.
+func TestScrubReplacesAnIdentifierInAFieldItHasNeverHeardOf(t *testing.T) {
+	raw := rawRecording(t)
+	slot(t, raw.networkconf, "WAN")["single_network_lan"] = "7a1c3e5209bd4f6081c2d3e4"
+
+	out, err := scrub(raw, parse(t, committedNetworkconf))
+	if err != nil {
+		t.Fatalf("scrubbing: %v", err)
+	}
+
+	got, _ := slot(t, out.networkconf, "WAN")["single_network_lan"].(string)
+	if got == "7a1c3e5209bd4f6081c2d3e4" {
+		t.Errorf("single_network_lan = %q — a real console's object id reached the recording", got)
+	}
+	if !strings.HasPrefix(got, documentationIDs) {
+		t.Errorf("single_network_lan = %q, want an object id of this program's own making", got)
+	}
+	// Still an id, so the entry still describes the same shape of thing.
+	if len(got) != len("7a1c3e5209bd4f6081c2d3e4") {
+		t.Errorf("single_network_lan = %q, want something still shaped like an object id", got)
+	}
+}
+
+// The shape is narrow on purpose: 24 hex characters and nothing else. A build
+// string or a version is not an identifier, and replacing one would lose the
+// fact the recording exists to state.
+func TestScrubLeavesValuesThatMerelyLookTechnicalAlone(t *testing.T) {
+	raw := rawRecording(t)
+	raw.sysinfo.Data[0]["udm_version"] = "UDR.mt7622.v5.1.19.3fbc1da.260613.0957"
+	raw.sysinfo.Data[0]["build"] = "atag_10.5.67_35187"
+
+	out, err := scrub(raw, parse(t, committedNetworkconf))
+	if err != nil {
+		t.Fatalf("scrubbing: %v", err)
+	}
+	for field, want := range map[string]any{
+		"udm_version": "UDR.mt7622.v5.1.19.3fbc1da.260613.0957",
+		"build":       "atag_10.5.67_35187",
+	} {
+		if out.sysinfo.Data[0][field] != want {
+			t.Errorf("%s = %#v, want %#v — that is which Controller answered, not who owns it",
+				field, out.sysinfo.Data[0][field], want)
+		}
+	}
+}
