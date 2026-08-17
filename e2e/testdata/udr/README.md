@@ -83,6 +83,40 @@ If you are the one running `make record-udr` against a real UDR, these are the
 questions to answer while you have one. Replacing these two files is the
 acceptance test issue #8 could not run.
 
+#### A UDR is necessary but not sufficient: it has to be migrated
+
+This was tried on 17 August 2026, against the same UDR on Network 10.5.67 that
+the rest of this recording came from, and it did not work — not because the
+command failed, but because that router is still on the **legacy firewall**. It
+answers `[]` for `firewall/zone`, `firewall-policies` and `zone-matrix`, holds
+four rules under `rest/firewallrule`, and its `described-features` lists
+`ZONE_BASED_FIREWALL_MIGRATION` rather than `ZONE_BASED_FIREWALL`. The
+zone-based firewall arrives with an adopted gateway, but a site that predates it
+stays on the old rules until somebody migrates it.
+
+So if you are about to do this, check first — one read-only request, and it
+saves you the rest:
+
+```sh
+curl -sk -H "X-API-KEY: $UNIFIG_API_KEY" \
+  "$UNIFIG_HOST/proxy/network/v2/api/site/default/firewall/zone"
+```
+
+An empty array means this router cannot answer the questions above yet, and
+`make record-udr` will **empty these two fixtures** rather than fill them,
+taking the firewall suite's coverage with them: 11 tests fail, all firewall.
+That is the guards working rather than something to fix — but do not commit
+that recording. `git restore -- e2e/testdata/udr` puts it back.
+
+If it answers with zones, you have what issue #21 needs. Note that an empty
+recording has two possible causes that look identical in the written file: the
+router sent nothing, or it sent zones that all lacked `attr_no_delete` and the
+scrub dropped every one (`tools/record-udr/scrub.go`). The second would mean
+prune proposes deleting the zone that stands for the internet. Read the
+endpoint directly before concluding anything from an empty file — on 17 August
+it was the first cause, and unifig's exemption is still merely unverified rather
+than wrong.
+
 ## Re-recording from a real UDR
 
 One command, from the repo root, with `UNIFIG_HOST` and `UNIFIG_API_KEY`
