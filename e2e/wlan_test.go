@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -45,6 +47,66 @@ func seedWLANOn(t *testing.T, name, network, passphrase string) {
 		"x_passphrase": passphrase, "networkconf_id": testRig.networkID(t, network),
 	})
 	cleanupWLANs(t, name)
+}
+
+// seedOpenWLAN puts a WLAN on the Controller in the state a physical UDR was
+// found in: `security: open`, with an x_passphrase still sitting on it from
+// whenever it was last WPA-PSK. The Controller keeps the value rather than
+// clearing it, exactly as it keeps PPPoE credentials on a slot that has since
+// moved to DHCP.
+//
+// Open is the mode these tests use, and it is not the only mode the rule covers
+// — the engine reads a passphrase off WPA-PSK and nothing else, so an
+// enterprise (`wpaeap`) WLAN keeps its stale passphrase out of an export in
+// exactly the same way. That half is not exercised here because this Controller
+// cannot hold it: a wpaeap wlanconf is refused without a RADIUS profile
+// (`api.err.WlanConfRadiusProfileNull`), the built-in profile is refused in turn
+// because the RADIUS server is off (`api.err.RadiusServerNotEnabled`), and the
+// dockerized Controller ships no `radius` setting to switch on. It is the same
+// shortfall that put the WAN slots on a recording — see testdata/udr/README.md —
+// and a recording holding an enterprise WLAN would close it.
+//
+// What was stored is read back and checked rather than assumed, because it is
+// the whole subject of the tests below: a Controller that dropped the
+// passphrase on the way in would leave them passing against a state that cannot
+// occur, which is the one failure a fixture must not have.
+func seedOpenWLAN(t *testing.T, name, network, passphrase string) {
+	t.Helper()
+	testRig.seedWLAN(t, map[string]any{
+		"name": name, "enabled": true, "security": "open",
+		"x_passphrase": passphrase, "networkconf_id": testRig.networkID(t, network),
+	})
+	cleanupWLANs(t, name)
+
+	live := testRig.liveWLAN(t, name)
+	if live["security"] != "open" || live["x_passphrase"] != passphrase {
+		t.Fatalf("the Controller did not store the state these tests are about: security = %#v, x_passphrase = %#v",
+			live["security"], live["x_passphrase"])
+	}
+}
+
+// exportedWLANSecretEnv is the environment a freshly exported config needs in
+// order to plan: every passphrase export redacted, put back to the value the
+// Controller holds for it.
+//
+// It is the WAN suite's exportedSecretEnv against the live Controller instead of
+// against the recording, and it exists for the same reason: a test that wrote
+// the variable names down again would only ever be right about the WLANs it
+// happened to seed itself, and would fail on the next fixture somebody adds for
+// a reason that has nothing to do with what it is testing.
+func exportedWLANSecretEnv(t *testing.T, exported []byte) map[string]string {
+	t.Helper()
+
+	env := map[string]string{}
+	for _, wlan := range exportedYAML(t, exported).WLANs {
+		name, ok := envReference(wlan.Passphrase)
+		if !ok {
+			continue
+		}
+		passphrase, _ := testRig.liveWLAN(t, wlan.Name)["x_passphrase"].(string)
+		env[name] = passphrase
+	}
+	return env
 }
 
 // withPassphrase is the environment a config with a ${WLAN_PASSPHRASE}
@@ -299,6 +361,135 @@ wlans:
 	if live := testRig.liveWLAN(t, "WLAN Unmanaged Secret"); live["x_passphrase"] != "the-old-passphrase" {
 		t.Errorf("passphrase = %#v, want the Controller's own", live["x_passphrase"])
 	}
+}
+
+// A passphrase left behind on a WLAN the Controller no longer joins clients to
+// with a pre-shared key describes nothing about how they join it — the same
+// rule the WAN slots already follow, where credentials are read only for a slot
+// actually using PPPoE.
+//
+// Export is where it bites hardest. Writing that stale value would put a
+// passphrase in the file for a WLAN that has none, and the brownfield path
+// would then be "invent a secret for a WLAN with no secret" — which is also the
+// one thing that turns the open WLAN into a WPA-PSK one and locks out every
+// guest on it.
+func TestAnOpenWLANExportsWithNoPassphraseAndPlansClean(t *testing.T) {
+	seedOpenWLAN(t, "WLAN Open Export", "Default", testPassphrase)
+
+	exported := testRig.runUnifig(t, []string{"export"}, nil)
+	if exported.ExitCode != 0 {
+		t.Fatalf("unifig export exited %d\nstderr: %s", exported.ExitCode, exported.Stderr)
+	}
+	assertNoPassphraseIn(t, "the export", exported.Stdout, exported.Stderr)
+
+	var found bool
+	for _, wlan := range exportedYAML(t, exported.Stdout).WLANs {
+		if wlan.Name != "WLAN Open Export" {
+			continue
+		}
+		found = true
+		if wlan.Passphrase != "" {
+			t.Errorf("export wrote passphrase %q for a WLAN the Controller holds as open", wlan.Passphrase)
+		}
+		if wlan.Network != "Default" {
+			t.Errorf("network = %q, want %q", wlan.Network, "Default")
+		}
+	}
+	if !found {
+		t.Fatalf("export left out the seeded open WLAN entirely:\n%s", exported.Stdout)
+	}
+	// Nothing was redacted for it either, so the operator is not asked to set a
+	// variable for a secret that does not exist.
+	if strings.Contains(string(exported.Stderr), "UNIFIG_WLAN_WLAN_OPEN_EXPORT_PASSPHRASE") {
+		t.Errorf("export asked for a secret this WLAN does not have: %s", exported.Stderr)
+	}
+
+	// And the file it wrote is one the operator can walk straight into: nothing
+	// to invent for this WLAN, and the very first plan is empty.
+	path := filepath.Join(t.TempDir(), "unifig.yaml")
+	if err := os.WriteFile(path, exported.Stdout, 0o600); err != nil {
+		t.Fatalf("writing exported config: %v", err)
+	}
+	res := planEnv(t, exportedWLANSecretEnv(t, exported.Stdout), path)
+	if res.ExitCode != exitNoChanges {
+		t.Fatalf("plan of a freshly exported config exited %d, want %d\nexported:\n%s\nplan:\n%s",
+			res.ExitCode, exitNoChanges, exported.Stdout, res.Stdout)
+	}
+}
+
+// The other half of the same rule, and the one that stops an over-correction:
+// an open WLAN the config describes by name and network alone is a WLAN unifig
+// manages no security about, so an unchanged Controller is an empty plan. The
+// stale passphrase is neither exported nor diffed nor cleared.
+func TestAnOpenWLANWithAStalePassphraseIsNotAChange(t *testing.T) {
+	seedOpenWLAN(t, "WLAN Open Unchanged", "Default", testPassphrase)
+
+	path := managedWLAN(t, `networks:
+  - name: Default
+    subnet: 192.168.1.1/24
+wlans:
+  - name: WLAN Open Unchanged
+    network: Default
+`)
+
+	res := plan(t, path)
+	if res.ExitCode != exitNoChanges {
+		t.Fatalf("plan exited %d, want %d — it is proposing to change a WLAN nothing has asked for\nplan:\n%s",
+			res.ExitCode, exitNoChanges, res.Stdout)
+	}
+	live := testRig.liveWLAN(t, "WLAN Open Unchanged")
+	if live["security"] != "open" {
+		t.Errorf("security = %#v, want %q — a plan that changed nothing changed this", live["security"], "open")
+	}
+}
+
+// A config that does state a passphrase for an open WLAN is the operator asking
+// for WPA-PSK, so it applies. What they must not have to discover afterwards is
+// that everyone currently on that WLAN was disconnected by it — unifig does
+// not model security, so the file cannot say it and the plan does.
+//
+// The passphrase here is the one the Controller already has sitting on the WLAN,
+// which is the case the defect was latent in: with the stale value taken for the
+// current one, the two agreed and the plan was empty, while an apply of any
+// other field on the WLAN would have flipped its security as a side effect.
+func TestAPassphraseForAnOpenWLANSaysTheSecurityIsChangingBeforeItDoes(t *testing.T) {
+	seedOpenWLAN(t, "WLAN Open To WPA", "Default", testPassphrase)
+
+	path := managedWLAN(t, `networks:
+  - name: Default
+    subnet: 192.168.1.1/24
+wlans:
+  - name: WLAN Open To WPA
+    network: Default
+    passphrase: ${WLAN_PASSPHRASE}
+`)
+
+	res := planEnv(t, withPassphrase(testPassphrase), path)
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d — the WLAN is open and the config asks for a passphrase\nplan:\n%s",
+			res.ExitCode, exitChangesPending, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{
+		`~ wlan "WLAN Open To WPA"`, "passphrase", "(hidden)", "open", "WPA-PSK", "disconnect",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("plan should mention %q so the security change is not a surprise, got:\n%s", fragment, stdout)
+		}
+	}
+	assertNoPassphraseIn(t, "the plan", res.Stdout, res.Stderr)
+
+	applyEnv(t, withPassphrase(testPassphrase), path)
+
+	live := testRig.liveWLAN(t, "WLAN Open To WPA")
+	if live["security"] != "wpapsk" {
+		t.Errorf("security = %#v, want %q — the operator asked for a passphrase", live["security"], "wpapsk")
+	}
+	if live["x_passphrase"] != testPassphrase {
+		t.Errorf("the Controller holds passphrase %#v, want the one the environment supplied", live["x_passphrase"])
+	}
+
+	assertNoChangesPendingEnv(t, withPassphrase(testPassphrase), path)
 }
 
 // unifig owns the fields its config models and nothing else. A WLAN carries far

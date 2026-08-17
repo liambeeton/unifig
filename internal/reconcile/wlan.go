@@ -10,6 +10,19 @@ import (
 	"github.com/liambeeton/unifig/internal/config"
 )
 
+// wpaPSK is the Controller's security mode for a WLAN clients join with a
+// pre-shared key, and the only mode a passphrase belongs to. Stating one in the
+// config is therefore stating this, which is what overwriteManagedWLAN writes.
+const wpaPSK = "wpapsk"
+
+// passphraseSecurities are the security modes on which a stored passphrase
+// describes how clients actually join. There is one, and it is a whitelist
+// rather than a test for `open` for the same reason wanTypes is one: the
+// Controller leaves x_passphrase behind on a WLAN whose security has moved on,
+// so an enterprise (`wpaeap`) WLAN carries a stale passphrase exactly as an open
+// one does, and only the security mode says whether anything uses it.
+var passphraseSecurities = map[string]bool{wpaPSK: true}
+
 // planWLANs is the WLAN half of a reconcile. Its caller only reaches it when
 // the config has a `wlans:` section at all (ADR-0006), so the Controller's
 // WLANs are not even read for a file that says nothing about them.
@@ -105,16 +118,32 @@ func liveWLANs(ctx context.Context, client unifi.Client, site string, bound bind
 //
 // The passphrase comes back from the Internal API in the clear (ADR-0007), so
 // it takes part in the diff like any other field rather than needing write-only
-// semantics. Nothing else in unifig prints it.
+// semantics. Nothing else in unifig prints it. It is read only for a WLAN whose
+// security actually uses one, because a passphrase left behind on a WLAN the
+// Controller now holds as open describes nothing about how clients join it
+// today — the same sentence fromLiveWANSlot makes about PPPoE credentials on a
+// slot that has since moved to DHCP, and the same Controller behaviour
+// underneath: a value that stops being used is left where it was.
+//
+// So an open WLAN is described by its name and its network, and no notice goes
+// with it, unlike a WAN slot unifig can only half describe. An absent
+// `passphrase:` already means "unifig manages nothing about how clients join
+// this", which is the whole truth about an open WLAN rather than a gap in
+// stating it — where a partial WAN slot is one whose connection type the config
+// has no way to state at all. A file that came back short says so; this one did
+// not come back short.
 //
 // Network is never empty for a WLAN that reached here, because listWLANs keeps
 // only WLANs whose binding it can name.
 func fromLiveWLAN(wlan unifi.WLAN, bound bindings) config.WLAN {
-	return config.WLAN{
-		Name:       wlan.Name,
-		Network:    bound.networkName(wlan.NetworkID),
-		Passphrase: wlan.XPassphrase,
+	described := config.WLAN{
+		Name:    wlan.Name,
+		Network: bound.networkName(wlan.NetworkID),
 	}
+	if passphraseSecurities[wlan.Security] {
+		described.Passphrase = wlan.XPassphrase
+	}
+	return described
 }
 
 // createWLAN is the Change for a WLAN the Controller does not have.
@@ -149,6 +178,27 @@ func updateWLAN(desired config.WLAN, live unifi.WLAN, bound bindings) (Change, b
 	fields := changedWLANFields(fromLiveWLAN(live, bound), desired)
 	if len(fields) == 0 {
 		return Change{}, false
+	}
+
+	// Writing a passphrase writes WPA-PSK with it (see overwriteManagedWLAN), so
+	// stating one for a WLAN the Controller does not hold that way changes how
+	// every client joins it. unifig does not model security, so the config
+	// cannot say that and the plan does — the update-path counterpart of
+	// setWLANFields telling a create that it is about to make an open WLAN. The
+	// mode the Controller is in goes into the sentence, because that is the fact
+	// an operator checks it against: a guest WLAN they meant to leave open reads
+	// nothing like an enterprise one they had forgotten was enterprise.
+	//
+	// A note rather than a Risk, and by the test ADR-0012 settled rather than by
+	// omission: everyone on the WLAN drops off it, and the Controller is still
+	// reachable, the operator is still an operator, and the way back is to join
+	// again with the passphrase they just set. Recovery cannot need physical
+	// access, so this is a consequence to state, not a change to stop and ask
+	// about one at a time.
+	if desired.Passphrase != "" && !passphraseSecurities[live.Security] {
+		annotate(fields, "passphrase", fmt.Sprintf(
+			"the Controller has this WLAN's security as %q, and a passphrase sets WPA-PSK, so every client on it now is disconnected until it joins again with the passphrase",
+			live.Security))
 	}
 
 	return Change{
@@ -235,6 +285,13 @@ func setWLANFields(desired config.WLAN) []Field {
 // omits is unmanaged as usual — on an existing WLAN that means unifig leaves
 // whatever security the Controller has configured exactly as it is, open or WPA
 // or enterprise.
+//
+// A passphrase the config does state is always a change on a WLAN the
+// Controller does not hold as WPA-PSK, because fromLiveWLAN reads no passphrase
+// off one and so there is nothing for it to already agree with. That is right
+// rather than incidental: the apply moves the WLAN onto WPA-PSK whatever the
+// value, so it is a change even where the operator happened to write the value
+// the Controller still has lying on it.
 func changedWLANFields(current, desired config.WLAN) []Field {
 	fields := make([]Field, 0, 2)
 	if current.Network != desired.Network {
@@ -255,12 +312,18 @@ func changedWLANFields(current, desired config.WLAN) []Field {
 // or `wpaeap` is a password nothing asks for. So a config that states a
 // passphrase is a config that states WPA-PSK, and one that omits it leaves the
 // Controller's own choice alone.
+//
+// fromLiveWLAN is the same sentence read backwards, and the two have to stay
+// that way: what is written under one security mode is what is read under it.
+// A passphrase harvested off a WLAN the Controller holds as open would arrive
+// back here as a config asking for WPA-PSK, and unifig would lock an open WLAN
+// on nobody's instruction.
 func overwriteManagedWLAN(wlan *unifi.WLAN, desired config.WLAN, networkID string) {
 	wlan.Name = desired.Name
 	wlan.NetworkID = networkID
 	if desired.Passphrase != "" {
 		wlan.XPassphrase = desired.Passphrase
-		wlan.Security = "wpapsk"
+		wlan.Security = wpaPSK
 	}
 
 	// Not a modelled field, and not really a write either: the Controller
