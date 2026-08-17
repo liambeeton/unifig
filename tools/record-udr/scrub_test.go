@@ -140,6 +140,29 @@ const rawWlanconf = `{
   ]
 }`
 
+// The port forwards as a real router hands them over: what the house runs, on
+// which machine, reachable from outside. None of it survives the scrub — the
+// dockerized Controller holds port forwards perfectly well, so there is nothing
+// here a recording has to contribute and everything here that names a household.
+const rawPortforward = `{
+  "meta": { "rc": "ok" },
+  "data": [
+    {
+      "_id": "65f1c0a1d4e2b30af1c00c01",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "name": "Sam's Minecraft server",
+      "enabled": true,
+      "pfwd_interface": "wan",
+      "dst_port": "25565",
+      "fwd": "192.168.4.42",
+      "fwd_port": "25565",
+      "proto": "tcp",
+      "src": "any",
+      "destination_ip": "any"
+    }
+  ]
+}`
+
 // The settings response is the whole console's configuration, and unifig reads
 // one key out of it. Everything here that is not that key is a reason the scrub
 // keeps only the one it reads.
@@ -260,6 +283,30 @@ func TestScrubEmptiesTheWLANs(t *testing.T) {
 	body := string(written(t, out.wlanconf))
 	if !strings.Contains(body, `"rc": "ok"`) || !strings.Contains(body, `"data": []`) {
 		t.Errorf("the emptied wlanconf is not a Controller response: %s", body)
+	}
+}
+
+// The same rule as the WLANs, and the case for it is if anything plainer: a
+// port forward is a list of what the house runs, on which machine, reachable
+// from outside — and a container holds one as well as a router does, so a
+// recording has nothing to contribute by keeping it.
+func TestScrubEmptiesThePortForwards(t *testing.T) {
+	out := scrubbed(t)
+
+	if len(out.portforward.Data) != 0 {
+		t.Fatalf("the scrub kept %d port forwards, want none — each one names what the household runs and where",
+			len(out.portforward.Data))
+	}
+	// Emptied, not removed: the endpoint still answers, and it answers the way
+	// a Controller does.
+	body := string(written(t, out.portforward))
+	if !strings.Contains(body, `"rc": "ok"`) || !strings.Contains(body, `"data": []`) {
+		t.Errorf("the emptied portforward is not a Controller response: %s", body)
+	}
+	for _, gone := range []string{"Minecraft", "192.168.4.42", "25565"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the scrubbed portforward still holds %q", gone)
+		}
 	}
 }
 
@@ -620,6 +667,7 @@ func rawRecording(t *testing.T) recording {
 		sysinfo:     parse(t, rawSysinfo),
 		networkconf: parse(t, rawNetworkconf),
 		wlanconf:    parse(t, rawWlanconf),
+		portforward: parse(t, rawPortforward),
 		setting:     parse(t, rawSetting),
 		zones:       parseList(t, rawFirewallZones),
 		policies:    parseList(t, rawFirewallPolicies),

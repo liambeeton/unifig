@@ -36,6 +36,7 @@ type Config struct {
 	WLANs            []WLAN           `yaml:"wlans,omitempty"`
 	Zones            []Zone           `yaml:"zones,omitempty"`
 	FirewallPolicies []FirewallPolicy `yaml:"firewall-policies,omitempty"`
+	PortForwards     []PortForward    `yaml:"port-forwards,omitempty"`
 	WAN              []WANSlot        `yaml:"wan,omitempty"`
 	EncryptedDNS     *EncryptedDNS    `yaml:"encrypted-dns,omitempty"`
 }
@@ -103,6 +104,36 @@ type FirewallPolicy struct {
 	Action      string `yaml:"action"`
 	Source      string `yaml:"source"`
 	Destination string `yaml:"destination"`
+}
+
+// PortForward is a rule sending traffic that arrives on a port of the internet
+// side to an address and port inside the network, keyed by name.
+//
+// It is the one Resource whose target is not a reference. ForwardIP is an
+// address rather than the name of a network this file defines, so there is
+// nothing here for checkReferences to resolve, nothing for prune to hold back on
+// its account, and no ordering it imposes on an apply.
+//
+// Everything but Source is required, on the reasoning a firewall policy's fields
+// are: a forward exists to send one port somewhere, so there is no such thing as
+// one unifig could create without knowing which port, which host and which
+// protocol. Source is the exception because a forward is usually open to the
+// whole internet and stating this field is how an operator narrows it — omitted,
+// it is unmanaged like every other omitted field (ADR-0004), and a create the
+// config states none for is one the plan says will accept traffic from anywhere.
+//
+// Ports are numbers rather than text, which is the one thing this type declines
+// to model in full: the Controller will hold a range or a comma-separated list in
+// either port, and unifig models a single port in each. A live forward stating
+// otherwise is one export leaves out and prune never deletes, the same way a WLAN
+// bound to something unifig cannot name is.
+type PortForward struct {
+	Name        string `yaml:"name"`
+	Port        int    `yaml:"port"`
+	ForwardIP   string `yaml:"forward-ip"`
+	ForwardPort int    `yaml:"forward-port"`
+	Protocol    string `yaml:"protocol"`
+	Source      string `yaml:"source,omitempty"`
 }
 
 // WANSlot is one of the Controller's internet uplinks — a Setting rather than a

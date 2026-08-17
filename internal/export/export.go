@@ -177,6 +177,28 @@ func WriteIndescribablePolicies(w io.Writer, policies []string) error {
 	return err
 }
 
+// WriteIndescribablePortForwards names the port forwards export left out
+// entirely, on the same promise as WriteOmissions: a file that came back short
+// says so.
+//
+// The shortfall is always a port. unifig models a forward as one port arriving
+// and one port inside, and the Controller will hold a range or a comma-separated
+// list in either — and a port is half of what a forward is, so there is no
+// partial way to write one down.
+func WriteIndescribablePortForwards(w io.Writer, forwards []string) error {
+	if len(forwards) == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nLeft out %s, which unifig cannot describe: %s.\n",
+		count(len(forwards), "port forward"), quoteAll(forwards))
+	b.WriteString("Each gives a port as a range or a list rather than as a single port, which unifig does not model. It manages nothing about them, and `--prune` will not delete them.\n")
+
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
 // WritePartialWANSlots names the WAN slots the config describes by slot alone,
 // so that a file which says less than the operator expects says why.
 //

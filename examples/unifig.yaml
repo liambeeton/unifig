@@ -49,6 +49,22 @@ firewall-policies:
     source: Untrusted
     destination: Internal
 
+port-forwards:
+  # What the network answers to from the internet. Everything but `source` is
+  # required: a forward that did not say which port, which host and which
+  # protocol would not be a record of an exposed service.
+  - name: Home Assistant
+    port: 8443
+    # An address, not the name of a network above — it is what the Controller
+    # stores, so nothing checks it against the rest of this file.
+    forward-ip: 10.20.0.10
+    forward-port: 8123
+    protocol: tcp
+    # Omit `source` to leave the Controller's own choice alone. A forward unifig
+    # creates without one accepts traffic from anywhere on the internet, and the
+    # plan says so before it does.
+    source: 203.0.113.0/24
+
 wan:
   # A WAN slot is a Setting, not a Resource: the router has the slots it has, so
   # unifig only ever updates one — it never creates, deletes or prunes a slot.

@@ -180,6 +180,8 @@ func describe(invalid *jsonschema.ValidationError, doc document) []Problem {
 var patternHints = map[string]string{
 	"networks.subnet":             "a gateway address and prefix length, e.g. 10.20.0.1/24",
 	"wlans.passphrase":            "printable ASCII only — no accented letters, tabs or emoji",
+	"port-forwards.forward-ip":    "the address of the host the traffic is sent to, e.g. 10.20.0.10",
+	"port-forwards.source":        "`any`, or an address, range or CIDR block the traffic must come from, e.g. 203.0.113.4 or 203.0.113.0/24",
 	"wan.slot":                    "the Controller's own name for an uplink, such as WAN, WAN2 or WAN_LTE_FAILOVER",
 	"wan.username":                "the username as the ISP issued it, with no quotes or spaces",
 	"wan.password":                "no quotes or spaces — the Controller refuses them",

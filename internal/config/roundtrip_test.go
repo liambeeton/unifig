@@ -28,6 +28,10 @@ func TestWrittenConfigValidates(t *testing.T) {
 		WLANs: []config.WLAN{
 			{Name: "Home IoT", Network: "IoT", Passphrase: "correct horse battery"},
 		},
+		PortForwards: []config.PortForward{
+			{Name: "Home Assistant", Port: 443, ForwardIP: "10.20.0.10", ForwardPort: 8123, Protocol: "tcp"},
+			{Name: "Admin", Port: 22, ForwardIP: "10.20.0.10", ForwardPort: 22, Protocol: "tcp", Source: "203.0.113.0/24"},
+		},
 		WAN: []config.WANSlot{
 			{Slot: "WAN", Type: "pppoe", Username: "isp-user", Password: "correct-horse-battery"},
 			{Slot: "WAN2"},
@@ -59,6 +63,7 @@ func TestWrittenConfigValidates(t *testing.T) {
 	}
 	if len(loaded.Networks) != len(written.Networks) ||
 		len(loaded.WLANs) != len(written.WLANs) ||
+		len(loaded.PortForwards) != len(written.PortForwards) ||
 		len(loaded.WAN) != len(written.WAN) {
 		t.Fatalf("loaded %+v, want %+v", loaded, written)
 	}
@@ -70,6 +75,11 @@ func TestWrittenConfigValidates(t *testing.T) {
 	for i, wlan := range written.WLANs {
 		if loaded.WLANs[i] != wlan {
 			t.Errorf("wlans[%d] loaded as %+v, want %+v", i, loaded.WLANs[i], wlan)
+		}
+	}
+	for i, forward := range written.PortForwards {
+		if loaded.PortForwards[i] != forward {
+			t.Errorf("port-forwards[%d] loaded as %+v, want %+v", i, loaded.PortForwards[i], forward)
 		}
 	}
 	for i, slot := range written.WAN {

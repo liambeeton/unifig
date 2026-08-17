@@ -50,6 +50,7 @@ const (
 	sysinfoPath     = "/proxy/network/api/s/default/stat/sysinfo"
 	networkconfPath = "/proxy/network/api/s/default/rest/networkconf"
 	wlanconfPath    = "/proxy/network/api/s/default/rest/wlanconf"
+	portforwardPath = "/proxy/network/api/s/default/rest/portforward"
 	settingPath     = "/proxy/network/api/s/default/get/setting"
 	setDoHPath      = "/proxy/network/api/s/default/set/setting/doh"
 	zonePath        = "/proxy/network/v2/api/site/default/firewall/zone"
@@ -86,11 +87,17 @@ type replay struct {
 	// issued counts the IDs this stand-in has handed out, so that two objects
 	// created in one apply cannot collide.
 	issued int
-	// wlans and sysinfo are served exactly as recorded. Nothing in the Settings
-	// tests writes to either, and a recording that could not be trusted to come
-	// back unchanged would be a poor witness for the one that does.
-	wlans   json.RawMessage
-	sysinfo json.RawMessage
+	// wlans, forwards and sysinfo are served exactly as recorded. Nothing in the
+	// Settings tests writes to any of them, and a recording that could not be
+	// trusted to come back unchanged would be a poor witness for the one that
+	// does.
+	//
+	// The first two are recorded empty (ADR-0011): the dockerized Controller
+	// covers WLANs and port forwards, so a recording keeps neither and both
+	// endpoints answer here only because export asks them.
+	wlans    json.RawMessage
+	forwards json.RawMessage
+	sysinfo  json.RawMessage
 }
 
 // startReplay serves the recording at its own base URL for the duration of one
@@ -104,6 +111,7 @@ func startReplay(t *testing.T) *replay {
 	r.entries = recordedEntries(t, "networkconf.json")
 	r.settings = recordedEntries(t, "setting.json")
 	r.wlans = recordedBody(t, "wlanconf.json")
+	r.forwards = recordedBody(t, "portforward.json")
 	r.sysinfo = recordedBody(t, "sysinfo.json")
 	r.zones = recordedList(t, "firewallzone.json")
 	r.policies = recordedList(t, "firewallpolicy.json")
@@ -140,6 +148,8 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 		r.write(w, r.sysinfo)
 	case req.Method == http.MethodGet && req.URL.Path == wlanconfPath:
 		r.write(w, r.wlans)
+	case req.Method == http.MethodGet && req.URL.Path == portforwardPath:
+		r.write(w, r.forwards)
 	case req.Method == http.MethodGet && req.URL.Path == networkconfPath:
 		r.write(w, r.collection())
 	case req.Method == http.MethodPut && strings.HasPrefix(req.URL.Path, networkconfPath+"/"):

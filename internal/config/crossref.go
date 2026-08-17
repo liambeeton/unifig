@@ -122,6 +122,24 @@ func checkReferences(cfg Config, idx index) []Problem {
 		governed[key] = true
 	}
 
+	// A port forward is checked for duplicates and for nothing else, and unlike
+	// every other Resource here that is the whole of what could be checked rather
+	// than the whole of what is worth checking offline. Its target is an address,
+	// not the name of a network this file defines, so there is no reference to
+	// resolve — a forward to a host that does not exist is a fact about the
+	// network rather than about the document.
+	forwarded := make(map[string]bool, len(cfg.PortForwards))
+	for i, forward := range cfg.PortForwards {
+		if forwarded[forward.Name] {
+			at := idx.field("port-forwards", i, "name")
+			problems = append(problems, Problem{
+				Line: at.line, Path: at.path,
+				Message: alreadyDefined("port forward", "port forwards", forward.Name),
+			})
+		}
+		forwarded[forward.Name] = true
+	}
+
 	// A WAN slot is checked for the same ambiguity as a Resource name, and the
 	// reason it needs its own check is that its key is not a name the operator
 	// chose: the Controller has exactly one of each slot, so two entries for one

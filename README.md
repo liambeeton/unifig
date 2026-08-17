@@ -29,7 +29,7 @@ On the UDR: UniFi OS → Control Plane → Admins & Users → your admin → Cre
 
 One `unifig.yaml` describes the Controller's configuration. `examples/unifig.yaml` is a working starting point; `schema/unifig.schema.json` is the contract.
 
-Sections reconcile as they land. `networks`, `wlans`, `zones`, `firewall-policies`, `wan` and `encrypted-dns` are the sections every verb handles today; the rest of the v1 catalogue — port forwards, DHCP reservations — follows.
+Sections reconcile as they land. `networks`, `wlans`, `zones`, `firewall-policies`, `port-forwards`, `wan` and `encrypted-dns` are the sections every verb handles today; the rest of the v1 catalogue — DHCP reservations — follows.
 
 A WLAN names the network its clients join, and that reference is checked offline:
 
@@ -53,6 +53,14 @@ firewall-policies:
     action: allow                      # allow, block or reject
     source: Untrusted
     destination: External              # a zone the Controller already has
+
+port-forwards:
+  - name: Home Assistant
+    port: 8443                         # what answers on the internet side
+    forward-ip: 10.20.0.10             # an address, not a network in this file
+    forward-port: 8123
+    protocol: tcp                      # tcp, udp or tcp_udp
+    source: 203.0.113.0/24             # omit to accept traffic from anywhere
 
 wan:
   - slot: WAN                          # the router's own name for the uplink
@@ -123,6 +131,36 @@ A Zone's `networks` follows the same rule as `servers` above — stating it stat
 The built-in `External` Zone holds your WAN, and your config has no name for a WAN network. unifig therefore manages the members it *can* name and leaves the rest exactly where they are: stating the LANs in `External` does not detach your uplink from it. The plan says so, because a membership showing only part of the truth would otherwise read as one that empties the Zone.
 
 A Policy states its verdict and both ends, always — `action`, `source` and `destination` are required, because a policy that allowed or blocked nothing in particular is not a policy. Everything else about it (ports, addresses, schedules, logging) is the Controller's, and survives an apply untouched.
+
+### Port forwards
+
+`port-forwards` is the record of what your network answers to from the internet, which is what shapes the section: everything but `source` is required, because a forward that did not say which port, which host and which protocol would not describe an exposed service.
+
+```
+  + port-forward "Home Assistant"
+      port:         8443
+      forward-ip:   10.20.0.10
+      forward-port: 8123
+      protocol:     tcp
+      source:       any
+                    the config states no source, so this forward accepts traffic from anywhere on the internet
+```
+
+Three things to know about it:
+
+- **`forward-ip` is an address, not a reference.** It names a host rather than a network in your file, so nothing checks it offline and nothing about a forward holds a network back from `--prune`. A host that moves is a change to make here.
+- **`source` omitted means unmanaged**, as everywhere else: unifig leaves whatever the Controller has, so a forward you narrowed to one address in the UI keeps that narrowing. It is the field the create above is warning about — a forward unifig creates with no `source` is open to anyone, and the plan says so before it does.
+- **Ports are single ports.** The Controller will hold a range (`27015-27020`) or a comma-separated list, and unifig models one port arriving and one port inside. A forward stating otherwise is out of unifig's reach entirely: `export` leaves it out and says so, and `--prune` will not delete it — saying that too, rather than sparing it quietly:
+
+  ```
+  ! port-forward: the port forward "Game server" will not be deleted: a port of it
+    is a range or a list rather than a single port, which unifig cannot state, so
+    export leaves it out of the config and prune leaves it where it is.
+  ```
+
+  A forward you *do* name in your file is managed whichever ports the Controller has it on, so narrowing `27015-27020` to `27015` is an ordinary update — the plan shows the range on the losing side.
+
+Everything else a forward carries — which uplink it listens on, whether it logs, whether it is switched on at all — is the Controller's and survives an apply untouched. Opening or closing a port is **not** a [Risky change](#risky-changes): it cannot take the site off the internet or put the Controller out of reach, and the way back is to put the forward where it was.
 
 Every verb that reads config takes an optional file argument, defaulting to `./unifig.yaml`:
 
@@ -299,7 +337,7 @@ Five things `--prune` will not do:
   ```
 
   The way to delete both is to put both at stake: a file with `networks:` and `wlans: []` deletes the WLAN and then the network under it, in that order. A policy the Controller owns can't be put at stake at all, so a zone it governs stays until you delete it in the Controller's UI.
-- **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, so unifig updates them and never deletes one, whether or not your file names them. Nor does prune see a WLAN attached to something that isn't one of your LANs — unifig has no name to write for it, so it can't be exported either, and the two go together on purpose: a WLAN adoption couldn't describe is not one prune may delete.
+- **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, so unifig updates them and never deletes one, whether or not your file names them. Nor does prune see a WLAN attached to something that isn't one of your LANs, or a port forward whose ports are a range — unifig has no way to write either one in config, so neither can be exported — and the two halves go together on purpose: what an adoption couldn't describe is not something prune may delete.
 - **Persist.** The flag applies to the run you passed it to. There is no state file, so nothing remembers it.
 
 ## Export
@@ -333,6 +371,15 @@ Left out 1 WLAN, which unifig does not manage: "Guest Portal".
 Each is attached to something that is not one of this site's LANs, so there is
 no network for unifig to name in the config. It manages nothing about them, and
 `--prune` will not delete them.
+```
+
+A port forward whose ports are a range or a list gets the same treatment, and for the same reason — a port is half of what a forward is, so there is no partial way to write one down:
+
+```
+Left out 1 port forward, which unifig cannot describe: "Game server".
+Each gives a port as a range or a list rather than as a single port, which
+unifig does not model. It manages nothing about them, and `--prune` will not
+delete them.
 ```
 
 A WAN slot that connects in a way unifig does not model gets the other half of the same promise: the slot is in the file so you can see it exists, with nothing under it and a notice saying why.

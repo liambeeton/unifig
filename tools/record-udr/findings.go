@@ -112,9 +112,46 @@ func flagValue(entry map[string]any, name string) string {
 	return fmt.Sprintf("%v", value)
 }
 
+// ownership is what a router's port forwards say about ADR-0005's question for a
+// new managed type: which field, if any, marks one as the Controller's own.
+//
+// It is counted rather than named, and that is the whole design of it. A
+// forward's name is the household's — "Sam's Minecraft server" — so the scrub
+// drops the collection entirely and this report must not put back what the scrub
+// took out. What ADR-0005 needs is not which forwards a router has but whether
+// any of them is undeletable, which is a number and a field name.
+//
+// unifig checks `attr_no_delete` on a forward because the library models the
+// field, not because one has been seen carrying it. Both counts being zero is
+// itself the useful answer: a Controller that ships no forward it owns is one
+// where the exemption never fires and the question stops mattering.
+type ownership struct {
+	forwards int
+	// noDelete counts the forwards carrying the network's marker, and
+	// predefined those carrying the policy's. Neither has been seen on a
+	// forward; both are asked because they are the two markers this project
+	// knows of, and a forward marked by a third would show up as an undeletable
+	// forward neither count explains.
+	noDelete   int
+	predefined int
+}
+
+func ownershipOf(portforward document) ownership {
+	held := ownership{forwards: len(portforward.Data)}
+	for _, entry := range portforward.Data {
+		if entry["attr_no_delete"] == true {
+			held.noDelete++
+		}
+		if entry["predefined"] == true {
+			held.predefined++
+		}
+	}
+	return held
+}
+
 // report writes the answers where the operator running this will read them,
 // in the form the ADRs want them in.
-func report(w io.Writer, given []answer, stamped stamps) {
+func report(w io.Writer, given []answer, stamped stamps, forwards ownership) {
 	line := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
 	line("The ADRs leave questions open that only a real router can answer. This\n")
@@ -145,11 +182,35 @@ func report(w io.Writer, given []answer, stamped stamps) {
 	if len(stamped) == 0 {
 		line("  Nothing yet: this router has no custom DNS server configured, and the\n")
 		line("  question is about a stamp it would have to hold. It stays open.\n\n")
+	} else {
+		line("  3. Does sdns_stamp read back populated?\n")
+		for _, a := range stamped {
+			line("     %s: %s\n", a.slot, a.password)
+		}
+		line("\n  Record it in docs/adr/0012-encrypted-dns-is-a-singleton-setting.md.\n\n")
+	}
+
+	// Counts only, and none of the forwards themselves: this is the one
+	// question asked of a collection the scrub drops whole, and a report that
+	// named a forward would publish to the terminal what the recording refuses
+	// to publish to the repository.
+	line("ADR-0005, about port forwards — a managed type with no marker read off\n")
+	line("hardware yet:\n\n")
+	line("  4. Does this router ship a port forward it owns?\n")
+	line("     %d port forward(s), of which %d carry attr_no_delete and %d predefined\n",
+		forwards.forwards, forwards.noDelete, forwards.predefined)
+	if forwards.forwards > 0 && forwards.noDelete == 0 && forwards.predefined == 0 {
+		line("\n  Every forward on this router is deletable, so nothing here is exempt from\n")
+		line("  --prune and neither marker is a forward's. Record it in\n")
+		line("  docs/adr/0005-builtin-exemption-from-the-controller.md.\n\n")
 		return
 	}
-	line("  3. Does sdns_stamp read back populated?\n")
-	for _, a := range stamped {
-		line("     %s: %s\n", a.slot, a.password)
+	if forwards.forwards == 0 {
+		line("\n  Nothing yet: this router has no port forwards at all, so it cannot say\n")
+		line("  whether the Controller ships any of its own. It stays open.\n\n")
+		return
 	}
-	line("\n  Record it in docs/adr/0012-encrypted-dns-is-a-singleton-setting.md.\n\n")
+	line("\n  Some forward here is marked. Which marker, and whether the Controller put\n")
+	line("  it there, is the answer ADR-0005 wants — read it off the router's UI and\n")
+	line("  record it in docs/adr/0005-builtin-exemption-from-the-controller.md.\n\n")
 }

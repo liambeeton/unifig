@@ -19,7 +19,7 @@ A fixed-slot or singleton configuration area of the Controller that can only be 
 _Avoid_: resource (for these)
 
 **Kind**:
-The managed type a change is about — `network`, `wlan`, `zone`, `firewall-policy`, `encrypted-dns`, `wan` — covering Resources and Settings alike, because an operator reads and approves a change to either the same way. It is the word a Plan line leads with and the field `plan --json` carries.
+The managed type a change is about — `network`, `wlan`, `zone`, `firewall-policy`, `port-forward`, `encrypted-dns`, `wan` — covering Resources and Settings alike, because an operator reads and approves a change to either the same way. It is the word a Plan line leads with and the field `plan --json` carries.
 _Avoid_: resource (a Setting is not one), type (says nothing about what is being typed)
 
 **WAN slot**:
@@ -45,6 +45,10 @@ _Avoid_: firewall group (that is a different Controller object), interface group
 **Firewall Policy**:
 A rule governing traffic between a pair of Zones. A Resource, and the one whose key is not its name: it is matched by its name **together with the pair of Zones it governs**, because the Controller ships its own policies one per pair and reuses names across them — a migrated router answers with nineteen called `Allow All Traffic`. Two policies may share a name; two may not share a name and both ends. Its config states one required field beyond that key, a verdict (`allow`, `block`, `reject`). The Zones it names need not be in the config file, because the interesting ones are built-in, so that reference is resolved against the Controller rather than offline.
 _Avoid_: firewall rule (that names the pre-Zone object the Controller still has), ACL
+
+**Port Forward**:
+A rule sending traffic that arrives on a port of the internet side to an address and port inside the network. A Resource, matched by name, and the one whose target is not a reference: it names an address rather than a Network, so nothing about it is resolved against the rest of the config and nothing it points at is held back from a Prune. Its ports are single ports — a live forward stating a range or a list is one the config cannot describe, so Export leaves it out and Prune never touches it.
+_Avoid_: NAT rule, DNAT (those name the mechanism rather than the object), firewall rule
 
 **DHCP Reservation**:
 A fixed-IP assignment for a client, projected from the Controller's per-client record rather than existing as a standalone object. Its natural key is the MAC address.

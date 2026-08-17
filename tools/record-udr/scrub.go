@@ -21,9 +21,10 @@ import (
 // container cannot produce is a WAN entry (ADR-0008), and what no container can
 // be trusted to produce is the shape of a Setting on the firmware an operator
 // actually runs (ADR-0012). So those come from the router, the LAN comes from
-// the recording already committed, and the WLANs are emptied. Recording the rest
-// would prove nothing the container does not already prove, and would cost the
-// household's subnets, VLAN layout and every SSID.
+// the recording already committed, and the WLANs and the port forwards are
+// emptied. Recording the rest would prove nothing the container does not already
+// prove, and would cost the household's subnets, VLAN layout, every SSID, and
+// the list of what the house runs and where.
 //
 // The settings response is the one place this program throws most of a response
 // away rather than replacing it. `get/setting` answers with the whole console's
@@ -103,6 +104,7 @@ type recording struct {
 	sysinfo     document
 	networkconf document
 	wlanconf    document
+	portforward document
 	setting     document
 	zones       list
 	policies    list
@@ -120,6 +122,8 @@ func (r *recording) file(name string) *document {
 		return &r.networkconf
 	case "wlanconf.json":
 		return &r.wlanconf
+	case "portforward.json":
+		return &r.portforward
 	case "setting.json":
 		return &r.setting
 	default:
@@ -180,6 +184,11 @@ func scrub(raw recording, committed document) (recording, error) {
 		// Emptied rather than dropped: the endpoint still answers, because a
 		// recording is a statement of what unifig talks to.
 		wlanconf: document{Meta: s.object("wlanconf.meta", raw.wlanconf.Meta), Data: []map[string]any{}},
+		// Emptied on the same terms, and for a sharper version of the same
+		// reason: a port forward names a service in the house and the address it
+		// runs on, and the dockerized Controller keeps port forwards perfectly
+		// well — it is stored config rather than something only a gateway has.
+		portforward: document{Meta: s.object("portforward.meta", raw.portforward.Meta), Data: []map[string]any{}},
 		// Reduced to the one key unifig reads, for the reason at the top of
 		// this file: the rest of that response is the whole console.
 		setting:  document{Meta: s.object("setting.meta", raw.setting.Meta), Data: []map[string]any{setting}},
@@ -195,6 +204,7 @@ func scrub(raw recording, committed document) (recording, error) {
 		{"sysinfo.meta", out.sysinfo.Meta},
 		{"networkconf.meta", out.networkconf.Meta},
 		{"wlanconf.meta", out.wlanconf.Meta},
+		{"portforward.meta", out.portforward.Meta},
 		{"setting.meta", out.setting.Meta},
 		{"setting[" + dohKey + "]", setting},
 	}

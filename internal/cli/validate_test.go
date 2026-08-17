@@ -494,6 +494,117 @@ func TestValidateAcceptsAPolicyAndItsReverse(t *testing.T) {
 `, nil).mustPass(t)
 }
 
+// A port forward is the record of one exposed service, so everything that makes
+// up the exposure is required: which port answers, which host it reaches, and
+// which traffic it passes.
+func TestValidateAcceptsAPortForward(t *testing.T) {
+	runValidate(t, `port-forwards:
+  - name: Home Assistant
+    port: 443
+    forward-ip: 10.20.0.10
+    forward-port: 8123
+    protocol: tcp
+`, nil).mustPass(t)
+}
+
+// The one optional field, and the reason it is optional: an omitted `source` is
+// unmanaged like every other omission (ADR-0004), so an operator who narrowed a
+// forward in the Controller's UI does not have to restate it here to keep it.
+func TestValidateAcceptsAPortForwardRestrictedToOneSource(t *testing.T) {
+	runValidate(t, `port-forwards:
+  - name: Admin
+    port: 22
+    forward-ip: 10.20.0.10
+    forward-port: 22
+    protocol: tcp
+    source: 203.0.113.0/24
+`, nil).mustPass(t)
+}
+
+func TestValidateRejectsAPortForwardThatNamesNoHost(t *testing.T) {
+	runValidate(t, `port-forwards:
+  - name: Half a forward
+    port: 443
+    forward-port: 8123
+    protocol: tcp
+`, nil).mustFailWith(t, "port-forwards[0]", "forward-ip")
+}
+
+func TestValidateRejectsAPortOutsideTheRangeAPortCanTake(t *testing.T) {
+	runValidate(t, `port-forwards:
+  - name: Too high
+    port: 70000
+    forward-ip: 10.20.0.10
+    forward-port: 8123
+    protocol: tcp
+`, nil).mustFailWith(t, "line 3", "port-forwards[0].port", "65535")
+}
+
+// unifig models a single port at each end. A range or a list is what the
+// Controller can hold and this file cannot state, and saying so offline is
+// better than an apply that sends the Controller a port it will refuse.
+func TestValidateRejectsAPortGivenAsARange(t *testing.T) {
+	runValidate(t, `port-forwards:
+  - name: Game server
+    port: 27015-27020
+    forward-ip: 10.20.0.10
+    forward-port: 27015
+    protocol: udp
+`, nil).mustFailWith(t, "line 3", "port-forwards[0].port", "integer")
+}
+
+func TestValidateRejectsAProtocolUnifigDoesNotModel(t *testing.T) {
+	runValidate(t, `port-forwards:
+  - name: Odd one
+    port: 443
+    forward-ip: 10.20.0.10
+    forward-port: 8123
+    protocol: sctp
+`, nil).mustFailWith(t, "line 6", "port-forwards[0].protocol", `"sctp"`, `"tcp_udp"`)
+}
+
+func TestValidateRejectsASourceThatIsNotAnAddress(t *testing.T) {
+	runValidate(t, `port-forwards:
+  - name: Admin
+    port: 22
+    forward-ip: 10.20.0.10
+    forward-port: 22
+    protocol: tcp
+    source: the office
+`, nil).mustFailWith(t, "line 7", "port-forwards[0].source", `"the office"`, "203.0.113.0/24")
+}
+
+func TestValidateCatchesDuplicatePortForwardNames(t *testing.T) {
+	runValidate(t, `port-forwards:
+  - name: Twice
+    port: 443
+    forward-ip: 10.20.0.10
+    forward-port: 8123
+    protocol: tcp
+  - name: Twice
+    port: 8443
+    forward-ip: 10.20.0.11
+    forward-port: 8443
+    protocol: tcp
+`, nil).mustFailWith(t, "line 7", "port-forwards[1].name", `"Twice"`)
+}
+
+// The forward's target is an address rather than a reference, so there is
+// nothing in the file for it to match — a forward to a host on a network this
+// file has never heard of is perfectly valid config.
+func TestValidateAcceptsAPortForwardToAnAddressTheFileSaysNothingAbout(t *testing.T) {
+	runValidate(t, `networks:
+  - name: Default
+    subnet: 192.168.1.1/24
+port-forwards:
+  - name: Elsewhere
+    port: 443
+    forward-ip: 10.99.0.10
+    forward-port: 443
+    protocol: tcp
+`, nil).mustPass(t)
+}
+
 // A WAN slot is a Setting, and its key is the Controller's own name for a
 // physical uplink rather than a name the operator chose — so the file names the
 // slot it means, and unifig only ever updates it.

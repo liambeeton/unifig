@@ -42,7 +42,7 @@ func TestTheAnswersReportThePPPoEFlagsAsTheyStand(t *testing.T) {
 	slot(t, doc, "WAN")["wan_pppoe_password_enabled"] = false
 	delete(slot(t, doc, "WAN"), "wan_pppoe_username_enabled")
 
-	report := reportOf(t, answers(doc), nil)
+	report := reportOf(t, answers(doc), nil, ownership{})
 
 	// Whatever the router holds, verbatim: this is the fact unifig's own
 	// behaviour was guessed from, so a report that tidied it up would be
@@ -56,7 +56,7 @@ func TestTheAnswersReportThePPPoEFlagsAsTheyStand(t *testing.T) {
 }
 
 func TestTheAnswersNeverPrintTheCredentialItself(t *testing.T) {
-	report := reportOf(t, answers(parse(t, rawNetworkconf)), nil)
+	report := reportOf(t, answers(parse(t, rawNetworkconf)), nil, ownership{})
 
 	for _, secret := range []string{"hunter2-off-the-router", "user@fibreco.example"} {
 		if strings.Contains(report, secret) {
@@ -72,7 +72,7 @@ func TestTheReportSaysWhenNoUplinkCanAnswer(t *testing.T) {
 	doc := parse(t, rawNetworkconf)
 	slot(t, doc, "WAN")["wan_type"] = "dhcp"
 
-	report := reportOf(t, answers(doc), nil)
+	report := reportOf(t, answers(doc), nil, ownership{})
 
 	if !strings.Contains(report, "no uplink on PPPoE") {
 		t.Errorf("the report should say the questions went unanswered, got:\n%s", report)
@@ -102,7 +102,7 @@ func TestTheAnswersSayWhetherTheDNSStampReadsBackPopulated(t *testing.T) {
 }
 
 func TestTheAnswersNeverPrintTheStampItself(t *testing.T) {
-	report := reportOf(t, nil, stampAnswer(parse(t, rawSetting)))
+	report := reportOf(t, nil, stampAnswer(parse(t, rawSetting)), ownership{})
 
 	if strings.Contains(report, "secret-endpoint") {
 		t.Errorf("the report printed the stamp, and this program's whole point is that it does not:\n%s", report)
@@ -116,16 +116,59 @@ func TestTheReportSaysWhenNoResolverCanAnswer(t *testing.T) {
 	setting := parse(t, rawSetting)
 	delete(doh(t, setting), "custom_servers")
 
-	report := reportOf(t, nil, stampAnswer(setting))
+	report := reportOf(t, nil, stampAnswer(setting), ownership{})
 
 	if !strings.Contains(report, "no custom DNS server") {
 		t.Errorf("the report should say the question went unanswered, got:\n%s", report)
 	}
 }
 
-func reportOf(t *testing.T, given []answer, stamped stamps) string {
+// ADR-0005 wants a hardware answer for every new managed type, and a port
+// forward has none: unifig checks the network's `attr_no_delete` on one because
+// the library models the field. The recording cannot hold the forwards — each is
+// named after the household — so this is the one question answered by counting.
+func TestTheReportCountsThePortForwardsWithoutNamingOne(t *testing.T) {
+	report := reportOf(t, nil, nil, ownershipOf(parse(t, rawPortforward)))
+
+	if !strings.Contains(report, "1 port forward(s), of which 0 carry attr_no_delete and 0 predefined") {
+		t.Errorf("the report should count what the router holds, got:\n%s", report)
+	}
+	if !strings.Contains(report, "Every forward on this router is deletable") {
+		t.Errorf("the report should say what the count answers, got:\n%s", report)
+	}
+	// The counts are the whole of what leaves this program. A forward names what
+	// the household runs and on which machine, which is why the scrub drops the
+	// collection rather than scrubbing it — and the report may not put it back.
+	for _, named := range []string{"Minecraft", "192.168.4.42", "25565"} {
+		if strings.Contains(report, named) {
+			t.Errorf("the report printed %q, which the recording itself refuses to hold:\n%s", named, report)
+		}
+	}
+}
+
+// A router with no forwards at all cannot say whether the Controller ships any,
+// and saying so is the answer — the same rule as the resolver above.
+func TestTheReportSaysWhenNoPortForwardCanAnswer(t *testing.T) {
+	report := reportOf(t, nil, nil, ownership{})
+
+	if !strings.Contains(report, "no port forwards at all") {
+		t.Errorf("the report should say the question went unanswered, got:\n%s", report)
+	}
+}
+
+// And a marked one is the answer that changes something: unifig's exemption
+// would then be firing on a marker somebody has to identify.
+func TestTheReportSaysWhenAPortForwardIsMarked(t *testing.T) {
+	report := reportOf(t, nil, nil, ownership{forwards: 3, noDelete: 1})
+
+	if !strings.Contains(report, "Some forward here is marked") {
+		t.Errorf("the report should say a forward carries a marker, got:\n%s", report)
+	}
+}
+
+func reportOf(t *testing.T, given []answer, stamped stamps, forwards ownership) string {
 	t.Helper()
 	var out strings.Builder
-	report(&out, given, stamped)
+	report(&out, given, stamped, forwards)
 	return out.String()
 }

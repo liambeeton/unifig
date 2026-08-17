@@ -51,6 +51,7 @@ var endpoints = []struct{ file, path string }{
 	{"sysinfo.json", "/proxy/network/api/s/default/stat/sysinfo"},
 	{"networkconf.json", "/proxy/network/api/s/default/rest/networkconf"},
 	{"wlanconf.json", "/proxy/network/api/s/default/rest/wlanconf"},
+	{"portforward.json", "/proxy/network/api/s/default/rest/portforward"},
 	{"setting.json", "/proxy/network/api/s/default/get/setting"},
 	{"firewallzone.json", "/proxy/network/v2/api/site/default/firewall/zone"},
 	{"firewallpolicy.json", "/proxy/network/v2/api/site/default/firewall-policies"},
@@ -95,7 +96,7 @@ func run() int {
 	say("them before it exits — they hold the PPPoE password and the DNS stamps in\n")
 	say("the clear.\n\n")
 
-	report(os.Stdout, answers(raw.networkconf), stampAnswer(raw.setting))
+	report(os.Stdout, answers(raw.networkconf), stampAnswer(raw.setting), ownershipOf(raw.portforward))
 
 	committed, err := readRecording("networkconf.json")
 	if err != nil {
@@ -116,8 +117,9 @@ func run() int {
 	say("\nThe scrub replaced the credentials, the DNS stamps, the ISP's addressing,\n")
 	say("the console's identifiers and your own names for your connection and your\n")
 	say("resolvers, took the LAN from the recording already committed, emptied the\n")
-	say("WLANs, and kept nothing from the settings but Encrypted DNS. What it cannot\n")
-	say("know is a field it has never heard of. So, in the diff above:\n\n")
+	say("WLANs and the port forwards, and kept nothing from the settings but Encrypted\n")
+	say("DNS. What it cannot know is a field it has never heard of. So, in the diff\n")
+	say("above:\n\n")
 	say("  - does any value name your ISP, your street, your family or your site?\n")
 	say("  - is any address in it one that is actually routed to you?\n")
 	say("  - is there anything there you would not put on a postcard?\n\n")

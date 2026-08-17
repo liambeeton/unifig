@@ -30,6 +30,12 @@
       "type": "array",
       "items": { "$ref": "#/$defs/firewallPolicy" }
     },
+    "port-forwards": {
+      "title": "Port forwards",
+      "description": "Rules sending traffic that arrives on a port of the internet side to an address and port inside the network. Matched against the Controller by name. This section is the record of what the network exposes, so every field but `source` is required: a forward that did not say which port, which host and which protocol would not describe an exposed service.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/portForward" }
+    },
     "wan": {
       "title": "WAN slots",
       "description": "The Controller's internet uplinks. These are Settings, not Resources: the Controller has a fixed set of WAN slots, so unifig only ever updates one — it never creates, deletes or prunes a slot, and a slot this file leaves out is one it does not manage.",
@@ -153,6 +159,52 @@
           "description": "The name of the zone the traffic is going to, on the same terms as `source`.",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "portForward": {
+      "title": "Port forward",
+      "description": "One exposed service: the port traffic arrives on from the internet, and the address and port inside the network it is sent to.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "port", "forward-ip", "forward-port", "protocol"],
+      "properties": {
+        "name": {
+          "title": "Name",
+          "description": "The forward's name, as shown in the Controller. This is its natural key: unifig matches on it, so renaming a forward here means replacing it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "title": "Port",
+          "description": "The port traffic arrives on from the internet — what the Controller's UI calls Port. unifig models a single port: a forward the Controller holds as a range or a comma-separated list is one this file cannot describe, so export leaves it out and `--prune` never deletes it.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "forward-ip": {
+          "title": "Forward IP",
+          "description": "The address inside the network that traffic is sent to. It is an address rather than the name of a network in this file, because that is what the Controller stores — so nothing checks it against the rest of the config, and a host that has moved is a change to make here.",
+          "type": "string",
+          "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+        },
+        "forward-port": {
+          "title": "Forward port",
+          "description": "The port on that address traffic is sent to, which need not be the port it arrived on. A single port, on the same terms as `port`.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "protocol": {
+          "title": "Protocol",
+          "description": "Which traffic the forward passes: tcp, udp, or tcp_udp for both — what UniFi's UI shows as TCP/UDP. There is no default, because a forward opened to more than the service behind it needs is exposure nobody asked for.",
+          "enum": ["tcp", "udp", "tcp_udp"]
+        },
+        "source": {
+          "title": "Source",
+          "description": "Where traffic is allowed to come from — what the Controller's UI calls From: `any`, or an address, an address range (a-b), or a CIDR block, optionally prefixed with `!` to mean everything except it. Omit the key to leave the Controller's own choice alone; note that a forward unifig creates without one accepts traffic from anywhere on the internet, and the plan says so before it does.",
+          "type": "string",
+          "pattern": "^(any|!?((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(/([0-9]|[12][0-9]|3[0-2])|-((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))?)$"
         }
       }
     },

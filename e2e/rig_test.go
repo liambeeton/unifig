@@ -402,6 +402,82 @@ func (r *rig) wlans(t *testing.T) []map[string]any {
 	return list.Data
 }
 
+// seedPortForward creates a portforward entry on the live Controller through
+// its own API, clearing same-named entries first so seeding is idempotent across
+// reused controllers. Its conf is raw Controller JSON for the same reason
+// seedNetwork's is: the rig describes the Controller, not unifig's model of it.
+func (r *rig) seedPortForward(t *testing.T, conf map[string]any) {
+	t.Helper()
+	name, _ := conf["name"].(string)
+	r.deletePortForwardsNamed(t, name)
+	r.addPortForward(t, conf)
+}
+
+// addPortForward creates a portforward entry without clearing same-named ones
+// first, which is how a test sets up the live duplicate names unifig has to
+// refuse to choose between. The Controller allows them; unifig does not.
+func (r *rig) addPortForward(t *testing.T, conf map[string]any) {
+	t.Helper()
+	name, _ := conf["name"].(string)
+
+	body, err := json.Marshal(conf)
+	if err != nil {
+		t.Fatalf("marshaling port forward conf: %v", err)
+	}
+	resp := r.controllerDo(t, http.MethodPost, "/api/s/default/rest/portforward", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("seeding port forward %q: status %d: %s", name, resp.StatusCode, b)
+	}
+}
+
+func (r *rig) deletePortForwardsNamed(t *testing.T, name string) {
+	t.Helper()
+	for _, f := range r.portForwardsNamed(t, name) {
+		id, _ := f["_id"].(string)
+		del := r.controllerDo(t, http.MethodDelete, "/api/s/default/rest/portforward/"+id, nil)
+		del.Body.Close()
+	}
+}
+
+// livePortForward reads one port forward back off the Controller as the raw JSON
+// the Controller stores — how a test checks what an apply actually did, down to
+// the fields unifig does not model and must not have touched.
+func (r *rig) livePortForward(t *testing.T, name string) map[string]any {
+	t.Helper()
+	found := r.portForwardsNamed(t, name)
+	if len(found) != 1 {
+		t.Fatalf("the Controller has %d port forwards named %q, want exactly 1", len(found), name)
+	}
+	return found[0]
+}
+
+func (r *rig) portForwardsNamed(t *testing.T, name string) []map[string]any {
+	t.Helper()
+	var found []map[string]any
+	for _, f := range r.portForwards(t) {
+		if f["name"] == name {
+			found = append(found, f)
+		}
+	}
+	return found
+}
+
+func (r *rig) portForwards(t *testing.T) []map[string]any {
+	t.Helper()
+	resp := r.controllerDo(t, http.MethodGet, "/api/s/default/rest/portforward", nil)
+	defer resp.Body.Close()
+
+	var list struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatalf("listing port forwards: %v", err)
+	}
+	return list.Data
+}
+
 // networkID is the Controller ID of a live network — what a seeded WLAN needs
 // in order to name the network its clients join. Tests never see this ID
 // themselves; it goes straight back into a seed.

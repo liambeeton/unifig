@@ -16,6 +16,7 @@ scrubbed on the way in, and with the fields of each entry sorted (see
 | `sysinfo.json`        | `/proxy/network/api/s/default/stat/sysinfo`                |
 | `networkconf.json`    | `/proxy/network/api/s/default/rest/networkconf`            |
 | `wlanconf.json`       | `/proxy/network/api/s/default/rest/wlanconf`               |
+| `portforward.json`    | `/proxy/network/api/s/default/rest/portforward`            |
 | `setting.json`        | `/proxy/network/api/s/default/get/setting`                 |
 | `firewallzone.json`   | `/proxy/network/v2/api/site/default/firewall/zone`         |
 | `firewallpolicy.json` | `/proxy/network/v2/api/site/default/firewall-policies`     |
@@ -105,9 +106,18 @@ What it does with what comes back:
 
 1. **Answers the questions the ADRs leave open**, if this router can — whether
    `x_wan_password` reads back populated, what `wan_pppoe_username_enabled` /
-   `wan_pppoe_password_enabled` hold on a slot that is signed in (ADR-0008), and
-   whether `sdns_stamp` reads back populated (ADR-0012). All are read off the
-   responses that just arrived. If it prints an answer, put it in the ADR.
+   `wan_pppoe_password_enabled` hold on a slot that is signed in (ADR-0008),
+   whether `sdns_stamp` reads back populated (ADR-0012), and whether any port
+   forward is one the Controller owns (ADR-0005). All are read off the responses
+   that just arrived. If it prints an answer, put it in the ADR.
+
+   The last of those is the only question asked of a collection this recording
+   throws away, so it is answered by counting: how many forwards the router has,
+   and how many carry `attr_no_delete` or `predefined`. unifig checks the first
+   of those on a forward because the library models the field, not because one
+   has been seen carrying it — and a router whose forwards are all deletable is
+   the answer that says the exemption never fires. No forward is named, because
+   naming one would print what the recording itself refuses to hold.
 2. **Scrubs the recording** (`tools/record-udr/scrub.go`, and its tests next to
    it — the code that decides what reaches a public repository is worth
    reviewing on its own).
@@ -143,7 +153,11 @@ VLAN layout and every SSID you broadcast. So the scrub:
   zones would come back referring to networks that are not here, and every test
   about what a zone holds would be testing a dangling reference;
 - takes the LAN from the recording already committed here;
-- empties `wlanconf`;
+- empties `wlanconf` and `portforward`. Both endpoints still answer, because a
+  recording is a statement of what unifig talks to and `export` asks them both —
+  but the dockerized Controller holds WLANs and port forwards as well as a router
+  does, so a recording has nothing to contribute by keeping yours, and a forward
+  is a list of what your house runs, on which machine, reachable from outside;
 - keeps nothing else from `get/setting`. That endpoint answers with the whole
   console — mail credentials, RADIUS secrets, remote access, guest portals — and
   unifig reads one key out of it, so the recording holds that one key.

@@ -106,6 +106,7 @@ const (
 	WLAN           Kind = "wlan"
 	Zone           Kind = "zone"
 	FirewallPolicy Kind = "firewall-policy"
+	PortForward    Kind = "port-forward"
 	EncryptedDNS   Kind = "encrypted-dns"
 	WANSlot        Kind = "wan"
 )
@@ -124,6 +125,10 @@ const (
 //
 // WLANs and Zones both reference networks and neither references the other, so
 // which of them comes first is arbitrary; they are ordered as they were added.
+// A Port Forward references nothing at all — its target is an address rather
+// than a name — so nothing constrains where it goes and it sits after the
+// Resources that do reference something, which is where a reader looking for the
+// dependency chain stops looking.
 //
 // A Setting references nothing and nothing references it, so its place is
 // decided by what a mistake costs instead. The WAN slot goes last, which means
@@ -146,8 +151,9 @@ var kinds = map[Kind]struct {
 	WLAN:           {order: 1, one: "WLAN", many: "WLANs"},
 	Zone:           {order: 2, one: "zone", many: "zones"},
 	FirewallPolicy: {order: 3, one: "firewall policy", many: "firewall policies"},
-	EncryptedDNS:   {order: 4, one: "Encrypted DNS setting", many: "Encrypted DNS settings"},
-	WANSlot:        {order: 5, one: "WAN slot", many: "WAN slots"},
+	PortForward:    {order: 4, one: "port forward", many: "port forwards"},
+	EncryptedDNS:   {order: 5, one: "Encrypted DNS setting", many: "Encrypted DNS settings"},
+	WANSlot:        {order: 6, one: "WAN slot", many: "WAN slots"},
 }
 
 // Options are the choices a verb makes on the operator's behalf for a whole
@@ -514,6 +520,22 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 			caveats = append(caveats, zoneCaveats...)
 		}
 	}
+	// The port forwards are read only when the file manages them, and never on
+	// prune's account the way the WLANs and the policies are: nothing holds a
+	// forward back and a forward holds nothing back, so no other section has a
+	// question for this one.
+	if cfg.PortForwards != nil {
+		forwards, err := listPortForwards(ctx, client, site)
+		if err != nil {
+			return Plan{}, err
+		}
+		forwardChanges, forwardCaveats, err := planPortForwards(cfg, forwards, opts)
+		if err != nil {
+			return Plan{}, err
+		}
+		changes = append(changes, forwardChanges...)
+		caveats = append(caveats, forwardCaveats...)
+	}
 	if cfg.EncryptedDNS != nil {
 		dns, err := planEncryptedDNS(ctx, client, site, *cfg.EncryptedDNS)
 		if err != nil {
@@ -591,6 +613,11 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 		return config.Config{}, Notices{}, err
 	}
 
+	forwards, indescribableForwards, err := projectPortForwards(ctx, client, site)
+	if err != nil {
+		return config.Config{}, Notices{}, err
+	}
+
 	slots, partial, err := projectWANSlots(all)
 	if err != nil {
 		return config.Config{}, Notices{}, err
@@ -606,16 +633,18 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 			WLANs:            wlans,
 			Zones:            zones,
 			FirewallPolicies: policies,
+			PortForwards:     forwards,
 			WAN:              slots,
 			EncryptedDNS:     dns,
 		},
 		Notices{
-			IndescribableWLANs:    indescribable,
-			PartialZones:          partialZones,
-			IndescribablePolicies: indescribablePolicies,
-			PartialWANSlots:       partial,
-			NoEncryptedDNS:        dns == nil,
-			UnmodelledDNSState:    unmodelledState,
+			IndescribableWLANs:        indescribable,
+			PartialZones:              partialZones,
+			IndescribablePolicies:     indescribablePolicies,
+			IndescribablePortForwards: indescribableForwards,
+			PartialWANSlots:           partial,
+			NoEncryptedDNS:            dns == nil,
+			UnmodelledDNSState:        unmodelledState,
 		}, nil
 }
 
@@ -639,6 +668,10 @@ type Notices struct {
 	// IndescribablePolicies names the firewall policies left out of the config
 	// entirely, because a zone on one end of them is one unifig cannot name.
 	IndescribablePolicies []string
+	// IndescribablePortForwards names the port forwards left out of the config
+	// entirely, because a port of theirs is a range or a list rather than the
+	// single port unifig models.
+	IndescribablePortForwards []string
 	// PartialWANSlots names the WAN slots written as nothing but a slot,
 	// because the way they connect is not one unifig models.
 	PartialWANSlots []string

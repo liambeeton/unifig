@@ -18,6 +18,7 @@ type exportedConfig struct {
 	WLANs            []exportedWLAN           `yaml:"wlans"`
 	Zones            []exportedZone           `yaml:"zones"`
 	FirewallPolicies []exportedFirewallPolicy `yaml:"firewall-policies"`
+	PortForwards     []exportedPortForward    `yaml:"port-forwards"`
 	WAN              []exportedWANSlot        `yaml:"wan"`
 	EncryptedDNS     *exportedEncryptedDNS    `yaml:"encrypted-dns"`
 }
@@ -48,6 +49,19 @@ type exportedWLAN struct {
 	Name       string `yaml:"name"`
 	Network    string `yaml:"network"`
 	Passphrase string `yaml:"passphrase"`
+}
+
+// exportedPortForward is one exposed service as export writes it. The ports are
+// integers here because that is what the config says they are — the Controller
+// stores them as text, and a forward whose text is not a single port is one
+// export leaves out entirely.
+type exportedPortForward struct {
+	Name        string `yaml:"name"`
+	Port        int    `yaml:"port"`
+	ForwardIP   string `yaml:"forward-ip"`
+	ForwardPort int    `yaml:"forward-port"`
+	Protocol    string `yaml:"protocol"`
+	Source      string `yaml:"source"`
 }
 
 // exportedWANSlot is the Setting half of the same shape. Only the WAN suite
