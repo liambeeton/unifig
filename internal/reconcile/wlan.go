@@ -24,19 +24,23 @@ const wpaPSK = "wpapsk"
 var passphraseSecurities = map[string]bool{wpaPSK: true}
 
 // planWLANs is the WLAN half of a reconcile. Its caller only reaches it when
-// the config has a `wlans:` section at all (ADR-0006), so the Controller's
-// WLANs are not even read for a file that says nothing about them.
-func planWLANs(
-	ctx context.Context,
-	client unifi.Client,
-	site string,
-	cfg config.Config,
-	bound bindings,
-	opts Options,
-) ([]Change, error) {
-	live, err := liveWLANs(ctx, client, site, bound)
-	if err != nil {
-		return nil, err
+// the config has a `wlans:` section at all (ADR-0006), so a file that says
+// nothing about WLANs changes none of them — though its caller may well have
+// read them anyway, because a prune has to know what is on a network before it
+// can propose deleting one (ADR-0014).
+//
+// It reports the live WLANs it leaves in place alongside the changes, because
+// that is the question the network half has to ask and this is the half that
+// knows the answer: a WLAN this same plan deletes is not one standing between a
+// network and prune.
+func planWLANs(cfg config.Config, live []unifi.WLAN, bound bindings, opts Options) ([]Change, []unifi.WLAN, error) {
+	if err := uniquelyNamedWLANs(live); err != nil {
+		return nil, nil, err
+	}
+
+	byName := make(map[string]unifi.WLAN, len(live))
+	for _, wlan := range live {
+		byName[wlan.Name] = wlan
 	}
 
 	changes := make([]Change, 0, len(cfg.WLANs))
@@ -44,7 +48,7 @@ func planWLANs(
 	for _, desired := range cfg.WLANs {
 		named[desired.Name] = true
 
-		current, exists := live[desired.Name]
+		current, exists := byName[desired.Name]
 		if !exists {
 			changes = append(changes, createWLAN(desired, bound))
 			continue
@@ -53,14 +57,57 @@ func planWLANs(
 			changes = append(changes, change)
 		}
 	}
-	if opts.Prune {
-		changes = append(changes, pruneWLANs(live, named, bound)...)
+	if !opts.Prune {
+		return changes, live, nil
 	}
-	return changes, nil
+	deletions, spared := pruneWLANs(live, named, bound)
+	return append(changes, deletions...), spared, nil
 }
 
-// listWLANs reads the site's WLANs and keeps the ones unifig manages, refusing
-// a site where two of those share the name unifig matches them by.
+// networksInUse names the networks a WLAN this plan leaves in place will be on
+// once it has run, against the phrase naming that WLAN — what prune asks before
+// proposing to delete a network, and what the Caveat about the one it did not
+// propose says (ADR-0014).
+//
+// "Will be on" rather than "is on", because those differ in a case that reaches
+// an operator: a file moving a WLAN to another network states the network it
+// leaves nowhere, so prune can propose deleting it, and the move is applied
+// before any deletion is. Reading the live binding here would hold that network
+// back and print a plan that contradicted itself two lines further up — the
+// update saying the WLAN is leaving, the caveat saying it stays.
+//
+// So a spared WLAN the config names is on the network the config states, which
+// the schema requires it to state; one the config does not name is where the
+// Controller has it. A WLAN being created is not here at all, and needs no
+// handling: a config that states one states the network too, so that network is
+// named in the file and was never prune's to take.
+//
+// A WLAN bound to something that is not one of this site's LANs holds nothing
+// back, because there is no network unifig manages for it to be on. listWLANs
+// has already left those out; the guard is here because this reads a name off a
+// binding, and a binding that resolves to nothing must not become a key.
+func networksInUse(spared []unifi.WLAN, desired []config.WLAN, bound bindings) referenced {
+	stated := make(map[string]string, len(desired))
+	for _, wlan := range desired {
+		stated[wlan.Name] = wlan.Network
+	}
+
+	inUse := referenced{}
+	for _, wlan := range spared {
+		network := stated[wlan.Name]
+		if network == "" {
+			network = bound.networkName(wlan.NetworkID)
+		}
+		if network == "" {
+			continue
+		}
+		inUse[network] = append(inUse[network],
+			fmt.Sprintf("the %s %q", kinds[WLAN].one, wlan.Name))
+	}
+	return inUse
+}
+
+// listWLANs reads the site's WLANs and keeps the ones unifig manages.
 //
 // What it keeps is a WLAN bound to a network unifig manages, and that binding is
 // the whole test — the WLAN counterpart of the purpose filter on networkconf.
@@ -83,34 +130,38 @@ func listWLANs(ctx context.Context, client unifi.Client, site string, bound bind
 	}
 
 	kept = make([]unifi.WLAN, 0, len(all))
-	names := make([]string, 0, len(all))
 	for _, wlan := range all {
 		if bound.networkName(wlan.NetworkID) == "" {
 			indescribable = append(indescribable, wlan.Name)
 			continue
 		}
 		kept = append(kept, wlan)
-		names = append(names, wlan.Name)
 	}
 	slices.Sort(indescribable)
-	if err := uniquelyNamed(WLAN, names); err != nil {
-		return nil, nil, err
-	}
 	return kept, indescribable, nil
 }
 
-// liveWLANs indexes the site's managed WLANs by their natural key.
-func liveWLANs(ctx context.Context, client unifi.Client, site string, bound bindings) (map[string]unifi.WLAN, error) {
-	all, _, err := listWLANs(ctx, client, site, bound)
-	if err != nil {
-		return nil, err
+// uniquelyNamedWLANs refuses a site holding two WLANs unifig could not tell
+// apart (ADR-0001).
+//
+// It is asked by the verbs that match WLANs to config rather than by the read
+// itself, because reading is not matching. A prune of the networks reads the
+// WLANs only to see which network each is on (ADR-0014), and two WLANs sharing a
+// name are no obstacle to that: both hold their network either way. Refusing the
+// run there would fail a file that says nothing about WLANs over an ambiguity
+// unifig was never going to have to resolve.
+//
+// The networks and the zones keep their own refusal inside their reads, and that
+// is not an inconsistency. Those two reads produce a binding — a name against the
+// Controller ID that references to it are stored as — so two of one name there
+// leaves every reference to that name ambiguous, whatever the file manages.
+// Nothing is bound to a WLAN, and nothing is bound to a policy.
+func uniquelyNamedWLANs(live []unifi.WLAN) error {
+	names := make([]string, 0, len(live))
+	for _, wlan := range live {
+		names = append(names, wlan.Name)
 	}
-
-	byName := make(map[string]unifi.WLAN, len(all))
-	for _, wlan := range all {
-		byName[wlan.Name] = wlan
-	}
-	return byName, nil
+	return uniquelyNamed(WLAN, names)
 }
 
 // fromLiveWLAN projects a live WLAN into the config that would describe it, in
@@ -223,18 +274,23 @@ func updateWLAN(desired config.WLAN, live unifi.WLAN, bound bindings) (Change, b
 }
 
 // pruneWLANs is the Changes that would delete every live WLAN the config does
-// not name. Like networks, an object the Controller marks undeletable is left
-// out of the plan rather than listed as a change that will not happen
-// (ADR-0005).
-func pruneWLANs(live map[string]unifi.WLAN, named map[string]bool, bound bindings) []Change {
-	changes := make([]Change, 0, len(live))
-	for name, wlan := range live {
-		if named[name] || wlan.NoDelete {
+// not name, and the WLANs it leaves on the Controller.
+//
+// Like networks, an object the Controller marks undeletable is left out of the
+// plan rather than listed as a change that will not happen (ADR-0005) — and it is
+// spared rather than skipped, because what makes a WLAN hold its network back is
+// that it will still be on it afterwards, whatever the reason it survived.
+func pruneWLANs(live []unifi.WLAN, named map[string]bool, bound bindings) (changes []Change, spared []unifi.WLAN) {
+	changes = make([]Change, 0, len(live))
+	spared = make([]unifi.WLAN, 0, len(live))
+	for _, wlan := range live {
+		if named[wlan.Name] || wlan.NoDelete {
+			spared = append(spared, wlan)
 			continue
 		}
 		changes = append(changes, deleteWLAN(wlan, bound))
 	}
-	return changes
+	return changes, spared
 }
 
 // deleteWLAN is the Change that removes a live WLAN.

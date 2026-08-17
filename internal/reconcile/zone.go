@@ -34,8 +34,17 @@ import (
 
 // planZones is the zone half of a reconcile. Its caller only reaches it when the
 // config has a `zones:` section at all (ADR-0006), so a file that says nothing
-// about zones leaves every one of them alone.
-func planZones(cfg config.Config, live []unifi.FirewallZone, owned zoneOwnership, bound bindings, opts Options) ([]Change, []Caveat) {
+// about zones leaves every one of them alone. inUse is what the policy half is
+// leaving on each zone, which is what decides whether prune may propose deleting
+// one (ADR-0014).
+func planZones(
+	cfg config.Config,
+	live []unifi.FirewallZone,
+	owned zoneOwnership,
+	inUse referenced,
+	bound bindings,
+	opts Options,
+) ([]Change, []Caveat) {
 	byName := make(map[string]unifi.FirewallZone, len(live))
 	for _, zone := range live {
 		byName[zone.Name] = zone
@@ -67,7 +76,8 @@ func planZones(cfg config.Config, live []unifi.FirewallZone, owned zoneOwnership
 				"and deleting the wrong one would take the site off the internet",
 		}}
 	}
-	return append(changes, pruneZones(byName, named, owned, bound)...), nil
+	deletions, caveats := pruneZones(byName, named, owned, inUse, bound)
+	return append(changes, deletions...), caveats
 }
 
 // listZones reads the site's firewall zones, refusing a site where two of them
@@ -297,18 +307,34 @@ func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings) (C
 // the one change here whose blast radius makes silence the wrong default: not
 // knowing which zones are the Controller's has to mean leaving all of them
 // alone, rather than treating every one of them as fair game (issue #23).
-func pruneZones(live map[string]unifi.FirewallZone, named map[string]bool, owned zoneOwnership, bound bindings) []Change {
+//
+// A zone a policy will still be governing afterwards is not proposed either, and
+// says so — the same rule as a network with a WLAN on it, and the same reason: a
+// plan may not propose a deletion unifig can already tell would be refused
+// (ADR-0014).
+func pruneZones(
+	live map[string]unifi.FirewallZone,
+	named map[string]bool,
+	owned zoneOwnership,
+	inUse referenced,
+	bound bindings,
+) ([]Change, []Caveat) {
 	if !owned.known {
-		return nil
+		return nil, nil
 	}
 	changes := make([]Change, 0, len(live))
+	var caveats []Caveat
 	for name, zone := range live {
 		if named[name] || zone.NoDelete || owned.owns(zone) {
 			continue
 		}
+		if by := inUse[name]; len(by) > 0 {
+			caveats = append(caveats, heldBack(Zone, name, by, "governing it"))
+			continue
+		}
 		changes = append(changes, deleteZone(zone, bound))
 	}
-	return changes
+	return changes, caveats
 }
 
 // deleteZone is the Change that removes a live zone.

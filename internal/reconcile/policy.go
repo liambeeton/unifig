@@ -54,17 +54,18 @@ var statedActions = func() map[string]string {
 // reaches it when the config has a `firewall-policies:` section at all
 // (ADR-0006), and only after the zones have been read and bound, since a policy
 // is stated in terms of them.
+//
+// Like the WLAN half, it reports the live policies it leaves in place, because
+// that is what decides whether the zone half may propose deleting a zone
+// (ADR-0014).
 func planFirewallPolicies(
-	ctx context.Context,
-	client unifi.Client,
-	site string,
 	cfg config.Config,
+	live []unifi.FirewallZonePolicy,
 	bound bindings,
 	opts Options,
-) ([]Change, error) {
-	live, err := listFirewallPolicies(ctx, client, site, bound)
-	if err != nil {
-		return nil, err
+) ([]Change, []unifi.FirewallZonePolicy, error) {
+	if err := uniquelyKeyed(live, bound); err != nil {
+		return nil, nil, err
 	}
 	// A policy without a key is left out of the collection rather than filed
 	// under an empty one: nothing in the file can match it, and prune must not
@@ -96,7 +97,7 @@ func planFirewallPolicies(
 		named[keyOfDesiredPolicy(desired)] = true
 		for _, zone := range []string{desired.Source, desired.Destination} {
 			if !slices.Contains(reachable, zone) {
-				return nil, noSuchZone(zone, bound.zoneNames())
+				return nil, nil, noSuchZone(zone, bound.zoneNames())
 			}
 		}
 
@@ -109,10 +110,38 @@ func planFirewallPolicies(
 			changes = append(changes, change)
 		}
 	}
-	if opts.Prune {
-		changes = append(changes, pruneFirewallPolicies(byKey, named, bound)...)
+	if !opts.Prune {
+		return changes, live, nil
 	}
-	return changes, nil
+	deletions, spared := pruneFirewallPolicies(live, named, bound)
+	return append(changes, deletions...), spared, nil
+}
+
+// zonesInUse names the zones a policy this plan leaves in place still governs,
+// against the phrases naming those policies — the zone half's counterpart of
+// networksInUse, and what prune asks before proposing to delete a zone
+// (ADR-0014).
+//
+// A policy is named by its whole key rather than by its name, because the
+// Controller ships nineteen called "Allow All Traffic" and a Caveat naming one of
+// them has to say which (ADR-0001, issue #24). A policy whose zones unifig cannot
+// name holds nothing back: neither end is a zone prune could have proposed
+// deleting. And a policy from a zone to itself is counted once, because it is one
+// policy however many of its ends land on the same zone.
+func zonesInUse(spared []unifi.FirewallZonePolicy, bound bindings) referenced {
+	inUse := referenced{}
+	for _, policy := range spared {
+		key, keyed := keyOfLivePolicy(policy, bound)
+		if !keyed {
+			continue
+		}
+		governs := fmt.Sprintf("the %s %s", kinds[FirewallPolicy].one, key)
+		inUse[key.source] = append(inUse[key.source], governs)
+		if key.destination != key.source {
+			inUse[key.destination] = append(inUse[key.destination], governs)
+		}
+	}
+	return inUse
 }
 
 // policyKey is what identifies a firewall policy — its name together with the
@@ -160,19 +189,16 @@ func keyOfDesiredPolicy(desired config.FirewallPolicy) policyKey {
 	return policyKey{name: desired.Name, source: desired.Source, destination: desired.Destination}
 }
 
-// listFirewallPolicies reads the site's firewall policies, refusing a site where
-// two of them share the key unifig matches them by.
+// listFirewallPolicies reads the site's firewall policies.
 //
-// Two policies sharing a name is ordinary and expected; two sharing a name *and*
-// a zone pair is the ambiguity that has no answer, and it is still refused.
-func listFirewallPolicies(ctx context.Context, client unifi.Client, site string, bound bindings) ([]unifi.FirewallZonePolicy, error) {
+// Nothing is filtered and nothing is refused here, for the reason
+// uniquelyNamedWLANs states: reading is not matching. A prune of the zones reads
+// the policies only to see which zones still have one on either end (ADR-0014),
+// and a pair unifig could not tell apart is no obstacle to that.
+func listFirewallPolicies(ctx context.Context, client unifi.Client, site string) ([]unifi.FirewallZonePolicy, error) {
 	live, err := client.ListFirewallZonePolicy(ctx, site)
 	if err != nil {
 		return nil, fmt.Errorf("listing firewall policies for site %q: %w", site, err)
-	}
-
-	if err := uniquelyKeyed(live, bound); err != nil {
-		return nil, err
 	}
 	return live, nil
 }
@@ -180,6 +206,10 @@ func listFirewallPolicies(ctx context.Context, client unifi.Client, site string,
 // uniquelyKeyed refuses a site holding two policies unifig could not tell apart.
 // It reads like uniquelyNamed's message because it is the same failure, reported
 // about a wider key.
+//
+// Two policies sharing a name is ordinary and expected; two sharing a name *and*
+// a zone pair is the ambiguity that has no answer, and it is still refused. It is
+// asked by the verbs that match policies to config rather than by the read.
 //
 // A policy without a key is left out rather than counted: it is not one of a
 // pair unifig had to choose between, and counting it would refuse the site over
@@ -218,8 +248,13 @@ func uniquelyKeyed(live []unifi.FirewallZonePolicy, bound bindings) error {
 // than fromLiveZone's: a zone can be described in part because its membership is
 // a list, and a policy cannot, because every field it has is required.
 func projectFirewallPolicies(ctx context.Context, client unifi.Client, site string, bound bindings) ([]config.FirewallPolicy, []string, error) {
-	live, err := listFirewallPolicies(ctx, client, site, bound)
+	live, err := listFirewallPolicies(ctx, client, site)
 	if err != nil {
+		return nil, nil, err
+	}
+	// Export matches too, in the sense that matters here: a file describing two
+	// policies unifig cannot tell apart is a file it cannot plan afterwards.
+	if err := uniquelyKeyed(live, bound); err != nil {
 		return nil, nil, err
 	}
 
@@ -306,7 +341,7 @@ func updateFirewallPolicy(desired config.FirewallPolicy, live unifi.FirewallZone
 }
 
 // pruneFirewallPolicies is the Changes that would delete every live policy the
-// config does not name.
+// config does not name, and the policies it leaves on the Controller.
 //
 // A policy the Controller ships is exempt on its own marker, like every other
 // built-in (ADR-0005). A policy's marker is `predefined`, which is how the
@@ -316,15 +351,33 @@ func updateFirewallPolicy(desired config.FirewallPolicy, live unifi.FirewallZone
 // models the field on this type, not because a policy has been seen carrying it:
 // the marker is per Resource and only a network is known to use that one, so
 // nothing here should be read as saying which field a new type would use.
-func pruneFirewallPolicies(live map[policyKey]unifi.FirewallZonePolicy, named map[policyKey]bool, bound bindings) []Change {
-	changes := make([]Change, 0, len(live))
-	for key, policy := range live {
-		if named[key] || policy.NoDelete || policy.Predefined {
+//
+// An exempt policy is spared rather than skipped, because what makes a policy
+// hold a zone back is that it will still be governing it afterwards, whatever the
+// reason it survived (ADR-0014). A policy with no key is spared too: unifig
+// cannot describe it, so it was never prune's to delete, and it governs zones
+// unifig cannot name so it holds nothing back either.
+//
+// It walks the live collection rather than the keyed index so that the deletions
+// come out in the order the Controller listed them. Two policies of one name are
+// ordinary here, and sortChanges leaves ties in the order it was given — which
+// would otherwise be a map's, and a plan has to print the same bytes twice.
+func pruneFirewallPolicies(
+	live []unifi.FirewallZonePolicy,
+	named map[policyKey]bool,
+	bound bindings,
+) (changes []Change, spared []unifi.FirewallZonePolicy) {
+	changes = make([]Change, 0, len(live))
+	spared = make([]unifi.FirewallZonePolicy, 0, len(live))
+	for _, policy := range live {
+		key, keyed := keyOfLivePolicy(policy, bound)
+		if !keyed || named[key] || policy.NoDelete || policy.Predefined {
+			spared = append(spared, policy)
 			continue
 		}
 		changes = append(changes, deleteFirewallPolicy(policy, bound))
 	}
-	return changes
+	return changes, spared
 }
 
 // deleteFirewallPolicy is the Change that removes a live policy.

@@ -25,8 +25,16 @@ var lanPurposes = map[string]bool{
 // Resources unifig manages.
 func managed(network unifi.Network) bool { return lanPurposes[network.Purpose] }
 
-// planNetworks is the network half of a reconcile.
-func planNetworks(cfg config.Config, live map[string]unifi.Network, bound bindings, opts Options) []Change {
+// planNetworks is the network half of a reconcile. inUse is what the WLAN half
+// is leaving on each network, which is what decides whether prune may propose
+// deleting one (ADR-0014).
+func planNetworks(
+	cfg config.Config,
+	live map[string]unifi.Network,
+	inUse referenced,
+	bound bindings,
+	opts Options,
+) ([]Change, []Caveat) {
 	changes := make([]Change, 0, len(cfg.Networks))
 	named := make(map[string]bool, len(cfg.Networks))
 	for _, desired := range cfg.Networks {
@@ -41,10 +49,11 @@ func planNetworks(cfg config.Config, live map[string]unifi.Network, bound bindin
 			changes = append(changes, change)
 		}
 	}
-	if opts.Prune {
-		changes = append(changes, pruneNetworks(live, named)...)
+	if !opts.Prune {
+		return changes, nil
 	}
-	return changes
+	deletions, caveats := pruneNetworks(live, named, inUse)
+	return append(changes, deletions...), caveats
 }
 
 // listNetworkConf reads the site's whole networkconf collection: the LANs, the
@@ -161,15 +170,27 @@ func updateNetwork(desired config.Network, live unifi.Network) (Change, bool) {
 // It walks the live networks rather than the config, which is the whole shape
 // of prune: what is at stake is what is on the Controller, and the config's
 // only role is to say which of it stays.
-func pruneNetworks(live map[string]unifi.Network, named map[string]bool) []Change {
+//
+// A network a WLAN will still be on afterwards is not proposed at all. The
+// Controller refuses to delete one — `api.err.ResourceReferredBy` — so that is a
+// deletion unifig can already tell would fail, and a plan is a statement about
+// what will happen (ADR-0014). It is a Caveat rather than a silence, because an
+// operator who asked for a prune and got part of one has to be told which part
+// (ADR-0005).
+func pruneNetworks(live map[string]unifi.Network, named map[string]bool, inUse referenced) ([]Change, []Caveat) {
 	changes := make([]Change, 0, len(live))
+	var caveats []Caveat
 	for name, network := range live {
 		if named[name] || network.NoDelete {
 			continue
 		}
+		if by := inUse[name]; len(by) > 0 {
+			caveats = append(caveats, heldBack(Network, name, by, "on it"))
+			continue
+		}
 		changes = append(changes, deleteNetwork(network))
 	}
-	return changes
+	return changes, caveats
 }
 
 // deleteNetwork is the Change that removes a live network.

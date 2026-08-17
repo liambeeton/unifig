@@ -54,7 +54,7 @@ Computing and applying the difference between the YAML config and the live Contr
 _Avoid_: sync (ambiguous about direction)
 
 **Prune**:
-Deleting live Resources of a managed type that are absent from the config. Never implicit — only on explicit request, and built-in undeletable objects are always exempt.
+Deleting live Resources of a managed type that are absent from the config. Never implicit — only on explicit request, and built-in undeletable objects are always exempt. So is a Resource that something the same plan leaves in place still requires — a network with a WLAN on it, a Zone a Firewall Policy governs — because the Controller refuses to delete one and a Plan is a statement about what will happen (ADR-0014).
 
 **Risky change**:
 A change that can sever internet or management connectivity (e.g. any WAN/PPPoE mutation). Always individually confirmed, never silently applied — and never hard-blocked. The test is whether recovery could need physical access: an Encrypted DNS change can break name resolution for a whole site and is still not Risky, because the Controller stays reachable and the fix is one field away (ADR-0012).

@@ -772,6 +772,107 @@ func TestPruneLeavesASectionTheConfigDoesNotHaveAlone(t *testing.T) {
 	}
 }
 
+// The two halves of ADR-0006 meeting each other, and issue #22. A file with
+// `networks:` and no `wlans:` key puts networks at stake and no WLAN, so prune
+// can reach a network that a WLAN it may not touch is still on — and the
+// Controller will not delete a network out from under a WLAN. That deletion is
+// one unifig can tell will be refused before it proposes it, so it does not
+// propose it, and says which WLAN held it back rather than skipping quietly
+// (ADR-0014).
+func TestPruneLeavesANetworkAWLANIsStillOnAlone(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "WLAN Held Network", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 167, "ip_subnet": "10.167.0.1/24",
+	})
+	cleanupNetworks(t, "WLAN Held Network")
+	seedWLANOn(t, "WLAN Held SSID", "WLAN Held Network", testPassphrase)
+
+	// A second unlisted network with nothing on it, so the prune under test
+	// really runs and really deletes something: the held-back one is then spared
+	// on purpose rather than because nothing happened.
+	testRig.seedNetwork(t, map[string]any{
+		"name": "WLAN Held Bystander", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 168, "ip_subnet": "10.168.0.1/24",
+	})
+	cleanupNetworks(t, "WLAN Held Bystander")
+
+	path := configFile(t, liveNetworksExcept(t, "WLAN Held Network", "WLAN Held Bystander"))
+
+	// apply fails the test on a non-zero exit, which is the whole of what this
+	// bug looked like: a plan the operator approved, refused halfway through by
+	// the Controller.
+	res := apply(t, "--prune", path)
+	stdout := string(res.Stdout)
+
+	if !strings.Contains(stdout, `- network "WLAN Held Bystander" deleted`) {
+		t.Fatalf("the prune under test did not happen:\n%s", stdout)
+	}
+	if strings.Contains(stdout, `- network "WLAN Held Network"`) {
+		t.Errorf("prune proposed deleting a network a WLAN is still on:\n%s", stdout)
+	}
+	// Skipping quietly is the other half of the failure (ADR-0005): an operator
+	// who asked for a prune and got part of one has to be told which part.
+	for _, fragment := range []string{`"WLAN Held Network" will not be deleted`, `"WLAN Held SSID"`} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan should say why it kept the network, looking for %q:\n%s", fragment, stdout)
+		}
+	}
+	if found := testRig.networksNamed(t, "WLAN Held Network"); len(found) != 1 {
+		t.Fatalf("prune deleted a network a WLAN is still on: %v", found)
+	}
+	if found := testRig.wlansNamed(t, "WLAN Held SSID"); len(found) != 1 {
+		t.Fatalf("prune deleted a WLAN from a config with no wlans section: %v", found)
+	}
+}
+
+// What holds a network back is the WLANs that will be on it once the plan has
+// run, not the ones on it now — the same distinction that lets `wlans: []` prune
+// a WLAN and then the network under it. A WLAN this file moves somewhere else is
+// off the old network before the deletions start, because an update is applied
+// before any delete, so the network it left is prunable and the plan says so
+// (ADR-0014).
+func TestPruneDeletesANetworkTheWLANOnItIsMovingOff(t *testing.T) {
+	for _, network := range []struct {
+		name   string
+		vlan   int
+		subnet string
+	}{
+		{"WLAN Moved From", 169, "10.169.0.1/24"},
+		{"WLAN Moved To", 170, "10.170.0.1/24"},
+	} {
+		testRig.seedNetwork(t, map[string]any{
+			"name": network.name, "purpose": "corporate", "enabled": true,
+			"vlan_enabled": true, "vlan": network.vlan, "ip_subnet": network.subnet,
+		})
+		cleanupNetworks(t, network.name)
+	}
+	seedWLANOn(t, "WLAN Moving SSID", "WLAN Moved From", testPassphrase)
+
+	// Everything live stays except the network the WLAN is moving off, and the
+	// WLAN itself is stated on its new one.
+	path := configFile(t, liveNetworksExcept(t, "WLAN Moved From")+
+		wlanSection(liveWLANEntriesExcept(t, "WLAN Moving SSID")+
+			"  - name: WLAN Moving SSID\n    network: WLAN Moved To\n"))
+
+	res := apply(t, "--prune", path)
+	stdout := string(res.Stdout)
+
+	if !strings.Contains(stdout, `- network "WLAN Moved From" deleted`) {
+		t.Errorf("prune kept a network the WLAN on it was leaving anyway:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "will not be deleted") {
+		t.Errorf("the plan held back a deletion the move it plans makes safe:\n%s", stdout)
+	}
+	if found := testRig.networksNamed(t, "WLAN Moved From"); len(found) != 0 {
+		t.Errorf("the network the WLAN left is still there: %v", found)
+	}
+	// And the WLAN really did move, rather than the network going out from under
+	// it: a deletion that succeeded because the update ahead of it worked.
+	if live := testRig.liveWLAN(t, "WLAN Moving SSID"); live["networkconf_id"] != testRig.networkID(t, "WLAN Moved To") {
+		t.Errorf("the WLAN is on %v, want the network it was moved to", live["networkconf_id"])
+	}
+}
+
 // `wlans: []` is the other half of the same rule: an empty section is a
 // statement, and it says there should be none.
 func TestAnEmptyWLANSectionPutsEveryWLANAtStake(t *testing.T) {

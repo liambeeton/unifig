@@ -22,10 +22,11 @@
 //     omits is unmanaged on the same terms, never a request to empty it.
 //   - Nothing is destroyed unless it was asked for. A Resource missing from
 //     the config is unmanaged, not condemned; deleting it takes Options.Prune,
-//     and even then the Controller's own undeletable objects are exempt, and a
-//     section the file leaves out entirely is out of prune's reach (ADR-0006).
-//     This is the same rule as the one above, one level up: the file states
-//     what unifig manages, not what may exist.
+//     and even then the Controller's own undeletable objects are exempt, a
+//     section the file leaves out entirely is out of prune's reach (ADR-0006),
+//     and so is a Resource that something this plan leaves in place still
+//     requires (ADR-0014). This is the same rule as the one above, one level
+//     up: the file states what unifig manages, not what may exist.
 //
 // Two kinds of thing go through all of that, and only one of them has the
 // lifecycle those rules describe. A Resource is created, updated and — on
@@ -184,6 +185,44 @@ type Caveat struct {
 	// Reason reads as a sentence to an operator, and says what was not done as
 	// well as why.
 	Reason string `json:"reason"`
+}
+
+// referenced is what a plan leaves pointing at the Resources prune would
+// otherwise delete: a target's natural key against the phrases naming what will
+// still be pointing at it. There is one of these per reference — networks against
+// their WLANs, zones against their policies — so the keys are always the natural
+// keys of one kind, and the values are the sentence fragments a Caveat is built
+// from rather than objects.
+//
+// It is prune's third exemption, after the Controller's own objects and the
+// sections the file leaves out, and it is there because a plan is a statement
+// about what will happen. The Controller refuses to delete a Resource another
+// one still requires — `api.err.ResourceReferredBy` — so a deletion unifig can
+// see a live reference to is one it can already tell would be refused, and
+// planning it anyway promises the operator something that cannot happen
+// (ADR-0014).
+//
+// What goes in it is decided by the plan rather than by the Controller as it
+// stands, because the two differ in exactly the case that matters: a WLAN this
+// same apply deletes is not one keeping its network alive, which is what the
+// reversed dependency order of the deletions exists to arrange.
+type referenced map[string][]string
+
+// heldBack is the Caveat for a deletion prune declined because the plan leaves
+// something pointing at the Resource.
+//
+// `leaves` is the referencing side's own word for what it goes on doing to the
+// target — a WLAN is left "on it", a firewall policy "governing it" — because an
+// operator reads a plan in the terms of the pair in front of them, not in one
+// phrase abstract enough to cover both.
+//
+// Every referencer is named rather than counted, for the reason uniquelyNamed
+// names every duplicate: the list is the whole job, and an operator who wants
+// the deletion needs to know what all of it takes.
+func heldBack(kind Kind, name string, by []string, leaves string) Caveat {
+	return Caveat{Kind: kind, Reason: fmt.Sprintf(
+		"the %s %q will not be deleted: this plan leaves %s %s",
+		kinds[kind].one, name, andJoin(slices.Sorted(slices.Values(by))), leaves)}
 }
 
 // Change is one thing apply would create, update or delete, in the terms an
@@ -368,6 +407,19 @@ func (b bindings) zoneNames() []string {
 // Controller can start with one network in their file and trust that the rest
 // are not at stake. With it, those same Resources become deletions — shown in
 // the plan like any other change, so nothing is destroyed unannounced either.
+//
+// Skipping a section's plan is not skipping its read, and prune is the second
+// reason for that after the network names a WLAN needs. A prune has to know what
+// still points at the Resources it would delete, so the referencing collection
+// is read whenever a deletion could be proposed for the collection it points at
+// — even where the file has no section for it and nothing in it will change
+// (ADR-0014). Which sections the file has still decides only what unifig will
+// change, which is the part ADR-0006 is about.
+//
+// Each referencing area is therefore planned before the area it points at, so
+// that the second can ask the first what it is leaving behind. That order has
+// nothing to do with the order an operator reads: sortChanges decides that, and
+// puts the deletions the other way round.
 func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg config.Config, opts Options) (Plan, error) {
 	// Networks are read whichever sections the config has, because a WLAN's
 	// binding is stated as a network name and stored as a network ID, and
@@ -385,19 +437,37 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 
 	var changes []Change
 	var caveats []Caveat
+
+	// The WLANs are read whenever the file manages them, and whenever a prune
+	// could propose deleting a network: the Controller will not delete a network a
+	// WLAN is still on, and a plan may not say otherwise.
+	var wlans []unifi.WLAN
+	if cfg.WLANs != nil || (opts.Prune && cfg.Networks != nil) {
+		wlans, _, err = listWLANs(ctx, client, site, bound)
+		if err != nil {
+			return Plan{}, err
+		}
+	}
+	// A section the file leaves out is one nothing in this plan deletes, so every
+	// WLAN in it survives — and so does every network one of them is on.
+	sparedWLANs := wlans
+	if cfg.WLANs != nil {
+		wlanChanges, left, err := planWLANs(cfg, wlans, bound, opts)
+		if err != nil {
+			return Plan{}, err
+		}
+		changes = append(changes, wlanChanges...)
+		sparedWLANs = left
+	}
 	if cfg.Networks != nil {
 		byName := make(map[string]unifi.Network, len(live))
 		for _, network := range live {
 			byName[network.Name] = network
 		}
-		changes = append(changes, planNetworks(cfg, byName, bound, opts)...)
-	}
-	if cfg.WLANs != nil {
-		wlans, err := planWLANs(ctx, client, site, cfg, bound, opts)
-		if err != nil {
-			return Plan{}, err
-		}
-		changes = append(changes, wlans...)
+		networkChanges, networkCaveats := planNetworks(
+			cfg, byName, networksInUse(sparedWLANs, cfg.WLANs, bound), bound, opts)
+		changes = append(changes, networkChanges...)
+		caveats = append(caveats, networkCaveats...)
 	}
 	// The zones are read whenever either firewall section is present, because a
 	// policy states its ends as zone names and the Controller stores them as
@@ -411,6 +481,25 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 		}
 		bound.bindZones(zones)
 
+		// The policies are read on the same terms as the WLANs above, and for the
+		// same reason one step along: a zone with a policy on either end of it is
+		// a zone something still requires.
+		var policies []unifi.FirewallZonePolicy
+		if cfg.FirewallPolicies != nil || (opts.Prune && cfg.Zones != nil) {
+			policies, err = listFirewallPolicies(ctx, client, site)
+			if err != nil {
+				return Plan{}, err
+			}
+		}
+		sparedPolicies := policies
+		if cfg.FirewallPolicies != nil {
+			policyChanges, left, err := planFirewallPolicies(cfg, policies, bound, opts)
+			if err != nil {
+				return Plan{}, err
+			}
+			changes = append(changes, policyChanges...)
+			sparedPolicies = left
+		}
 		if cfg.Zones != nil {
 			// Who owns which zone is only asked when it could change what the
 			// plan does, which is under --prune. A plan that cannot delete
@@ -420,16 +509,9 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 			if opts.Prune {
 				owned = builtInZones(ctx, client, site)
 			}
-			zoneChanges, zoneCaveats := planZones(cfg, zones, owned, bound, opts)
+			zoneChanges, zoneCaveats := planZones(cfg, zones, owned, zonesInUse(sparedPolicies, bound), bound, opts)
 			changes = append(changes, zoneChanges...)
 			caveats = append(caveats, zoneCaveats...)
-		}
-		if cfg.FirewallPolicies != nil {
-			policies, err := planFirewallPolicies(ctx, client, site, cfg, bound, opts)
-			if err != nil {
-				return Plan{}, err
-			}
-			changes = append(changes, policies...)
 		}
 	}
 	if cfg.EncryptedDNS != nil {
@@ -448,6 +530,7 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 	}
 
 	sortChanges(changes)
+	sortCaveats(caveats)
 	return Plan{Changes: changes, Caveats: caveats}, nil
 }
 
@@ -483,6 +566,11 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 	bound := newBindings(live)
 	liveWLANs, indescribable, err := listWLANs(ctx, client, site, bound)
 	if err != nil {
+		return config.Config{}, Notices{}, err
+	}
+	// Export matches too, in the sense that matters here: a file describing two
+	// WLANs unifig cannot tell apart is a file it cannot plan afterwards.
+	if err := uniquelyNamedWLANs(liveWLANs); err != nil {
 		return config.Config{}, Notices{}, err
 	}
 	wlans := make([]config.WLAN, 0, len(liveWLANs))
@@ -642,6 +730,20 @@ func sortChanges(changes []Change) {
 			return distance
 		}
 		return strings.Compare(a.Name, b.Name)
+	})
+}
+
+// sortCaveats does for the caveats what sortChanges does for the changes, and
+// for the same reason: a caveat about one Resource is found while walking a live
+// collection, so without this the order two runs print them in is whatever order
+// a map happened to hand them over. Kinds sort as they do in a plan, and the
+// sentences alphabetically within a kind, which is by the name they lead with.
+func sortCaveats(caveats []Caveat) {
+	slices.SortStableFunc(caveats, func(a, b Caveat) int {
+		if a.Kind != b.Kind {
+			return kinds[a.Kind].order - kinds[b.Kind].order
+		}
+		return strings.Compare(a.Reason, b.Reason)
 	})
 }
 

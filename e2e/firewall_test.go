@@ -432,6 +432,88 @@ func TestPruneLeavesTheFirewallAloneWhenTheFileDoesNotMentionIt(t *testing.T) {
 	r.policyNamed(t, "Bystander Policy")
 }
 
+// The firewall's half of issue #22, and the same shape as the networks': a file
+// with `zones:` and no `firewall-policies:` key puts zones at stake and no
+// policy, so prune can reach a zone that a policy it may not touch still
+// governs. A policy has to have a zone at either end, so that deletion is one
+// unifig can tell will not happen, and a plan is a statement about what will
+// (ADR-0014).
+//
+// What this states is unifig's own promise rather than the Controller's refusal.
+// The networks half witnesses the refusal for real — the dockerized Controller
+// answers `api.err.ResourceReferredBy` — and nothing here can: the stand-in
+// serves a recording, and teaching it to refuse would be writing a fixture that
+// asserts a guess about somebody else's product (ADR-0013).
+func TestPruneLeavesAZoneAPolicyStillGovernsAlone(t *testing.T) {
+	r := startReplay(t)
+	lan := aLAN(t, r)
+	r.seedZone(t, "Held Zone", []string{lan}, nil)
+	r.seedPolicy(t, "Held Policy", "ALLOW", "Held Zone", "External", nil)
+
+	// A second zone the config does not name, with no policy on either end of it,
+	// so the prune under test really runs and really deletes something: the
+	// held-back zone is then spared on purpose rather than because nothing
+	// happened.
+	r.seedZone(t, "Zone Bystander", []string{lan}, nil)
+
+	body := `zones:
+  - name: Keeper
+`
+	res := applyFirewall(t, r, body, "--prune")
+	stdout := string(res.Stdout)
+
+	if !strings.Contains(stdout, `- zone "Zone Bystander" deleted`) {
+		t.Fatalf("the prune under test did not happen:\n%s", stdout)
+	}
+	if strings.Contains(stdout, `- zone "Held Zone"`) {
+		t.Errorf("prune proposed deleting a zone a policy still governs:\n%s", stdout)
+	}
+	// And says so, rather than reading as a site with nothing more to prune
+	// (ADR-0005).
+	for _, fragment := range []string{`"Held Zone" will not be deleted`, `"Held Policy"`} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan should say why it kept the zone, looking for %q:\n%s", fragment, stdout)
+		}
+	}
+	r.zoneNamed(t, "Held Zone")     // fails the test if the apply deleted it
+	r.policyNamed(t, "Held Policy") // or the policy on it
+}
+
+// What that rule costs, stated deliberately rather than left to be discovered. A
+// policy the Controller ships is exempt from prune (ADR-0005), so it is one that
+// will still be governing its zone however the file is written — `firewall-
+// policies: []` puts every policy the file can reach at stake and cannot reach
+// that one. So the zone is held back, and the operator is told which policy did
+// it and can go and look at it in the Controller's UI.
+//
+// The alternative was to read `predefined` as the Controller promising to clean
+// its own policy up along with the zone. That is a guess about somebody else's
+// product, of exactly the shape that cost issues #23 and #24, and no recording
+// can answer it (ADR-0013). ADR-0014 records why the guess was refused and what
+// refusing it costs on a migrated router.
+func TestTheControllersOwnPolicyStillHoldsItsZoneBack(t *testing.T) {
+	r := startReplay(t)
+	lan := aLAN(t, r)
+	r.seedZone(t, "Held By Predefined", []string{lan}, nil)
+	r.seedPolicy(t, "Block All Traffic", "BLOCK", "Held By Predefined", "External",
+		map[string]any{"predefined": true})
+
+	res := planFirewall(t, r, `zones:
+  - name: Keeper
+firewall-policies: []
+`, "--prune")
+	stdout := string(res.Stdout)
+
+	if strings.Contains(stdout, `- zone "Held By Predefined"`) {
+		t.Errorf("prune proposed deleting a zone the Controller's own policy governs:\n%s", stdout)
+	}
+	for _, fragment := range []string{`"Held By Predefined" will not be deleted`, `"Block All Traffic"`} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan should say why it kept the zone, looking for %q:\n%s", fragment, stdout)
+		}
+	}
+}
+
 // A policy names its two ends, and either may be a zone only the Controller has.
 // One that is neither on the Controller nor in the file is an operator's typo,
 // and unifig says so while reading — listing the zones the site really has,
