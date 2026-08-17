@@ -17,26 +17,61 @@ That makes this ADR-0008 arriving at a second area for the same underlying reaso
 
 Two things about that stand-in are new rather than inherited. It serves the Controller's **v2 tree**, whose responses are bare JSON arrays with no `{meta, data}` envelope — the first shape difference the recording has had to carry. And it is the first stand-in here to **create and delete** rather than only update, because Zones and Policies are the first Resources tested this way rather than Settings; it hands out an ID on create, which is exactly what a policy planned onto a new zone has to be able to read.
 
-**The committed fixtures are hand-written, and that is a debt this ADR is booking rather than paying.** ADR-0011 says a recording comes from hardware and a program decides what survives; `make record-udr` now captures both endpoints and scrubs them. This paragraph used to go on to say that the next run against the maintainer's UDR would replace these files with real ones. That has now been tried, and it does not — see "What the maintainer's UDR answered" below, which is a different debt from the one booked here. Until it is paid, the built-in zone set (`External`, `Internal`, `Gateway`, `VPN`, `Hotspot`), the shape of a predefined policy, and above all **whether a built-in zone really carries `attr_no_delete`** are unverified. The last of those is load-bearing: unifig's exemption reads that marker (ADR-0005), and if a real UDR marks built-in zones some other way, prune would propose deleting the zone that stands for the internet. The suite asserts the marker is present before relying on it, so a recording that disagrees fails loudly rather than silently — but a fixture cannot make a router true.
+**The committed fixtures were hand-written, and this ADR booked that as a debt rather than paying it.** ADR-0011 says a recording comes from hardware and a program decides what survives; `make record-udr` captures both endpoints and scrubs them. The debt was paid on 17 August 2026 and the section below records what it bought — read it before the paragraph that follows, which is kept as written because being wrong in public is the point of it.
+
+What this ADR said while the fixtures were hand-written: the built-in zone set (`External`, `Internal`, `Gateway`, `VPN`, `Hotspot`), the shape of a predefined policy, and above all **whether a built-in zone really carries `attr_no_delete`** are unverified. The last of those is load-bearing: unifig's exemption reads that marker (ADR-0005), and if a real UDR marks built-in zones some other way, prune would propose deleting the zone that stands for the internet. The suite asserts the marker is present before relying on it, so a recording that disagrees fails loudly rather than silently — but a fixture cannot make a router true.
+
+That paragraph was right about the risk, wrong about the zone set, and wrong about the safeguard. The suite did assert the marker before relying on it — against a fixture written in the same change to carry it, so the assertion could not fail. A test that states an assumption is only worth what its fixture's provenance is worth.
 
 The same gap covers what unifig writes when it *creates* a policy. The Controller rejects one with a null `schedule`, which the exploration established; the rest of `newFirewallPolicy`'s defaults are what the UI is understood to send, and no container refused them because no container would accept any policy at all.
 
 ## What the maintainer's UDR answered
 
-**Nothing yet, and the reason is worth recording: the router is still on the legacy firewall.** `make record-udr` was run against it on 17 August 2026, on the same UDR running Network 10.5.67 that ADR-0007, ADR-0008 and ADR-0012 were closed against. It captured both firewall endpoints correctly and wrote two empty arrays, because that is what the router sent:
+**Answered on 17 August 2026, and the debt above is paid.** The site was migrated
+to the zone-based firewall and `make record-udr` was run against it, on the same
+UDR running Network 10.5.67 that ADR-0007, ADR-0008 and ADR-0012 were closed
+against. `e2e/testdata/udr/firewallzone.json` and `firewallpolicy.json` now hold
+six zones and eighty-three predefined policies that came from hardware.
 
-- `GET /v2/api/site/default/firewall/zone` answers `200 []`. So do `firewall-policies` and `zone-matrix`.
-- `GET /api/s/default/rest/firewallrule` answers with **four rules**. The site has a firewall and is using it; it is the pre-zone one.
-- `described-features` lists **`ZONE_BASED_FIREWALL_MIGRATION`** — not `ZONE_BASED_FIREWALL`. The gateway offers the migration rather than reporting the feature as in use.
+It took two runs. The first, before the migration, found the router still on the
+**legacy firewall**: `firewall/zone`, `firewall-policies` and `zone-matrix` all
+answered `200 []`, `rest/firewallrule` held four rules, and `described-features`
+listed `ZONE_BASED_FIREWALL_MIGRATION` rather than `ZONE_BASED_FIREWALL`. The
+zone-based firewall arrives with an adopted gateway, but a site carried forward
+from before it existed stays on the legacy rules until somebody migrates it. So
+a UDR is necessary and not sufficient; a **migrated** UDR is the requirement, and
+that is worth knowing before arranging access to hardware.
 
-So a UDR is necessary but not sufficient. The zone-based firewall is provisioned when a gateway is adopted, as above, but a site carried forward from before it existed stays on the legacy rules until somebody migrates it, and this one has not been. Hardware alone does not settle these questions; **migrated** hardware does.
+Two of the three deferred questions turned out to be answered wrongly, which is
+the whole return on the exercise:
 
-Two things follow, and the second is easy to miss:
+- **A built-in zone does not carry `attr_no_delete`.** No zone has the field. The
+  marker is `default_zone`, with a stable `zone_key` beside it. The load-bearing
+  fear in this ADR was correct: unifig read the network's marker on a zone, so
+  `--prune` proposed deleting every built-in including `External`. Filed and
+  fixed as issue #23; ADR-0005 now records that the marker is per Resource.
+- **A policy's identity is its name and its pair of zones, not its name.** The
+  Controller ships its predefined policies one per ordered zone pair and reuses
+  names across them — nineteen "Allow All Traffic", sixteen "Block All Traffic".
+  unifig matched on name and refused every migrated site as ambiguous, telling
+  the operator to rename policies that were not theirs to rename. Filed and fixed
+  as issue #24, on ADR-0001's per-type natural keys.
+- **The built-in set is six, not five**: `Internal`, `External`, `Gateway`,
+  `Vpn`, `Hotspot`, `Dmz`. The guess had no `Dmz` and spelled `Vpn` differently.
+  The suite no longer names any of them; the prune test reads the built-ins out
+  of the recording.
 
-- **The three questions stay open, unanswered rather than answered badly.** The built-in zone set, the shape of a predefined policy and whether a built-in zone carries `attr_no_delete` are exactly as unverified as before this run.
-- **`attr_no_delete` was not disproved.** This matters because an empty recording has two possible causes and they are opposites. The scrub keeps a zone only if `attr_no_delete` is `true` (`tools/record-udr/scrub.go`), so an empty file could mean the router sent zones that all lacked the marker — which would mean prune proposes deleting the zone that stands for the internet, and unifig has a serious bug. It did not: the endpoint itself returned `[]`, checked directly, so there was nothing to drop. The distinction is invisible in the written file, which is why it is written down here.
+Both defects had the same shape, and it is the shape this ADR predicted. Each was
+a guess about someone else's product, written into a fixture in the same change
+as the code that read it, so the test asserted the guess against itself and
+passed. Neither could fail until the fixture came from hardware. **A hand-written
+fixture cannot fail a test about the thing it was written to describe** — which
+is the argument for ADR-0011 stated as a result rather than as a principle.
 
-Re-recording against this router is therefore not the acceptance test it was expected to be. Until the site is migrated, running `make record-udr` **empties** the firewall fixtures and takes the firewall suite's coverage with them: 11 tests fail, all of them firewall. One fails through the guard written for exactly this — `firewall_test.go:379`, "the recording holds no predefined policy, so this test would prove nothing" — and the rest through the helper that insists a named zone exists, which is the same statement made a level down. The failure is loud, immediate and correctly attributed, which is the design working; but the recording must not be committed in that state. The hand-written fixtures stand until there is something real to replace them with.
+What is still unanswered is the narrowest of the three: whether a policy unifig
+*creates* comes back holding the fields `newFirewallPolicy` sent. The recording
+holds only the Controller's own policies, and answering it needs a write to a
+real site rather than a read.
 
 ## Considered Options
 
@@ -51,6 +86,6 @@ Re-recording against this router is therefore not the acceptance test it was exp
 - The compatibility matrix (issue #11) cannot say anything about Zones or Policies from CI alone, and should not pretend to. Firewall coverage is a claim about a recording until a container ships the feature.
 - `make record-udr` reads six endpoints rather than four, and its scrub keeps only the zones and policies the Controller marks as its own — `default_zone` and `predefined`. It read `attr_no_delete` on a zone until migrated hardware showed no zone carries it (issue #23). A zone an operator made is named after their household, and the tests that want a custom zone seed their own. Not recording something remains the only rule that cannot be got wrong (ADR-0011).
 - A zone's membership is rewritten during the scrub rather than merely substituted: the router's own LANs are dropped in favour of the committed one, so a member naming a dropped LAN is pointed at the LAN the recording keeps. Without that, every zone would come back holding ids that resolve to nothing.
-- **Re-recording from a *migrated* UDR is the acceptance test this issue could not run**, and the questions to answer while a real router is on the other end are in `e2e/testdata/udr/README.md`: whether built-in zones carry `attr_no_delete`, which zones a UDR actually ships, and whether a created policy comes back holding the fields `newFirewallPolicy` sent. This bullet used to say it should be done before v1 (issue #13). It no longer does. As of 17 August 2026 the maintainer's router cannot answer those questions — see "What the maintainer's UDR answered" — so the prerequisite is a migration to the zone-based firewall, on that router or another, and not merely access to hardware; and migrating a live site rewrites its legacy rules, which is an operator's decision about their own network rather than a step in somebody's release checklist. Making v1 wait on it would be blocking the release on a change to the maintainer's home network, which is a worse trade than shipping the debt in the open.
+- **Re-recording from a migrated UDR was the acceptance test issue #8 could not run, and it has now been run.** This bullet has said three things in two days: that it should happen before v1, then that v1 would carry the debt rather than block on a change to the maintainer's home network, and now that the recording exists. The middle version was written while the router was on the legacy firewall and the migration looked like it would not happen; it is worth remembering that the argument for shipping the debt was reasonable and would have shipped two defects that only hardware could find.
 
-  **So v1 carries this one deliberately, and what it costs should be said plainly.** The firewall is the one area of the v1 catalogue whose fixtures are hand-written, so its coverage is a statement about a fixture rather than about hardware — weaker than every other area, and weakest precisely where it matters most, since `attr_no_delete` is what stops `--prune` proposing the deletion of the zone that stands for the internet. Nothing here is known to be wrong: the marker is unverified rather than disproved, and the suite fails loudly rather than silently if a recording ever disagrees. But "no container has this feature and no migrated router was available" is the reason, and it should be legible to anyone reading the compatibility matrix (issue #11) rather than discovered later. Issue #21 stays open across v1 for whenever a migrated gateway turns up.
+  **What it cost to be wrong here was two bugs, both in the direction of destroying an operator's configuration.** `--prune` proposing the deletion of every built-in zone (#23), and every migrated site refused as ambiguous (#24). Neither was reachable by any test this repository could run, because the fixtures asserting otherwise were written by the same hand as the code. Firewall coverage is now a claim about hardware, and the compatibility matrix (issue #11) can say so for the recording's version — 10.5.67 — while still saying nothing from CI alone, since the container has no firewall to test.

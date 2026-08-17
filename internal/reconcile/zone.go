@@ -32,7 +32,7 @@ import (
 // planZones is the zone half of a reconcile. Its caller only reaches it when the
 // config has a `zones:` section at all (ADR-0006), so a file that says nothing
 // about zones leaves every one of them alone.
-func planZones(cfg config.Config, live []unifi.FirewallZone, bound bindings, opts Options) []Change {
+func planZones(cfg config.Config, live []unifi.FirewallZone, owned zoneOwnership, bound bindings, opts Options) []Change {
 	byName := make(map[string]unifi.FirewallZone, len(live))
 	for _, zone := range live {
 		byName[zone.Name] = zone
@@ -53,7 +53,7 @@ func planZones(cfg config.Config, live []unifi.FirewallZone, bound bindings, opt
 		}
 	}
 	if opts.Prune {
-		changes = append(changes, pruneZones(byName, named, bound)...)
+		changes = append(changes, pruneZones(byName, named, owned, bound)...)
 	}
 	return changes
 }
@@ -79,6 +79,66 @@ func listZones(ctx context.Context, client unifi.Client, site string) ([]unifi.F
 		return nil, err
 	}
 	return live, nil
+}
+
+// ownedZone is the part of a zone that says whose it is, which go-unifi's
+// FirewallZone does not carry: the library models `attr_no_delete` and
+// `attr_no_edit`, and a real zone has neither of the first and uses the second
+// for something else.
+type ownedZone struct {
+	ID      string `json:"_id"`
+	Default bool   `json:"default_zone"`
+	ZoneKey string `json:"zone_key"`
+}
+
+// zoneOwnership is which zones the Controller marks as its own, and whether that
+// could be established at all.
+//
+// The distinction is the whole point of the type. An empty set means the site
+// genuinely has no built-in zones; an unknown set means unifig could not find
+// out, and the two must not lead to the same behaviour, because one of them ends
+// in a plan proposing to delete the zone that stands for the internet.
+type zoneOwnership struct {
+	known   bool
+	builtIn map[string]bool
+}
+
+func (o zoneOwnership) owns(zone unifi.FirewallZone) bool { return o.builtIn[zone.ID] }
+
+// builtInZones reads which zones the Controller marks as its own.
+//
+// It reads `default_zone`, which is the marker a zone carries. That is not the
+// marker a network carries: a network says the same thing with
+// `attr_no_delete`, and unifig read the network's marker on a zone until a
+// recording from migrated hardware showed no zone has that field at all
+// (issue #23, ADR-0005). The exemption is still read off the object rather than
+// from a list of built-in names unifig keeps — what changed is which field is
+// read, not the principle.
+//
+// The request goes through the same client, so it carries the same
+// authentication and reaches the same Controller as everything else. What it
+// cannot borrow is the path: go-unifi resolves a relative path under the v1 API
+// base and only a leading-slash path is used as it stands, so the v2 path has to
+// be given in full — and it differs between the two controller styles, which the
+// client does not expose after resolving. Hence trying both. The dockerized
+// Controller is old-style and a UniFi OS console is new-style, so this repo's own
+// suites exercise each.
+func builtInZones(ctx context.Context, client unifi.Client, site string) zoneOwnership {
+	for _, base := range []string{unifi.NewStyleAPI.ApiV2Path, unifi.OldStyleAPI.ApiV2Path} {
+		var owned []ownedZone
+		err := client.Get(ctx, fmt.Sprintf("%s/site/%s/firewall/zone", base, site), nil, &owned)
+		if err != nil {
+			continue
+		}
+		builtIn := make(map[string]bool, len(owned))
+		for _, zone := range owned {
+			if zone.Default {
+				builtIn[zone.ID] = true
+			}
+		}
+		return zoneOwnership{known: true, builtIn: builtIn}
+	}
+	return zoneOwnership{}
 }
 
 // projectZones projects the site's zones into the config that would describe
@@ -200,15 +260,23 @@ func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings) (C
 // not name.
 //
 // The Controller's own zones are exempt, and the exemption is read off the
-// object's undeletable marker rather than from a list of built-in names unifig
-// keeps (ADR-0005). That matters more here than anywhere else it applies: a
-// list that had never heard of some firmware's new built-in would have prune
-// propose deleting the zone that stands for the internet, and an operator who
-// approved it would find out what that means.
-func pruneZones(live map[string]unifi.FirewallZone, named map[string]bool, bound bindings) []Change {
+// object's own marker rather than from a list of built-in names unifig keeps
+// (ADR-0005). That matters more here than anywhere else it applies: a list that
+// had never heard of some firmware's new built-in would have prune propose
+// deleting the zone that stands for the internet, and an operator who approved
+// it would find out what that means.
+//
+// If ownership could not be established, nothing is pruned. A zone deletion is
+// the one change here whose blast radius makes silence the wrong default: not
+// knowing which zones are the Controller's has to mean leaving all of them
+// alone, rather than treating every one of them as fair game (issue #23).
+func pruneZones(live map[string]unifi.FirewallZone, named map[string]bool, owned zoneOwnership, bound bindings) []Change {
+	if !owned.known {
+		return nil
+	}
 	changes := make([]Change, 0, len(live))
 	for name, zone := range live {
-		if named[name] || zone.NoDelete {
+		if named[name] || zone.NoDelete || owned.owns(zone) {
 			continue
 		}
 		changes = append(changes, deleteZone(zone, bound))

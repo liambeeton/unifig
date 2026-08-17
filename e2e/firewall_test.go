@@ -327,10 +327,27 @@ func TestPruneNeverDeletesTheControllersBuiltInZones(t *testing.T) {
 	// unifig reads the Controller's own marker rather than keeping a list of
 	// built-in names, so the test states that first. If this stops holding, the
 	// reason the rest of the test passes has changed.
+	//
+	// The marker is `default_zone`, which is the one a zone carries. It is not
+	// `attr_no_delete` — that is how a *network* says the same thing, and this
+	// test asserted it against a hand-written fixture that had been written to
+	// satisfy it, until a recording from migrated hardware showed no zone has the
+	// field at all (issue #23).
+	//
+	// Which built-ins there are is read from the recording rather than listed
+	// here, for the same reason unifig does not list them: the set is Ubiquiti's
+	// to change. The hand-written fixture guessed five and a real UDR ships six,
+	// spelling two of them differently.
+	var builtIns []string
 	for _, zone := range r.liveZones(t) {
-		if zone["attr_no_delete"] != true {
-			t.Fatalf("the recording's %v zone is not marked undeletable; unifig's exemption reads that marker", zone["name"])
+		if zone["default_zone"] != true {
+			t.Fatalf("the recording's %v zone is not marked as the Controller's own; unifig's exemption reads that marker", zone["name"])
 		}
+		name, _ := zone["name"].(string)
+		builtIns = append(builtIns, name)
+	}
+	if len(builtIns) == 0 {
+		t.Fatal("the recording holds no built-in zones, so this test would prove nothing")
 	}
 
 	lan := aLAN(t, r)
@@ -344,7 +361,7 @@ func TestPruneNeverDeletesTheControllersBuiltInZones(t *testing.T) {
 	if !strings.Contains(string(res.Stdout), `- zone "Prunable"`) {
 		t.Fatalf("the prune under test is not in the plan:\n%s", res.Stdout)
 	}
-	for _, builtIn := range []string{"External", "Internal", "Gateway"} {
+	for _, builtIn := range builtIns {
 		if strings.Contains(string(res.Stdout), fmt.Sprintf(`zone %q`, builtIn)) {
 			t.Fatalf("plan --prune proposes deleting the built-in %s zone:\n%s", builtIn, res.Stdout)
 		}
@@ -352,7 +369,7 @@ func TestPruneNeverDeletesTheControllersBuiltInZones(t *testing.T) {
 
 	applyFirewall(t, r, body, "--prune")
 
-	for _, builtIn := range []string{"External", "Internal", "Gateway", "VPN", "Hotspot"} {
+	for _, builtIn := range builtIns {
 		r.zoneNamed(t, builtIn) // fails the test if it is gone or duplicated
 	}
 	for _, zone := range r.liveZones(t) {

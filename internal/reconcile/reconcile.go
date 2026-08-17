@@ -390,7 +390,7 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 		bound.bindZones(zones)
 
 		if cfg.Zones != nil {
-			changes = append(changes, planZones(cfg, zones, bound, opts)...)
+			changes = append(changes, planZones(cfg, zones, builtInZones(ctx, client, site), bound, opts)...)
 		}
 		if cfg.FirewallPolicies != nil {
 			policies, err := planFirewallPolicies(ctx, client, site, cfg, bound, opts)

@@ -36,10 +36,12 @@ key in the path.
 
 ## Provenance
 
-**Captured from a physical UniFi Dream Router on 16 August 2026**, running
-Network 10.5.67, with `make record-udr`. The uplink was on PPPoE and signed in
-at the time, and encrypted DNS was set to a custom resolver, which is what let
-that recording answer the two questions
+**Captured from a physical UniFi Dream Router**, running Network 10.5.67, with
+`make record-udr`. The Settings came from a recording on 16 August 2026 and the
+firewall from one on **17 August 2026**, taken minutes after the site was
+migrated to the zone-based firewall. The uplink was on PPPoE and signed in at
+the time, and encrypted DNS was set to a custom resolver, which is what let that
+recording answer the two questions
 `docs/adr/0008-wan-slots-replay-recorded-responses.md` had left open and the one
 in `docs/adr/0012-encrypted-dns-is-a-singleton-setting.md`.
 
@@ -48,74 +50,43 @@ recording holds. Nothing in the suite depends on that — see "What the tests ne
 from a recording" below — and a recording from a router with a second uplink, a
 cellular backup or three resolvers drops in the same way.
 
-An earlier version of these files was recorded from the dockerized Controller
-and extended by hand, and this section used to warn you about it. It is kept in
-the git history rather than here.
+Earlier versions of these files were recorded from the dockerized Controller and
+extended by hand, and this section used to warn you about it. So did a section
+about the firewall in particular, which was hand-written for longer than the
+rest. Both are kept in the git history rather than here.
 
-### Except the firewall, which has not been recorded yet
+### What the firewall recording settled
 
-`firewallzone.json` and `firewallpolicy.json` are **hand-written**, and are the
-one part of this recording that has never been near a router. They were added
-with the zone-based firewall (issue #8) because the dockerized Controller has no
-such firewall at all — see
-`docs/adr/0013-the-firewall-cannot-be-tested-against-a-container.md` — so there
-was no other way to test the area, and no hardware to hand at the time.
+The firewall was the last part of this recording never to have been near a
+router, and replacing it answered three questions that had been guesses — two of
+them wrongly, which is the point of having asked.
 
-What they assume, and what a real recording would settle:
+**Do built-in zones carry `attr_no_delete`? No. No zone has that field at all.**
+A zone says it is the Controller's own with `default_zone: true`, alongside a
+stable `zone_key` (`internal`, `external`, `gateway`, `vpn`, `hotspot`, `dmz`).
+`attr_no_delete` is how a *network* says it — the built-in `Default` network
+carries it — and the convention does not carry across. unifig read the network's
+marker on a zone, so `--prune` proposed deleting every built-in zone including
+the one that stands for the internet; that was issue #23. There is also an
+`attr_no_edit`, which is on only three of the six and means editability rather
+than ownership, so it is not the marker either.
 
-- **that a built-in zone carries `attr_no_delete`.** This is the load-bearing
-  one. unifig's exemption reads that marker (ADR-0005), so if a UDR marks its
-  built-in zones some other way, `--prune` would propose deleting the zone that
-  stands for the internet. The suite asserts the marker is present before
-  relying on it, so a recording that disagrees fails loudly — but a fixture
-  cannot make a router true.
-- **which zones a UDR actually ships**, and what each holds. The fixture has
-  `External`, `Internal`, `Gateway`, `VPN` and `Hotspot`, with the uplink in
-  `External` and the LAN in `Internal`.
-- **what a predefined policy looks like**, and whether a policy unifig creates
-  comes back holding the fields it sent (`newFirewallPolicy` in
-  `internal/reconcile/policy.go`). The Controller is known to reject a policy
-  with a null `schedule`; the rest of those defaults are unverified. `index` is
-  the one to look at first: the hand-written fixture carries `index: 10000` and
-  unifig sends none, on the assumption the Controller assigns it.
+**Which zones does a UDR ship? Six, not the five that were guessed:** `Internal`,
+`External`, `Gateway`, `Vpn`, `Hotspot`, `Dmz`. The guess had no `Dmz` and
+spelled `Vpn` as `VPN`. The uplink is in `External` and the LAN in `Internal`, as
+expected. Nothing in the suite lists those names any more — the prune test reads
+the built-ins out of the recording, because which zones exist is Ubiquiti's to
+change.
 
-If you are the one running `make record-udr` against a real UDR, these are the
-questions to answer while you have one. Replacing these two files is the
-acceptance test issue #8 could not run.
-
-#### A UDR is necessary but not sufficient: it has to be migrated
-
-This was tried on 17 August 2026, against the same UDR on Network 10.5.67 that
-the rest of this recording came from, and it did not work — not because the
-command failed, but because that router is still on the **legacy firewall**. It
-answers `[]` for `firewall/zone`, `firewall-policies` and `zone-matrix`, holds
-four rules under `rest/firewallrule`, and its `described-features` lists
-`ZONE_BASED_FIREWALL_MIGRATION` rather than `ZONE_BASED_FIREWALL`. The
-zone-based firewall arrives with an adopted gateway, but a site that predates it
-stays on the old rules until somebody migrates it.
-
-So if you are about to do this, check first — one read-only request, and it
-saves you the rest:
-
-```sh
-curl -sk -H "X-API-KEY: $UNIFIG_API_KEY" \
-  "$UNIFIG_HOST/proxy/network/v2/api/site/default/firewall/zone"
-```
-
-An empty array means this router cannot answer the questions above yet, and
-`make record-udr` will **empty these two fixtures** rather than fill them,
-taking the firewall suite's coverage with them: 11 tests fail, all firewall.
-That is the guards working rather than something to fix — but do not commit
-that recording. `git restore -- e2e/testdata/udr` puts it back.
-
-If it answers with zones, you have what issue #21 needs. Note that an empty
-recording has two possible causes that look identical in the written file: the
-router sent nothing, or it sent zones that all lacked `attr_no_delete` and the
-scrub dropped every one (`tools/record-udr/scrub.go`). The second would mean
-prune proposes deleting the zone that stands for the internet. Read the
-endpoint directly before concluding anything from an empty file — on 17 August
-it was the first cause, and unifig's exemption is still merely unverified rather
-than wrong.
+**Does a created policy come back holding what unifig sent?** Unanswered, and
+now separated from a bigger thing the recording did settle. The Controller ships
+**83 predefined policies, one per ordered pair of zones, reusing names across
+pairs**: nineteen called "Allow All Traffic", sixteen "Block All Traffic",
+twelve "Allow Return Traffic". A policy's identity is therefore its name *and*
+its pair of zones, not its name alone — unifig matched on name and refused every
+migrated site as ambiguous, which was issue #24. `index` runs from 30000 to
+2147483647 on the predefined set, so the old fixture's lone `index: 10000` was a
+plausible guess about a value unifig still does not send.
 
 ## Re-recording from a real UDR
 

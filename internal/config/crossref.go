@@ -100,16 +100,26 @@ func checkReferences(cfg Config, idx index) []Problem {
 		}
 	}
 
-	governed := make(map[string]bool, len(cfg.FirewallPolicies))
+	// A policy is identified by its name *and* the pair of Zones it governs, so
+	// that is what may not repeat. Two policies sharing a name is ordinary rather
+	// than ambiguous: the Controller ships its own predefined set one per pair of
+	// Zones and reuses the same names across them, so a site exports nineteen
+	// called "Allow All Traffic" and a file describing that site has to be able
+	// to say so (issue #24, and ADR-0001 on per-type natural keys).
+	type governs struct{ name, source, destination string }
+	governed := make(map[governs]bool, len(cfg.FirewallPolicies))
 	for i, policy := range cfg.FirewallPolicies {
-		if governed[policy.Name] {
+		key := governs{policy.Name, policy.Source, policy.Destination}
+		if governed[key] {
 			at := idx.field("firewall-policies", i, "name")
 			problems = append(problems, Problem{
 				Line: at.line, Path: at.path,
-				Message: alreadyDefined("firewall policy", "firewall policies", policy.Name),
+				Message: fmt.Sprintf(
+					"a firewall policy named %q from %q to %q is already defined in this file; unifig matches policies on the name and the pair of zones together, so it would not know which of these to apply",
+					policy.Name, policy.Source, policy.Destination),
 			})
 		}
-		governed[policy.Name] = true
+		governed[key] = true
 	}
 
 	// A WAN slot is checked for the same ambiguity as a Resource name, and the

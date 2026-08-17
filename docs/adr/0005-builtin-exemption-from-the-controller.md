@@ -6,6 +6,41 @@ The two look equivalent for one network on one firmware. They stop being equival
 
 It is also not a networks decision. Issue #8's built-in firewall Zones are the same idea wearing a different type — matchable from config, never prunable — and they carry the same kind of marker. Reading it is one predicate per resource area; a list would be one list per area, each needing to be right about a different corner of the Controller.
 
+## The marker is per Resource, not one field across all of them
+
+**Added 17 August 2026, after the first recording from migrated hardware.** This
+ADR said the Controller "puts a marker on the object" and gave `attr_no_delete`
+as the example. That is right about the principle and was read as a promise
+about the field, which it is not: **each Resource has its own marker, and only a
+network uses `attr_no_delete`.**
+
+| Resource | Says it is the Controller's own with |
+| --- | --- |
+| Network | `attr_no_delete` |
+| Firewall Zone | `default_zone`, alongside a stable `zone_key` |
+| Firewall Policy | `predefined` |
+
+A firewall zone has no `attr_no_delete` field at all. unifig read it there
+anyway, on the assumption the network's convention was shared, and because zones
+were the first Resource nothing available could confirm (ADR-0013) it shipped
+unverified. The cost was the exact failure this ADR exists to prevent: every
+built-in zone unexempt, and `--prune` proposing to delete the one that stands for
+the internet. That is issue #23, found the first time these fixtures came from a
+real migrated router rather than from a fixture written to agree with them.
+
+The principle survives intact, and is worth restating because it was never the
+thing that was wrong: **read the Controller's own marker; do not keep a list of
+built-in names.** What a reader must not infer is which field that marker is. A
+new managed type needs its own answer, read off real hardware, and until it has
+one it does not have this exemption.
+
+There is one addition to the principle, learned the same day. Where the marker
+cannot be established at all — the request fails, the field is missing, the
+firmware is one nobody has seen — prune must **skip the deletions rather than
+propose them**. For most Resources that is merely cautious. For a zone it is the
+difference between a plan that does nothing and a plan that offers to sever the
+site from the internet, so "cannot tell" has to resolve to "leave it alone".
+
 ## Considered Options
 
 - **A list of built-in names in unifig** — rejected above: it encodes a guess about someone else's product, and goes stale silently.

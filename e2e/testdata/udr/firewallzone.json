@@ -1,37 +1,70 @@
 [
   {
-    "_id": "6613a1f0c4b2d90a5e1f2001",
-    "attr_no_delete": true,
+    "_id": "6613a1f0c4b2d90a5e1f1005",
+    "attr_no_edit": false,
+    "cloud_template": null,
+    "default_zone": true,
+    "external_id": "00000000-0000-4000-8000-000000000004",
     "name": "Internal",
-    "network_ids": ["6613a1f0c4b2d90a5e1f0001"],
-    "site_id": "6613a1f0c4b2d90a5e1f0000"
+    "network_ids": [
+      "6613a1f0c4b2d90a5e1f0001"
+    ],
+    "zone_key": "internal"
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f2002",
-    "attr_no_delete": true,
+    "_id": "6613a1f0c4b2d90a5e1f1002",
+    "attr_no_edit": true,
+    "cloud_template": null,
+    "default_zone": true,
+    "external_id": "00000000-0000-4000-8000-000000000005",
     "name": "External",
-    "network_ids": ["6613a1f0c4b2d90a5e1f1001"],
-    "site_id": "6613a1f0c4b2d90a5e1f0000"
+    "network_ids": [
+      "6613a1f0c4b2d90a5e1f1001"
+    ],
+    "zone_key": "external"
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f2003",
-    "attr_no_delete": true,
+    "_id": "6613a1f0c4b2d90a5e1f1006",
+    "attr_no_edit": true,
+    "cloud_template": null,
+    "default_zone": true,
+    "external_id": "00000000-0000-4000-8000-000000000006",
     "name": "Gateway",
     "network_ids": [],
-    "site_id": "6613a1f0c4b2d90a5e1f0000"
+    "zone_key": "gateway"
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f2004",
-    "attr_no_delete": true,
-    "name": "VPN",
-    "network_ids": [],
-    "site_id": "6613a1f0c4b2d90a5e1f0000"
+    "_id": "6613a1f0c4b2d90a5e1f1007",
+    "attr_no_edit": true,
+    "cloud_template": null,
+    "default_zone": true,
+    "external_id": "00000000-0000-4000-8000-000000000007",
+    "name": "Vpn",
+    "network_ids": [
+      "6613a1f0c4b2d90a5e1f0001"
+    ],
+    "zone_key": "vpn"
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f2005",
-    "attr_no_delete": true,
+    "_id": "6613a1f0c4b2d90a5e1f1008",
+    "attr_no_edit": false,
+    "cloud_template": null,
+    "default_zone": true,
+    "external_id": "00000000-0000-4000-8000-000000000008",
     "name": "Hotspot",
+    "network_ids": [
+      "6613a1f0c4b2d90a5e1f0001"
+    ],
+    "zone_key": "hotspot"
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f1009",
+    "attr_no_edit": false,
+    "cloud_template": null,
+    "default_zone": true,
+    "external_id": "00000000-0000-4000-8000-000000000009",
+    "name": "Dmz",
     "network_ids": [],
-    "site_id": "6613a1f0c4b2d90a5e1f0000"
+    "zone_key": "dmz"
   }
 ]

@@ -62,13 +62,13 @@ func planFirewallPolicies(
 	bound bindings,
 	opts Options,
 ) ([]Change, error) {
-	live, err := listFirewallPolicies(ctx, client, site)
+	live, err := listFirewallPolicies(ctx, client, site, bound)
 	if err != nil {
 		return nil, err
 	}
-	byName := make(map[string]unifi.FirewallZonePolicy, len(live))
+	byKey := make(map[policyKey]unifi.FirewallZonePolicy, len(live))
 	for _, policy := range live {
-		byName[policy.Name] = policy
+		byKey[keyOfLivePolicy(policy, bound)] = policy
 	}
 
 	// A zone a policy names is resolved against the Controller and against the
@@ -85,16 +85,16 @@ func planFirewallPolicies(
 	}
 
 	changes := make([]Change, 0, len(cfg.FirewallPolicies))
-	named := make(map[string]bool, len(cfg.FirewallPolicies))
+	named := make(map[policyKey]bool, len(cfg.FirewallPolicies))
 	for _, desired := range cfg.FirewallPolicies {
-		named[desired.Name] = true
+		named[keyOfDesiredPolicy(desired)] = true
 		for _, zone := range []string{desired.Source, desired.Destination} {
 			if !slices.Contains(reachable, zone) {
 				return nil, noSuchZone(zone, bound.zoneNames())
 			}
 		}
 
-		current, exists := byName[desired.Name]
+		current, exists := byKey[keyOfDesiredPolicy(desired)]
 		if !exists {
 			changes = append(changes, createFirewallPolicy(desired, bound))
 			continue
@@ -104,27 +104,92 @@ func planFirewallPolicies(
 		}
 	}
 	if opts.Prune {
-		changes = append(changes, pruneFirewallPolicies(byName, named, bound)...)
+		changes = append(changes, pruneFirewallPolicies(byKey, named, bound)...)
 	}
 	return changes, nil
 }
 
+// policyKey is what identifies a firewall policy — its name together with the
+// pair of zones it governs.
+//
+// ADR-0001 handles identity with per-type natural keys rather than one rule for
+// everything, and this is the type whose key is not its name. The Controller
+// ships its predefined policies one per zone pair and reuses the same name
+// across them: a migrated UDR answers with nineteen called "Allow All Traffic",
+// one for each ordered pair of its six zones, and sixteen called "Block All
+// Traffic". Matching those on name alone finds one policy where there are
+// nineteen, and refusing the site as ambiguous — which is what unifig did — asks
+// an operator to rename policies that are not theirs to rename (issue #24).
+//
+// The pair is held as zone *names* rather than ids so that a policy in a file
+// and a policy on the Controller can be compared at all: the file names its
+// zones and the Controller stores ids for them.
+type policyKey struct {
+	name        string
+	source      string
+	destination string
+}
+
+func (k policyKey) String() string {
+	return fmt.Sprintf("%q (%s to %s)", k.name, k.source, k.destination)
+}
+
+// keyOfLivePolicy is a live policy's key. A policy whose zones unifig cannot
+// name yields a key with empty ends, which no config policy can equal — that
+// policy is unmatchable rather than mismatched, and projectFirewallPolicies
+// reports it as one it cannot describe.
+func keyOfLivePolicy(policy unifi.FirewallZonePolicy, bound bindings) policyKey {
+	return policyKey{
+		name:        policy.Name,
+		source:      bound.zoneName(policy.Source.ZoneID),
+		destination: bound.zoneName(policy.Destination.ZoneID),
+	}
+}
+
+func keyOfDesiredPolicy(desired config.FirewallPolicy) policyKey {
+	return policyKey{name: desired.Name, source: desired.Source, destination: desired.Destination}
+}
+
 // listFirewallPolicies reads the site's firewall policies, refusing a site where
-// two of them share the name unifig matches them by.
-func listFirewallPolicies(ctx context.Context, client unifi.Client, site string) ([]unifi.FirewallZonePolicy, error) {
+// two of them share the key unifig matches them by.
+//
+// Two policies sharing a name is ordinary and expected; two sharing a name *and*
+// a zone pair is the ambiguity that has no answer, and it is still refused.
+func listFirewallPolicies(ctx context.Context, client unifi.Client, site string, bound bindings) ([]unifi.FirewallZonePolicy, error) {
 	live, err := client.ListFirewallZonePolicy(ctx, site)
 	if err != nil {
 		return nil, fmt.Errorf("listing firewall policies for site %q: %w", site, err)
 	}
 
-	names := make([]string, 0, len(live))
-	for _, policy := range live {
-		names = append(names, policy.Name)
-	}
-	if err := uniquelyNamed(FirewallPolicy, names); err != nil {
+	if err := uniquelyKeyed(live, bound); err != nil {
 		return nil, err
 	}
 	return live, nil
+}
+
+// uniquelyKeyed refuses a site holding two policies unifig could not tell apart.
+// It reads like uniquelyNamed's message because it is the same failure, reported
+// about a wider key.
+func uniquelyKeyed(live []unifi.FirewallZonePolicy, bound bindings) error {
+	counts := make(map[policyKey]int, len(live))
+	for _, policy := range live {
+		counts[keyOfLivePolicy(policy, bound)]++
+	}
+
+	var shared []string
+	for key, count := range counts {
+		if count > 1 {
+			shared = append(shared, fmt.Sprintf("%d matching %s", count, key))
+		}
+	}
+	if len(shared) == 0 {
+		return nil
+	}
+
+	slices.Sort(shared)
+	return fmt.Errorf(
+		"unifig matches firewall policies on the Controller by name and the pair of zones they govern, so no two may share all three: this site has %s; rename or remove the extras in the Controller's UI, then run again",
+		strings.Join(shared, ", "))
 }
 
 // projectFirewallPolicies projects the site's policies into the config that
@@ -137,7 +202,7 @@ func listFirewallPolicies(ctx context.Context, client unifi.Client, site string)
 // than fromLiveZone's: a zone can be described in part because its membership is
 // a list, and a policy cannot, because every field it has is required.
 func projectFirewallPolicies(ctx context.Context, client unifi.Client, site string, bound bindings) ([]config.FirewallPolicy, []string, error) {
-	live, err := listFirewallPolicies(ctx, client, site)
+	live, err := listFirewallPolicies(ctx, client, site, bound)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -232,10 +297,10 @@ func updateFirewallPolicy(desired config.FirewallPolicy, live unifi.FirewallZone
 // undeletable flag every Controller object can carry, and `predefined`, which is
 // how the zone-based firewall marks the default policies it generates for a pair
 // of zones. Both are the Controller saying the object is its own.
-func pruneFirewallPolicies(live map[string]unifi.FirewallZonePolicy, named map[string]bool, bound bindings) []Change {
+func pruneFirewallPolicies(live map[policyKey]unifi.FirewallZonePolicy, named map[policyKey]bool, bound bindings) []Change {
 	changes := make([]Change, 0, len(live))
-	for name, policy := range live {
-		if named[name] || policy.NoDelete || policy.Predefined {
+	for key, policy := range live {
+		if named[key] || policy.NoDelete || policy.Predefined {
 			continue
 		}
 		changes = append(changes, deleteFirewallPolicy(policy, bound))
