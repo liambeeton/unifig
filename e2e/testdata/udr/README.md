@@ -11,12 +11,19 @@ One file per endpoint unifig reaches, holding what that endpoint answered —
 scrubbed on the way in, and with the fields of each entry sorted (see
 "Re-recording" below):
 
-| File               | Endpoint                                        |
-| ------------------ | ----------------------------------------------- |
-| `sysinfo.json`     | `/proxy/network/api/s/default/stat/sysinfo`      |
-| `networkconf.json` | `/proxy/network/api/s/default/rest/networkconf`  |
-| `wlanconf.json`    | `/proxy/network/api/s/default/rest/wlanconf`     |
-| `setting.json`     | `/proxy/network/api/s/default/get/setting`       |
+| File                  | Endpoint                                                  |
+| --------------------- | --------------------------------------------------------- |
+| `sysinfo.json`        | `/proxy/network/api/s/default/stat/sysinfo`                |
+| `networkconf.json`    | `/proxy/network/api/s/default/rest/networkconf`            |
+| `wlanconf.json`       | `/proxy/network/api/s/default/rest/wlanconf`               |
+| `setting.json`        | `/proxy/network/api/s/default/get/setting`                 |
+| `firewallzone.json`   | `/proxy/network/v2/api/site/default/firewall/zone`         |
+| `firewallpolicy.json` | `/proxy/network/v2/api/site/default/firewall-policies`     |
+
+The last two come from the Controller's **v2** tree and are bare JSON arrays with
+no `{"meta": …, "data": …}` envelope around them. That is the Controller's own
+shape, and the stand-in reproduces it: a fixture that wrapped a zone list in an
+envelope is one unifig's own client cannot read.
 
 `networkconf.json` and `setting.json` are starting states, not scripts: the
 replay server holds them in memory and a `PUT` updates its copy the way the
@@ -45,6 +52,37 @@ An earlier version of these files was recorded from the dockerized Controller
 and extended by hand, and this section used to warn you about it. It is kept in
 the git history rather than here.
 
+### Except the firewall, which has not been recorded yet
+
+`firewallzone.json` and `firewallpolicy.json` are **hand-written**, and are the
+one part of this recording that has never been near a router. They were added
+with the zone-based firewall (issue #8) because the dockerized Controller has no
+such firewall at all — see
+`docs/adr/0013-the-firewall-cannot-be-tested-against-a-container.md` — so there
+was no other way to test the area, and no hardware to hand at the time.
+
+What they assume, and what a real recording would settle:
+
+- **that a built-in zone carries `attr_no_delete`.** This is the load-bearing
+  one. unifig's exemption reads that marker (ADR-0005), so if a UDR marks its
+  built-in zones some other way, `--prune` would propose deleting the zone that
+  stands for the internet. The suite asserts the marker is present before
+  relying on it, so a recording that disagrees fails loudly — but a fixture
+  cannot make a router true.
+- **which zones a UDR actually ships**, and what each holds. The fixture has
+  `External`, `Internal`, `Gateway`, `VPN` and `Hotspot`, with the uplink in
+  `External` and the LAN in `Internal`.
+- **what a predefined policy looks like**, and whether a policy unifig creates
+  comes back holding the fields it sent (`newFirewallPolicy` in
+  `internal/reconcile/policy.go`). The Controller is known to reject a policy
+  with a null `schedule`; the rest of those defaults are unverified. `index` is
+  the one to look at first: the hand-written fixture carries `index: 10000` and
+  unifig sends none, on the assumption the Controller assigns it.
+
+If you are the one running `make record-udr` against a real UDR, these are the
+questions to answer while you have one. Replacing these two files is the
+acceptance test issue #8 could not run.
+
 ## Re-recording from a real UDR
 
 One command, from the repo root, with `UNIFIG_HOST` and `UNIFIG_API_KEY`
@@ -54,8 +92,9 @@ pointing at the router — the same variables unifig itself reads:
 make record-udr
 ```
 
-It is read-only against the Controller: four GETs, and no other HTTP method
-anywhere in the program. The worst it can do to a live site is nothing.
+It is read-only against the Controller: one GET per file in the table above, and
+no other HTTP method anywhere in the program. The worst it can do to a live site
+is nothing.
 
 What it does with what comes back:
 
@@ -74,7 +113,7 @@ What it does with what comes back:
 The raw responses never touch the repository. They go to a temporary directory
 outside it and are deleted before the program exits — a raw recording carries
 the PPPoE password and the DNS stamps in the clear, which is the whole reason
-this is a program rather than four `curl`s and a `jq` filter.
+this is a program rather than a handful of `curl`s and a `jq` filter.
 
 ### What the scrub keeps, and what it replaces
 
@@ -85,6 +124,16 @@ VLAN layout and every SSID you broadcast. So the scrub:
 
 - keeps the WAN entries and the Encrypted DNS setting the router sent, including
   every field unifig does not model — those are what the tests exist to protect;
+- keeps the firewall zones and policies the Controller marks as **its own**
+  (`attr_no_delete` on a zone, `predefined` on a policy), which is exactly what
+  unifig's built-in exemption reads and exactly what no container produces. A
+  zone or policy you made yourself is dropped rather than scrubbed: it is named
+  after your household — the children's tablets, the flat downstairs — and every
+  test that wants a custom zone seeds its own;
+- points each kept zone's membership at the networks this recording still holds,
+  since your LANs are dropped in favour of the committed one. Otherwise the
+  zones would come back referring to networks that are not here, and every test
+  about what a zone holds would be testing a dangling reference;
 - takes the LAN from the recording already committed here;
 - empties `wlanconf`;
 - keeps nothing else from `get/setting`. That endpoint answers with the whole
@@ -97,6 +146,7 @@ vanished is a field the tests stopped exercising and nobody would find out:
 | What                                                     | Becomes                                          |
 | -------------------------------------------------------- | ------------------------------------------------ |
 | PPPoE password, WLAN passphrase                           | `recorded-pppoe-password`, …                      |
+| Your zone and policy names                                | Not scrubbed — those objects are dropped entirely |
 | ISP account name (`wan_username`)                         | `recorded-isp-username`                           |
 | DNS stamps (`sdns_stamp`)                                 | `sdns://recorded-dns-stamp-1`, counted            |
 | Your name for a resolver (`server_name`)                  | `recorded-dns-server-1`, counted                  |

@@ -18,6 +18,18 @@
       "type": "array",
       "items": { "$ref": "#/$defs/wlan" }
     },
+    "zones": {
+      "title": "Firewall zones",
+      "description": "Zones in the Controller's zone-based firewall — named groups of networks that firewall policies govern the traffic between. Matched against the Controller by name. The Controller's own built-in zones (External, Internal, …) can be named here and managed like any other, but unifig never creates or deletes one.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/zone" }
+    },
+    "firewall-policies": {
+      "title": "Firewall policies",
+      "description": "The rules governing traffic between a pair of zones. Matched against the Controller by name, and applied after the zones they name, so a file declaring a zone and a policy on it applies in one run.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/firewallPolicy" }
+    },
     "wan": {
       "title": "WAN slots",
       "description": "The Controller's internet uplinks. These are Settings, not Resources: the Controller has a fixed set of WAN slots, so unifig only ever updates one — it never creates, deletes or prunes a slot, and a slot this file leaves out is one it does not manage.",
@@ -85,6 +97,62 @@
           "minLength": 8,
           "maxLength": 64,
           "pattern": "^[ -~]+$"
+        }
+      }
+    },
+    "zone": {
+      "title": "Zone",
+      "description": "A named group of networks in the zone-based firewall.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "title": "Name",
+          "description": "The zone's name, as shown in the Controller. This is its natural key: unifig matches on it, so renaming a zone here means replacing it — unless it is one of the Controller's built-in zones, which unifig matches but never creates or deletes.",
+          "type": "string",
+          "minLength": 1
+        },
+        "networks": {
+          "title": "Networks",
+          "description": "The names of the networks this zone holds, each of which must be a network defined in this file. Stating the key makes this list the zone's membership, so a network you stop naming here is one the next apply takes out of the zone — and the plan says so before it does. Omit the key entirely to leave the Controller's own membership alone; write `networks: []` to say the zone holds none.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "firewallPolicy": {
+      "title": "Firewall policy",
+      "description": "A rule governing the traffic between a pair of zones.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "action", "source", "destination"],
+      "properties": {
+        "name": {
+          "title": "Name",
+          "description": "The policy's name, as shown in the Controller. This is its natural key.",
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "title": "Action",
+          "description": "What the policy does with the traffic it matches: allow it, block it silently, or reject it with an ICMP error the sender can see.",
+          "enum": ["allow", "block", "reject"]
+        },
+        "source": {
+          "title": "Source zone",
+          "description": "The name of the zone the traffic comes from. It may be a zone defined in this file or one the Controller already has, including a built-in zone such as External — which is why naming a zone that exists nowhere is reported when unifig reads the Controller, listing the zones the site really has, rather than offline.",
+          "type": "string",
+          "minLength": 1
+        },
+        "destination": {
+          "title": "Destination zone",
+          "description": "The name of the zone the traffic is going to, on the same terms as `source`.",
+          "type": "string",
+          "minLength": 1
         }
       }
     },

@@ -108,10 +108,11 @@ func createNetwork(desired config.Network, bound bindings) Change {
 			if err != nil {
 				return err
 			}
-			// A WLAN planned onto this network has been waiting for exactly
-			// this: until now there was no ID to attach it to. Recording it
-			// here is what lets the two apply in one pass.
-			bound.ids[desired.Name] = created.ID
+			// A WLAN planned onto this network, or a Zone planned to hold it,
+			// has been waiting for exactly this: until now there was no ID to
+			// attach it to. Recording it here is what lets them apply in one
+			// pass.
+			bound.networks[desired.Name] = created.ID
 			return nil
 		},
 	}

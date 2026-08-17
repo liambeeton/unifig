@@ -71,7 +71,7 @@ require-connection:
 run: require-connection build ## Run unifig against a live Controller, e.g. make run ARGS="export"
 	@./$(BINARY) $(ARGS)
 
-# Read-only against the router: three GETs and nothing else. It scrubs what it
+# Read-only against the router: one GET per recorded file and nothing else. It scrubs what it
 # reads before writing it (tools/record-udr/scrub.go), and stops to make the
 # operator read the diff. See e2e/testdata/udr/README.md.
 .PHONY: record-udr

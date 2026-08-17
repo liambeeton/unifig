@@ -40,12 +40,20 @@ import (
 // The settings pair is not symmetrical, and that is the Internal API rather
 // than a simplification here: reading one setting means asking for all of them,
 // while writing one names the key in the path.
+// The firewall pair sits under a different tree from everything else — the
+// Controller's v2 API — and answers with a bare JSON array rather than the
+// {meta, data} envelope the rest of the Internal API wraps everything in. Both
+// differences are the Controller's, not a simplification here, and the stand-in
+// reproduces them exactly: a fixture that wrapped a zone list in an envelope
+// would be a fixture unifig's own client cannot read.
 const (
 	sysinfoPath     = "/proxy/network/api/s/default/stat/sysinfo"
 	networkconfPath = "/proxy/network/api/s/default/rest/networkconf"
 	wlanconfPath    = "/proxy/network/api/s/default/rest/wlanconf"
 	settingPath     = "/proxy/network/api/s/default/get/setting"
 	setDoHPath      = "/proxy/network/api/s/default/set/setting/doh"
+	zonePath        = "/proxy/network/v2/api/site/default/firewall/zone"
+	policyPath      = "/proxy/network/v2/api/site/default/firewall-policies"
 )
 
 // dohKey is the Controller's own name for the Encrypted DNS setting — how it is
@@ -69,6 +77,15 @@ type replay struct {
 	// settings is the same for the settings collection, which unifig reads
 	// whole and writes one key of.
 	settings []map[string]any
+	// zones and policies are the zone-based firewall, and the first collections
+	// here that unifig creates and deletes rather than only updating — so the
+	// stand-in keeps them the way the Controller does, with an ID handed out on
+	// create and the entry gone on delete.
+	zones    []map[string]any
+	policies []map[string]any
+	// issued counts the IDs this stand-in has handed out, so that two objects
+	// created in one apply cannot collide.
+	issued int
 	// wlans and sysinfo are served exactly as recorded. Nothing in the Settings
 	// tests writes to either, and a recording that could not be trusted to come
 	// back unchanged would be a poor witness for the one that does.
@@ -88,6 +105,8 @@ func startReplay(t *testing.T) *replay {
 	r.settings = recordedEntries(t, "setting.json")
 	r.wlans = recordedBody(t, "wlanconf.json")
 	r.sysinfo = recordedBody(t, "sysinfo.json")
+	r.zones = recordedList(t, "firewallzone.json")
+	r.policies = recordedList(t, "firewallpolicy.json")
 
 	server := httptest.NewTLSServer(http.HandlerFunc(r.serve))
 	t.Cleanup(server.Close)
@@ -125,10 +144,16 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 		r.write(w, r.collection())
 	case req.Method == http.MethodPut && strings.HasPrefix(req.URL.Path, networkconfPath+"/"):
 		r.update(w, req, strings.TrimPrefix(req.URL.Path, networkconfPath+"/"))
+	case req.Method == http.MethodPost && req.URL.Path == networkconfPath:
+		r.create(w, req)
 	case req.Method == http.MethodGet && req.URL.Path == settingPath:
 		r.write(w, r.recordedSettings())
 	case req.Method == http.MethodPut && req.URL.Path == setDoHPath:
 		r.setDoH(w, req)
+	case req.URL.Path == zonePath || strings.HasPrefix(req.URL.Path, zonePath+"/"):
+		r.collectionV2(w, req, zonePath, &r.zones)
+	case req.URL.Path == policyPath || strings.HasPrefix(req.URL.Path, policyPath+"/"):
+		r.collectionV2(w, req, policyPath, &r.policies)
 	default:
 		r.t.Errorf("unifig asked the Controller for something the recording does not have: %s %s",
 			req.Method, req.URL.Path)
@@ -161,6 +186,31 @@ func (r *replay) update(w http.ResponseWriter, req *http.Request, id string) {
 
 	r.t.Errorf("unifig updated a networkconf entry the Controller does not have: %s", id)
 	http.Error(w, "not found", http.StatusNotFound)
+}
+
+// create adds a networkconf entry the way the Controller does, handing out an
+// ID as it goes.
+//
+// The WAN suite never reaches this — a slot is a Setting and nothing creates one
+// — and it is here for the firewall suite, where a zone holding a network the
+// same file declares is the case worth testing: the network's ID does not exist
+// when the plan is made, so the zone's write has to read it at the moment it
+// runs. Without a create here there would be no new ID to read.
+func (r *replay) create(w http.ResponseWriter, req *http.Request) {
+	var sent map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&sent); err != nil {
+		r.t.Errorf("unifig sent a networkconf create that is not JSON: %v", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.issued++
+	sent["_id"] = fmt.Sprintf("6613a1f0c4b2d90a5e1f6%03d", r.issued)
+	sent["site_id"] = "6613a1f0c4b2d90a5e1f0000"
+	r.entries = append(r.entries, sent)
+	r.write(w, data(sent))
 }
 
 func (r *replay) collection() json.RawMessage {
@@ -207,6 +257,96 @@ func (r *replay) setDoH(w http.ResponseWriter, req *http.Request) {
 
 	r.t.Errorf("unifig wrote an Encrypted DNS setting to a Controller that does not have one")
 	http.Error(w, "not found", http.StatusNotFound)
+}
+
+// collectionV2 serves one of the Controller's v2 collections — the firewall
+// zones or the firewall policies — with the whole lifecycle unifig uses on them:
+// list, create, update, delete.
+//
+// It is the first stand-in here that creates and deletes rather than only
+// updating, because zones and policies are the first Resources tested this way
+// rather than Settings. That difference is the whole point of these tests: an ID
+// is handed out on create, and it has to be one a policy created later in the
+// same apply can be pointed at, which is exactly what unifig's dependency
+// ordering exists to arrange.
+//
+// Responses are bare, with no {meta, data} envelope, because that is what the
+// Controller's v2 API answers with.
+func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base string, held *[]map[string]any) {
+	id := strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, base), "/")
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	switch {
+	case req.Method == http.MethodGet && id == "":
+		r.writeJSON(w, *held)
+
+	case req.Method == http.MethodPost && id == "":
+		var sent map[string]any
+		if !r.decode(w, req, &sent, base) {
+			return
+		}
+		r.issued++
+		sent["_id"] = fmt.Sprintf("6613a1f0c4b2d90a5e1f9%03d", r.issued)
+		sent["site_id"] = "6613a1f0c4b2d90a5e1f0000"
+		*held = append(*held, sent)
+		r.writeJSON(w, sent)
+
+	case req.Method == http.MethodPut && id != "":
+		var sent map[string]any
+		if !r.decode(w, req, &sent, base) {
+			return
+		}
+		for i, entry := range *held {
+			if entry["_id"] != id {
+				continue
+			}
+			// Replaced rather than merged, the way the Controller replaces its
+			// own — which is what makes "unifig writes the whole object back"
+			// something this suite can actually check.
+			sent["_id"] = id
+			(*held)[i] = sent
+			r.writeJSON(w, sent)
+			return
+		}
+		r.t.Errorf("unifig updated something at %s the Controller does not have: %s", base, id)
+		http.NotFound(w, req)
+
+	case req.Method == http.MethodDelete && id != "":
+		for i, entry := range *held {
+			if entry["_id"] != id {
+				continue
+			}
+			*held = append((*held)[:i], (*held)[i+1:]...)
+			r.writeJSON(w, map[string]any{})
+			return
+		}
+		r.t.Errorf("unifig deleted something at %s the Controller does not have: %s", base, id)
+		http.NotFound(w, req)
+
+	default:
+		r.t.Errorf("unifig made a request the recording does not have: %s %s", req.Method, req.URL.Path)
+		http.NotFound(w, req)
+	}
+}
+
+func (r *replay) decode(w http.ResponseWriter, req *http.Request, into any, base string) bool {
+	if err := json.NewDecoder(req.Body).Decode(into); err != nil {
+		r.t.Errorf("unifig sent a %s request body that is not JSON: %v", base, err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+func (r *replay) writeJSON(w http.ResponseWriter, body any) {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		r.t.Errorf("encoding a recorded response: %v", err)
+		return
+	}
+	r.write(w, encoded)
 }
 
 func (r *replay) write(w http.ResponseWriter, body json.RawMessage) {
@@ -509,6 +649,176 @@ func (r *replay) withoutEncryptedDNS(t *testing.T) {
 	r.settings = slices.DeleteFunc(r.settings, func(setting map[string]any) bool {
 		return setting["key"] == dohKey
 	})
+}
+
+// liveZones is the zones as the stand-in holds them now — how a firewall test
+// checks what an apply actually did, the way replay.slot does for an uplink.
+func (r *replay) liveZones(t *testing.T) []map[string]any {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.zones)
+}
+
+func (r *replay) livePolicies(t *testing.T) []map[string]any {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.policies)
+}
+
+// zoneNamed is one zone by the name unifig matches it by, and fails the test
+// when the Controller does not hold exactly one — the stand-in's counterpart of
+// rig.liveWLAN.
+func (r *replay) zoneNamed(t *testing.T, name string) map[string]any {
+	t.Helper()
+	var found []map[string]any
+	for _, zone := range r.liveZones(t) {
+		if zone["name"] == name {
+			found = append(found, zone)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("the Controller has %d zones named %q, want exactly 1", len(found), name)
+	}
+	return found[0]
+}
+
+func (r *replay) policyNamed(t *testing.T, name string) map[string]any {
+	t.Helper()
+	var found []map[string]any
+	for _, policy := range r.livePolicies(t) {
+		if policy["name"] == name {
+			found = append(found, policy)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("the Controller has %d firewall policies named %q, want exactly 1", len(found), name)
+	}
+	return found[0]
+}
+
+// zoneMembers names the networks a zone holds, translated out of the Controller
+// IDs it stores them as.
+//
+// A member the recording has no network for comes back as its raw ID rather than
+// being dropped, because the tests that use this are about what unifig leaves
+// alone: a zone whose WAN membership silently vanished from this list would look
+// exactly like one unifig correctly preserved.
+func (r *replay) zoneMembers(t *testing.T, name string) []string {
+	t.Helper()
+	ids, _ := r.zoneNamed(t, name)["network_ids"].([]any)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	names := make([]string, 0, len(ids))
+	for _, raw := range ids {
+		id, _ := raw.(string)
+		named := id
+		for _, entry := range r.entries {
+			if entry["_id"] == id {
+				if name, ok := entry["name"].(string); ok {
+					named = name
+				}
+			}
+		}
+		names = append(names, named)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// seedZone puts a zone on the Controller without going through unifig — the
+// stand-in's version of the rig seeding through the Controller's own API.
+func (r *replay) seedZone(t *testing.T, name string, networks []string, fields map[string]any) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	ids := make([]string, 0, len(networks))
+	for _, wanted := range networks {
+		for _, entry := range r.entries {
+			if entry["name"] == wanted {
+				id, _ := entry["_id"].(string)
+				ids = append(ids, id)
+			}
+		}
+	}
+
+	r.issued++
+	zone := map[string]any{
+		"_id":         fmt.Sprintf("6613a1f0c4b2d90a5e1f8%03d", r.issued),
+		"name":        name,
+		"network_ids": ids,
+		"site_id":     "6613a1f0c4b2d90a5e1f0000",
+	}
+	for field, value := range fields {
+		zone[field] = value
+	}
+	r.zones = append(r.zones, zone)
+}
+
+// seedPolicy is the same for a firewall policy, stated in the zone names a test
+// reads rather than in the IDs the Controller stores.
+func (r *replay) seedPolicy(t *testing.T, name, action, source, destination string, fields map[string]any) {
+	t.Helper()
+	zones := map[string]string{}
+	for _, zone := range r.liveZones(t) {
+		id, _ := zone["_id"].(string)
+		named, _ := zone["name"].(string)
+		zones[named] = id
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.issued++
+	policy := map[string]any{
+		"_id":         fmt.Sprintf("6613a1f0c4b2d90a5e1f7%03d", r.issued),
+		"name":        name,
+		"action":      action,
+		"enabled":     true,
+		"protocol":    "all",
+		"schedule":    map[string]any{"mode": "ALWAYS", "time_all_day": true},
+		"source":      map[string]any{"zone_id": zones[source], "matching_target": "ANY"},
+		"destination": map[string]any{"zone_id": zones[destination], "matching_target": "ANY"},
+		"site_id":     "6613a1f0c4b2d90a5e1f0000",
+	}
+	for field, value := range fields {
+		policy[field] = value
+	}
+	r.policies = append(r.policies, policy)
+}
+
+// zoneEnds names the zones a policy governs, translated out of the IDs it stores
+// them as — what a test checks an apply against.
+func (r *replay) zoneEnds(t *testing.T, name string) (source, destination string) {
+	t.Helper()
+	policy := r.policyNamed(t, name)
+
+	names := map[string]string{}
+	for _, zone := range r.liveZones(t) {
+		id, _ := zone["_id"].(string)
+		named, _ := zone["name"].(string)
+		names[id] = named
+	}
+
+	end := func(field string) string {
+		side, _ := policy[field].(map[string]any)
+		id, _ := side["zone_id"].(string)
+		return names[id]
+	}
+	return end("source"), end("destination")
+}
+
+// recordedList reads a recorded v2 response, which is a bare array rather than
+// the envelope the rest of the Internal API answers with.
+func recordedList(t *testing.T, name string) []map[string]any {
+	t.Helper()
+	var list []map[string]any
+	if err := json.Unmarshal(recordedBody(t, name), &list); err != nil {
+		t.Fatalf("reading the recorded %s: %v", name, err)
+	}
+	return list
 }
 
 // customServer is one entry of the Controller's custom_servers, in the shape

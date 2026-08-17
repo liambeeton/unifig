@@ -59,6 +59,59 @@ func checkReferences(cfg Config, idx index) []Problem {
 		}
 	}
 
+	// Zones and Firewall Policies are checked for duplicates and for nothing
+	// else, which is the whole of what this file can honestly say about them.
+	//
+	// A policy names the pair of Zones it governs, and that reference is not
+	// resolved here the way a WLAN's network is. The difference is what a Zone
+	// name is allowed to be: the policies worth writing reach the Controller's
+	// own built-in Zones — `External` is the internet — and those are matchable
+	// but never created or pruned by unifig, so they are not in the file and
+	// could not be. Checking against the file alone would reject the commonest
+	// policy there is; keeping a list of built-in names here would be the guess
+	// about somebody else's product that ADR-0005 exists to avoid. So the
+	// reference is resolved when unifig reads the Controller, against the Zones
+	// the site really has, exactly as a WAN slot's is (ADR-0010).
+	zoned := make(map[string]bool, len(cfg.Zones))
+	for i, zone := range cfg.Zones {
+		if zoned[zone.Name] {
+			at := idx.field("zones", i, "name")
+			problems = append(problems, Problem{
+				Line: at.line, Path: at.path,
+				Message: alreadyDefined("zone", "zones", zone.Name),
+			})
+		}
+		zoned[zone.Name] = true
+
+		// A zone's membership is checked against the file exactly as a WLAN's
+		// network is, and for the same reason: it names a network, so it can
+		// name one that is not there. The zone's own name is the thing that
+		// cannot be checked offline, because a built-in zone is not in the file
+		// — the two halves of a zone are not alike, and only one of them is
+		// resolvable here.
+		for j, network := range zone.Networks {
+			if defined[network] {
+				continue
+			}
+			at := idx.nestedEntry("zones", i, "networks", j)
+			problems = append(problems, Problem{Line: at.line, Path: at.path, Message: fmt.Sprintf(
+				"no network named %q is defined in this file; %s",
+				network, availableNetworks(networkNames))})
+		}
+	}
+
+	governed := make(map[string]bool, len(cfg.FirewallPolicies))
+	for i, policy := range cfg.FirewallPolicies {
+		if governed[policy.Name] {
+			at := idx.field("firewall-policies", i, "name")
+			problems = append(problems, Problem{
+				Line: at.line, Path: at.path,
+				Message: alreadyDefined("firewall policy", "firewall policies", policy.Name),
+			})
+		}
+		governed[policy.Name] = true
+	}
+
 	// A WAN slot is checked for the same ambiguity as a Resource name, and the
 	// reason it needs its own check is that its key is not a name the operator
 	// chose: the Controller has exactly one of each slot, so two entries for one

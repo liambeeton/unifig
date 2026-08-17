@@ -14,10 +14,28 @@ import (
 // expected values are independent literals: the demo Controller's built-in
 // Default network, and networks the rig seeds through the Controller's API.
 type exportedConfig struct {
-	Networks     []exportedNetwork     `yaml:"networks"`
-	WLANs        []exportedWLAN        `yaml:"wlans"`
-	WAN          []exportedWANSlot     `yaml:"wan"`
-	EncryptedDNS *exportedEncryptedDNS `yaml:"encrypted-dns"`
+	Networks         []exportedNetwork        `yaml:"networks"`
+	WLANs            []exportedWLAN           `yaml:"wlans"`
+	Zones            []exportedZone           `yaml:"zones"`
+	FirewallPolicies []exportedFirewallPolicy `yaml:"firewall-policies"`
+	WAN              []exportedWANSlot        `yaml:"wan"`
+	EncryptedDNS     *exportedEncryptedDNS    `yaml:"encrypted-dns"`
+}
+
+// exportedZone's Networks is a pointer to a slice so that a test can tell the
+// two absences apart: no `networks:` key at all leaves the zone's membership
+// alone, while `networks: []` says it holds none. Everywhere else in this file a
+// plain slice will do, because nowhere else is the distinction load-bearing.
+type exportedZone struct {
+	Name     string    `yaml:"name"`
+	Networks *[]string `yaml:"networks"`
+}
+
+type exportedFirewallPolicy struct {
+	Name        string `yaml:"name"`
+	Action      string `yaml:"action"`
+	Source      string `yaml:"source"`
+	Destination string `yaml:"destination"`
 }
 
 type exportedNetwork struct {

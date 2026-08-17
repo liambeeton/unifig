@@ -621,6 +621,204 @@ func rawRecording(t *testing.T) recording {
 		networkconf: parse(t, rawNetworkconf),
 		wlanconf:    parse(t, rawWlanconf),
 		setting:     parse(t, rawSetting),
+		zones:       parseList(t, rawFirewallZones),
+		policies:    parseList(t, rawFirewallPolicies),
+	}
+}
+
+func parseList(t *testing.T, body string) list {
+	t.Helper()
+	entries, err := readList([]byte(body))
+	if err != nil {
+		t.Fatalf("reading a recorded list: %v", err)
+	}
+	return entries
+}
+
+// The firewall as a real router hands it over: the Controller's own built-in
+// zones and the default policy between two of them, alongside a zone and a
+// policy the operator made and named after their household.
+const rawFirewallZones = `[
+  {
+    "_id": "65f1c0a1d4e2b30af1c00b01",
+    "site_id": "65f1c0a1d4e2b30af1c00000",
+    "name": "Internal",
+    "attr_no_delete": true,
+    "network_ids": ["65f1c0a1d4e2b30af1c00a01", "65f1c0a1d4e2b30af1c00a02"]
+  },
+  {
+    "_id": "65f1c0a1d4e2b30af1c00b02",
+    "site_id": "65f1c0a1d4e2b30af1c00000",
+    "name": "External",
+    "attr_no_delete": true,
+    "network_ids": ["65f1c0a1d4e2b30af1c00a03"]
+  },
+  {
+    "_id": "65f1c0a1d4e2b30af1c00b03",
+    "site_id": "65f1c0a1d4e2b30af1c00000",
+    "name": "Ollie's room",
+    "network_ids": ["65f1c0a1d4e2b30af1c00a02"]
+  }
+]`
+
+const rawFirewallPolicies = `[
+  {
+    "_id": "65f1c0a1d4e2b30af1c00c01",
+    "site_id": "65f1c0a1d4e2b30af1c00000",
+    "name": "Internal to External",
+    "action": "ALLOW",
+    "predefined": true,
+    "enabled": true,
+    "protocol": "all",
+    "source": { "zone_id": "65f1c0a1d4e2b30af1c00b01", "matching_target": "ANY" },
+    "destination": { "zone_id": "65f1c0a1d4e2b30af1c00b02", "matching_target": "ANY" }
+  },
+  {
+    "_id": "65f1c0a1d4e2b30af1c00c02",
+    "site_id": "65f1c0a1d4e2b30af1c00000",
+    "name": "Ollie off the internet at bedtime",
+    "action": "BLOCK",
+    "enabled": true,
+    "protocol": "all",
+    "source": { "zone_id": "65f1c0a1d4e2b30af1c00b03", "matching_target": "ANY" },
+    "destination": { "zone_id": "65f1c0a1d4e2b30af1c00b02", "matching_target": "ANY" }
+  }
+]`
+
+// The firewall is recorded on the same terms as everything else: what only a
+// router can supply is the set of zones and policies the Controller ships for
+// itself, which is exactly what unifig's built-in exemption reads. A zone the
+// operator made is named after their household and is dropped rather than
+// scrubbed — the tests that want a custom zone seed their own.
+func TestScrubKeepsTheControllersOwnZonesAndDropsTheOperatorsOwn(t *testing.T) {
+	out := scrubbed(t)
+
+	var kept []string
+	for _, zone := range out.zones {
+		name, _ := zone["name"].(string)
+		kept = append(kept, name)
+	}
+	slices.Sort(kept)
+	if !slices.Equal(kept, []string{"External", "Internal"}) {
+		t.Errorf("the recording holds zones %v, want just the Controller's own", kept)
+	}
+
+	for _, zone := range out.zones {
+		if zone["attr_no_delete"] != true {
+			t.Errorf("a kept zone is not marked undeletable, so unifig's exemption would not spare it: %v", zone)
+		}
+	}
+}
+
+func TestScrubKeepsTheControllersOwnPoliciesAndDropsTheOperatorsOwn(t *testing.T) {
+	out := scrubbed(t)
+
+	if len(out.policies) != 1 {
+		t.Fatalf("the recording holds %d policies, want just the Controller's own: %v", len(out.policies), out.policies)
+	}
+	if out.policies[0]["name"] != "Internal to External" {
+		t.Errorf("the kept policy is %v, want the predefined one", out.policies[0]["name"])
+	}
+	if out.policies[0]["predefined"] != true {
+		t.Errorf("the kept policy is not marked predefined, so unifig's exemption would not spare it: %v", out.policies[0])
+	}
+}
+
+// A zone's membership survives as a reference that resolves. The router's own
+// LANs are dropped in favour of the committed one, so a member that named one of
+// them is pointed at the LAN this recording does hold — otherwise every test
+// about what a zone holds would be testing a dangling id.
+func TestScrubPointsAZonesMembershipAtTheNetworksTheRecordingKeeps(t *testing.T) {
+	out := scrubbed(t)
+
+	held := map[string]bool{}
+	for _, entry := range out.networkconf.Data {
+		held[idOf(entry)] = true
+	}
+
+	for _, zone := range out.zones {
+		ids, _ := zone["network_ids"].([]any)
+		if len(ids) == 0 {
+			t.Errorf("the %v zone came back holding nothing, so it says less than the router did", zone["name"])
+		}
+		for _, raw := range ids {
+			id, _ := raw.(string)
+			if !held[id] {
+				t.Errorf("the %v zone holds %q, which is not a network in this recording", zone["name"], id)
+			}
+		}
+	}
+}
+
+// The two built-ins hold different things, and the difference is the whole point
+// of the fixture: Internal holds a LAN, External holds the uplink. A scrub that
+// folded both onto the same network would leave the suite unable to state what
+// unifig does with a zone member it cannot name.
+func TestScrubKeepsTheUplinkInTheExternalZoneAndTheLANInTheInternalOne(t *testing.T) {
+	out := scrubbed(t)
+
+	uplinks := map[string]bool{}
+	for _, entry := range out.networkconf.Data {
+		if entry["purpose"] == "wan" {
+			uplinks[idOf(entry)] = true
+		}
+	}
+
+	for _, zone := range out.zones {
+		ids, _ := zone["network_ids"].([]any)
+		if len(ids) != 1 {
+			t.Fatalf("the %v zone holds %d networks, want 1", zone["name"], len(ids))
+		}
+		id, _ := ids[0].(string)
+		switch zone["name"] {
+		case "External":
+			if !uplinks[id] {
+				t.Errorf("the External zone holds %q, which is not this recording's uplink", id)
+			}
+		case "Internal":
+			if uplinks[id] {
+				t.Errorf("the Internal zone holds the uplink, which is not what the router said")
+			}
+		}
+	}
+}
+
+// A policy names its zones by id, and those ids have to be the ones the zones
+// were recorded under. One substitution table does that for free — this states
+// it, because a policy pointing at a zone that is not in the recording would
+// describe a firewall nobody has.
+func TestScrubKeepsAPolicyPointingAtTheZonesItGoverns(t *testing.T) {
+	out := scrubbed(t)
+
+	zones := map[string]string{}
+	for _, zone := range out.zones {
+		name, _ := zone["name"].(string)
+		zones[idOf(zone)] = name
+	}
+
+	policy := out.policies[0]
+	if got := zones[zoneEnd(policy, "source")]; got != "Internal" {
+		t.Errorf("the policy's source zone is %q, want Internal", got)
+	}
+	if got := zones[zoneEnd(policy, "destination")]; got != "External" {
+		t.Errorf("the policy's destination zone is %q, want External", got)
+	}
+}
+
+// The household's own words are what this program exists to keep out, and a
+// custom zone is full of them.
+func TestScrubWritesNothingTheOperatorNamedTheirFirewallAfter(t *testing.T) {
+	out := scrubbed(t)
+
+	written, err := json.Marshal(map[string]any{"zones": out.zones, "policies": out.policies})
+	if err != nil {
+		t.Fatalf("encoding the scrubbed firewall: %v", err)
+	}
+	for _, theirs := range []string{"Ollie", "bedtime"} {
+		if strings.Contains(string(written), theirs) {
+			t.Errorf("the recording still holds %q, which is the operator's own word for their firewall:\n%s",
+				theirs, written)
+		}
 	}
 }
 

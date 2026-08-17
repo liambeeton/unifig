@@ -29,7 +29,7 @@ On the UDR: UniFi OS → Control Plane → Admins & Users → your admin → Cre
 
 One `unifig.yaml` describes the Controller's configuration. `examples/unifig.yaml` is a working starting point; `schema/unifig.schema.json` is the contract.
 
-Sections reconcile as they land. `networks`, `wlans`, `wan` and `encrypted-dns` are the sections every verb handles today; the rest of the v1 catalogue — firewall Zones and Policies, port forwards, DHCP reservations — follows.
+Sections reconcile as they land. `networks`, `wlans`, `zones`, `firewall-policies`, `wan` and `encrypted-dns` are the sections every verb handles today; the rest of the v1 catalogue — port forwards, DHCP reservations — follows.
 
 A WLAN names the network its clients join, and that reference is checked offline:
 
@@ -43,6 +43,16 @@ wlans:
   - name: Home IoT
     network: IoT                       # must be a network defined above
     passphrase: ${WIFI_IOT_PASSPHRASE} # never the passphrase itself — see below
+
+zones:
+  - name: Untrusted
+    networks: [IoT]                    # the whole membership, not an addition
+
+firewall-policies:
+  - name: IoT to internet
+    action: allow                      # allow, block or reject
+    source: Untrusted
+    destination: External              # a zone the Controller already has
 
 wan:
   - slot: WAN                          # the router's own name for the uplink
@@ -91,6 +101,28 @@ A resolver's `name` is its natural key within the section, so two cannot share o
 A resolver already on the Controller keeps everything unifig does not model, including whether it is switched on: rotating a stamp does not re-enable a resolver you turned off in the UI. One unifig adds is enabled, because a resolver stored and ignored is a config line that does nothing.
 
 Changing encrypted DNS is **not** a [Risky change](#risky-changes), and the line is deliberate: a bad stamp breaks name resolution, but the uplink stays up, the Controller stays reachable, and the fix is one field away. Risky is reserved for changes whose recovery could need physical access (`docs/adr/0012-encrypted-dns-is-a-singleton-setting.md`).
+
+### Zones and firewall policies
+
+A Zone groups networks; a Firewall Policy governs the traffic between a pair of Zones. Both are Resources matched by name, and apply in dependency order — a file declaring a network, a Zone holding it and a Policy governing that Zone works in one run.
+
+The Controller ships its **own** Zones (`External`, `Internal`, `Gateway`, …), and this is the first place that matters:
+
+- **You can name a built-in Zone and manage what is in it.** `- name: External` with a `networks:` list is an ordinary update.
+- **unifig never creates or deletes one**, `--prune` included. That exemption is read off the marker the Controller puts on the object, not from a list of names unifig keeps — so it stays correct on firmware this project has never seen (`docs/adr/0005-builtin-exemption-from-the-controller.md`).
+- **A Policy may name a Zone that is not in your file**, which is the common case: `destination: External` needs no `zones:` entry. The name is resolved against the Controller when unifig reads it, and a Zone that exists nowhere is reported with the Zones your site actually has.
+
+A Zone's `networks` follows the same rule as `servers` above — stating it states the whole membership — with one addition that is easy to get wrong and would be expensive:
+
+```
+  ~ zone "External"
+      networks: (none) -> "IoT"
+                this zone also holds something that is not one of this site's LANs, which unifig does not name or change
+```
+
+The built-in `External` Zone holds your WAN, and your config has no name for a WAN network. unifig therefore manages the members it *can* name and leaves the rest exactly where they are: stating the LANs in `External` does not detach your uplink from it. The plan says so, because a membership showing only part of the truth would otherwise read as one that empties the Zone.
+
+A Policy states its verdict and both ends, always — `action`, `source` and `destination` are required, because a policy that allowed or blocked nothing in particular is not a policy. Everything else about it (ports, addresses, schedules, logging) is the Controller's, and survives an apply untouched.
 
 Every verb that reads config takes an optional file argument, defaulting to `./unifig.yaml`:
 
@@ -355,7 +387,7 @@ A firmware whose encrypted DNS is in a mode unifig doesn't model gets the same t
 }
 ```
 
-`kind` is the managed type — `network`, `wlan`, `encrypted-dns`, `wan` — covering both the Resources unifig creates and deletes and the Settings it only updates. `name` is how unifig matched the change, and is `""` for a singleton Setting, which has nothing to match on. `risk` is present only on a change that needs individual confirmation.
+`kind` is the managed type — `network`, `wlan`, `zone`, `firewall-policy`, `encrypted-dns`, `wan` — covering both the Resources unifig creates and deletes and the Settings it only updates. `name` is how unifig matched the change, and is `""` for a singleton Setting, which has nothing to match on. `risk` is present only on a change that needs individual confirmation.
 
 Changes are listed in the order apply will run them, so a consumer reading the array is reading the sequence.
 
@@ -375,7 +407,9 @@ Requirements: Go for `make check`, plus Docker for `make e2e`. `make` installs i
 
 Tests drive the whole tool at the process boundary against a real dockerized Controller (see `docs/adr/0003-apikey-auth-os-gate.md` for the rig design). That suite is `make e2e`; `make test` runs everything else, skipping it. The Controller version pin lives in `e2e/rig_test.go` (`defaultControllerImage`) and in the CI matrix.
 
-The Settings are what that container cannot stand in for — with no gateway it has no WAN entries at all, and no container can be trusted to say what a Setting looks like on the firmware you actually run — so those tests run against recorded Controller responses served at the same base URL, through the same API-key header, to the same real binary (`e2e/replay_test.go`). The recordings live in `e2e/testdata/udr/`. `make record-udr` re-records them from a real router: read-only against the Controller, scrubbed by a program with tests rather than by a filter in prose (`tools/record-udr/`), and stopping to make you read the diff. The committed recording is from a real UDR running Network 10.5.67. `docs/adr/0008-wan-slots-replay-recorded-responses.md` explains the design and what the hardware confirmed; `docs/adr/0011-a-recording-carries-only-the-uplinks.md` explains how much of a recording has to be real; `docs/adr/0012-encrypted-dns-is-a-singleton-setting.md` covers the second Setting.
+The Settings are what that container cannot stand in for — with no gateway it has no WAN entries at all, and no container can be trusted to say what a Setting looks like on the firmware you actually run — so those tests run against recorded Controller responses served at the same base URL, through the same API-key header, to the same real binary (`e2e/replay_test.go`). The recordings live in `e2e/testdata/udr/`.
+
+The zone-based firewall is there for a blunter version of the same reason: the container does not have one. Its zone and policy collections are empty on every site including a freshly created one, and a zone create is refused outright — the feature belongs to a gateway, and no gateway is ever adopted. So Zones and Policies are tested against the recording too. Their fixtures are currently hand-written rather than captured from hardware, which `docs/adr/0013-the-firewall-cannot-be-tested-against-a-container.md` records as a debt: `make record-udr` now captures both endpoints, and the next run against a real UDR replaces them. `make record-udr` re-records them from a real router: read-only against the Controller, scrubbed by a program with tests rather than by a filter in prose (`tools/record-udr/`), and stopping to make you read the diff. The committed recording is from a real UDR running Network 10.5.67. `docs/adr/0008-wan-slots-replay-recorded-responses.md` explains the design and what the hardware confirmed; `docs/adr/0011-a-recording-carries-only-the-uplinks.md` explains how much of a recording has to be real; `docs/adr/0012-encrypted-dns-is-a-singleton-setting.md` covers the second Setting.
 
 Validate's tests are the exception, and deliberately so: it is offline by design, and requiring Docker to prove no Controller is needed would be an odd way to demonstrate it. They sit at the highest Docker-free seam instead — `cli.Run`, driven from an external test package in `internal/cli/` so they cannot reach past it.
 

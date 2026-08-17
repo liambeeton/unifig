@@ -346,6 +346,116 @@ func TestValidateCatchesDuplicateNetworkNames(t *testing.T) {
 	}
 }
 
+// A zone groups networks, and the networks it groups are checked against the
+// file exactly as a WLAN's network is.
+func TestValidateAcceptsAZoneGroupingNetworksTheFileDefines(t *testing.T) {
+	runValidate(t, `networks:
+  - name: IoT
+    vlan: 20
+  - name: Guest
+    vlan: 30
+zones:
+  - name: Untrusted
+    networks:
+      - IoT
+      - Guest
+`, nil).mustPass(t)
+}
+
+func TestValidateCatchesAZoneHoldingAnUndefinedNetwork(t *testing.T) {
+	runValidate(t, `networks:
+  - name: IoT
+    vlan: 20
+zones:
+  - name: Untrusted
+    networks:
+      - IoT
+      - Guset
+`, nil).mustFailWith(t, "line 8", "zones[0].networks[1]", `"Guset"`, `"IoT"`)
+}
+
+// ADR-0004 as usual: a zone that states no membership manages none, which is how
+// an operator names a built-in zone in order to write policies about it without
+// taking over what is in it.
+func TestValidateAcceptsAZoneThatManagesNoMembership(t *testing.T) {
+	runValidate(t, `zones:
+  - name: External
+`, nil).mustPass(t)
+}
+
+// The other half of that rule: an empty list is a statement, and it says the
+// zone should hold nothing.
+func TestValidateAcceptsAZoneStatedAsHoldingNothing(t *testing.T) {
+	runValidate(t, `zones:
+  - name: Quarantine
+    networks: []
+`, nil).mustPass(t)
+}
+
+func TestValidateCatchesDuplicateZoneNames(t *testing.T) {
+	runValidate(t, `zones:
+  - name: Untrusted
+  - name: Untrusted
+`, nil).mustFailWith(t, "line 3", "zones[1].name", `"Untrusted"`)
+}
+
+// A policy is its verdict and both of its ends, and the schema requires all
+// three: a policy that allowed or blocked nothing in particular is not one.
+func TestValidateAcceptsAFirewallPolicyBetweenTwoZones(t *testing.T) {
+	runValidate(t, `zones:
+  - name: Untrusted
+firewall-policies:
+  - name: Untrusted to internet
+    action: allow
+    source: Untrusted
+    destination: External
+`, nil).mustPass(t)
+}
+
+func TestValidateRejectsAFirewallPolicyMissingAnEnd(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: Half a rule
+    action: allow
+    source: Untrusted
+`, nil).mustFailWith(t, "firewall-policies[0]", "destination")
+}
+
+func TestValidateRejectsAVerdictUnifigDoesNotModel(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: Maybe
+    action: ponder
+    source: Untrusted
+    destination: External
+`, nil).mustFailWith(t, "line 3", "firewall-policies[0].action", `"ponder"`, `"block"`)
+}
+
+// The zone a policy names is deliberately not checked against the file. The
+// policies worth writing are mostly about the Controller's own built-in zones —
+// External is the internet — and those are matchable but never in the config, so
+// checking here would reject the commonest policy there is. It is resolved when
+// unifig reads the Controller instead (ADR-0010's rule for WAN slots).
+func TestValidateAcceptsAPolicyNamingAZoneOnlyTheControllerHas(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: Guests out
+    action: allow
+    source: Internal
+    destination: External
+`, nil).mustPass(t)
+}
+
+func TestValidateCatchesDuplicateFirewallPolicyNames(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: Twice
+    action: allow
+    source: Internal
+    destination: External
+  - name: Twice
+    action: block
+    source: Internal
+    destination: External
+`, nil).mustFailWith(t, "line 6", "firewall-policies[1].name", `"Twice"`)
+}
+
 // A WAN slot is a Setting, and its key is the Controller's own name for a
 // physical uplink rather than a name the operator chose — so the file names the
 // slot it means, and unifig only ever updates it.

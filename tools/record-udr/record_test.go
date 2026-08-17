@@ -117,6 +117,11 @@ func bodyFor(path string) string {
 		return rawSysinfo
 	case strings.HasSuffix(path, "networkconf"):
 		return rawNetworkconf
+	// The v2 tree answers with a bare array and no envelope, which is the shape
+	// this fake Controller has to reproduce: a recorder that only ever met
+	// enveloped responses would fail on the first real firewall endpoint.
+	case strings.Contains(path, "/v2/api/"):
+		return `[]`
 	default:
 		return rawWlanconf
 	}

@@ -243,6 +243,13 @@ func (i index) nestedField(section, list string, entry int, name string) locatio
 	return i.at([]string{section, list, strconv.Itoa(entry), name})
 }
 
+// nestedEntry locates one item of a list belonging to one entry of a section,
+// e.g. zones[0].networks[1] — a bare value rather than a named field, which is
+// what a list of names is.
+func (i index) nestedEntry(section string, entry int, list string, item int) location {
+	return i.at([]string{section, strconv.Itoa(entry), list, strconv.Itoa(item)})
+}
+
 func jsonPointer(tokens []string) string {
 	var b strings.Builder
 	for _, token := range tokens {

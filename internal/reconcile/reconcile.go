@@ -101,10 +101,12 @@ var actions = map[Action]struct {
 type Kind string
 
 const (
-	Network      Kind = "network"
-	WLAN         Kind = "wlan"
-	EncryptedDNS Kind = "encrypted-dns"
-	WANSlot      Kind = "wan"
+	Network        Kind = "network"
+	WLAN           Kind = "wlan"
+	Zone           Kind = "zone"
+	FirewallPolicy Kind = "firewall-policy"
+	EncryptedDNS   Kind = "encrypted-dns"
+	WANSlot        Kind = "wan"
 )
 
 // kinds is what the rest of the package needs to know about a managed type:
@@ -114,9 +116,13 @@ const (
 // The order is not cosmetic, because apply executes a plan in the order it
 // printed and the two therefore cannot disagree. Among Resources it is
 // dependency distance — a network references nothing, a WLAN references the
-// network its clients join — so building goes from the ground up. The direction
-// flips for deletions, because the Controller will not let go of something
-// still referenced.
+// network its clients join, a Zone references the networks it holds, a Firewall
+// Policy references the Zones on either side of it — so building goes from the
+// ground up. The direction flips for deletions, because the Controller will not
+// let go of something still referenced.
+//
+// WLANs and Zones both reference networks and neither references the other, so
+// which of them comes first is arbitrary; they are ordered as they were added.
 //
 // A Setting references nothing and nothing references it, so its place is
 // decided by what a mistake costs instead. The WAN slot goes last, which means
@@ -135,10 +141,12 @@ var kinds = map[Kind]struct {
 	order     int
 	one, many string
 }{
-	Network:      {order: 0, one: "network", many: "networks"},
-	WLAN:         {order: 1, one: "WLAN", many: "WLANs"},
-	EncryptedDNS: {order: 2, one: "Encrypted DNS setting", many: "Encrypted DNS settings"},
-	WANSlot:      {order: 3, one: "WAN slot", many: "WAN slots"},
+	Network:        {order: 0, one: "network", many: "networks"},
+	WLAN:           {order: 1, one: "WLAN", many: "WLANs"},
+	Zone:           {order: 2, one: "zone", many: "zones"},
+	FirewallPolicy: {order: 3, one: "firewall policy", many: "firewall policies"},
+	EncryptedDNS:   {order: 4, one: "Encrypted DNS setting", many: "Encrypted DNS settings"},
+	WANSlot:        {order: 5, one: "WAN slot", many: "WAN slots"},
 }
 
 // Options are the choices a verb makes on the operator's behalf for a whole
@@ -221,55 +229,108 @@ type Field struct {
 // Empty reports whether the Controller already matches the config.
 func (p Plan) Empty() bool { return len(p.Changes) == 0 }
 
-// bindings is how the engine moves between a network's natural key and the
+// bindings is how the engine moves between a Resource's natural key and the
 // Controller ID that references to it need — the stored IDs ADR-0001 keeps out
 // of the config file entirely, held where only this package can reach them.
 //
 // Both directions live here because they are two halves of one table and are
-// wanted at opposite ends of the same job: a name is what a WLAN's config
-// states and its plan prints, an ID is what the Controller stores.
+// wanted at opposite ends of the same job: a name is what a WLAN's config states
+// and its plan prints, an ID is what the Controller stores.
 //
 // The name-to-ID half is the one that makes dependency-ordered apply work. A
 // WLAN names the network its clients join, but the Controller wants that
 // network's ID, and when the network is being created in the same apply the ID
 // does not exist at the moment the plan is made. So the map is seeded from the
-// live Controller while planning, each network create writes its new ID into it
-// as it lands, and a WLAN's write reads it at the moment it runs rather than the
+// live Controller while planning, each create writes its new ID into it as it
+// lands, and a reference's write reads it at the moment it runs rather than the
 // moment it was planned. That, plus the order of the plan, is the whole of it.
+//
+// Two kinds of thing are bound rather than one, because references run two deep:
+// a Zone names networks and a Firewall Policy names Zones, so a file declaring a
+// network, a zone holding it and a policy governing it applies in a single pass
+// on exactly the same mechanism.
 type bindings struct {
-	// ids maps a network's name to its Controller ID, and grows during apply.
-	ids map[string]string
-	// names maps the other way, and is fixed once the plan is made — a network
-	// created during an apply is not one any live WLAN can already be on.
-	names map[string]string
+	// networks maps a network's name to its Controller ID, and grows during
+	// apply.
+	networks map[string]string
+	// networkNames maps the other way, and is fixed once the plan is made — a
+	// network created during an apply is not one any live WLAN or Zone can
+	// already be on.
+	networkNames map[string]string
+	// zones and zonesByID are the same pair for Zones: seeded from the live
+	// Controller, and grown by each zone create so a policy planned onto a new
+	// zone can find it. Both directions are kept for the same reason the
+	// networks' are — a policy states its ends as names and the Controller
+	// stores them as IDs, so each direction is wanted at one end of the job.
+	zones     map[string]string
+	zonesByID map[string]string
 }
 
 func newBindings(live []unifi.Network) bindings {
 	bound := bindings{
-		ids:   make(map[string]string, len(live)),
-		names: make(map[string]string, len(live)),
+		networks:     make(map[string]string, len(live)),
+		networkNames: make(map[string]string, len(live)),
+		zones:        map[string]string{},
+		zonesByID:    map[string]string{},
 	}
 	for _, network := range live {
-		bound.ids[network.Name] = network.ID
-		bound.names[network.ID] = network.Name
+		bound.networks[network.Name] = network.ID
+		bound.networkNames[network.ID] = network.Name
 	}
 	return bound
 }
 
+// bindZones seeds the Zone half from the live Controller, once the zones have
+// been read. It is separate from newBindings because the two collections are
+// read at different points and only some reconciles read the zones at all.
+func (b bindings) bindZones(live []unifi.FirewallZone) {
+	for _, zone := range live {
+		b.zones[zone.Name] = zone.ID
+		b.zonesByID[zone.ID] = zone.Name
+	}
+}
+
+// zoneName is the name unifig knows a zone by, and empty for an ID that is not
+// one of the zones this site has. Only the live zones are in it: a zone created
+// during an apply is not one any live policy can already point at.
+func (b bindings) zoneName(id string) string { return b.zonesByID[id] }
+
 // networkID is the Controller ID of the network with this name, or the error
-// saying there is none.
-func (b bindings) networkID(name string) (string, error) {
-	id := b.ids[name]
+// saying there is none. The clause says what the network was wanted for, since
+// that is the part of the sentence an operator needs in order to know which line
+// of their file to look at.
+func (b bindings) networkID(name, wanted string) (string, error) {
+	id := b.networks[name]
 	if id == "" {
-		return "", fmt.Errorf(
-			"the Controller has no network named %q for this WLAN's clients to join", name)
+		return "", fmt.Errorf("the Controller has no network named %q %s", name, wanted)
 	}
 	return id, nil
 }
 
 // networkName is the name unifig knows a network by, or empty when the ID is
 // not one of the networks unifig manages.
-func (b bindings) networkName(id string) string { return b.names[id] }
+func (b bindings) networkName(id string) string { return b.networkNames[id] }
+
+// zoneID is the Controller ID of the zone with this name, or the error saying
+// there is none — listing the zones the site really has, because a policy naming
+// a zone that exists nowhere is most often a misspelling of a built-in one.
+func (b bindings) zoneID(name string) (string, error) {
+	id := b.zones[name]
+	if id == "" {
+		return "", noSuchZone(name, b.zoneNames())
+	}
+	return id, nil
+}
+
+// zoneNames is every zone unifig can resolve a reference to, in a stable order.
+func (b bindings) zoneNames() []string {
+	names := make([]string, 0, len(b.zones))
+	for name := range b.zones {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
 
 // ComputePlan is the Plan that would make the site match cfg.
 //
@@ -315,6 +376,29 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 			return Plan{}, err
 		}
 		changes = append(changes, wlans...)
+	}
+	// The zones are read whenever either firewall section is present, because a
+	// policy states its ends as zone names and the Controller stores them as
+	// zone IDs — the same reason the networks are read whatever sections the
+	// file has. Reading them once and binding them here is also what keeps the
+	// two halves of one plan talking about the same moment in time.
+	if cfg.Zones != nil || cfg.FirewallPolicies != nil {
+		zones, err := listZones(ctx, client, site)
+		if err != nil {
+			return Plan{}, err
+		}
+		bound.bindZones(zones)
+
+		if cfg.Zones != nil {
+			changes = append(changes, planZones(cfg, zones, bound, opts)...)
+		}
+		if cfg.FirewallPolicies != nil {
+			policies, err := planFirewallPolicies(ctx, client, site, cfg, bound, opts)
+			if err != nil {
+				return Plan{}, err
+			}
+			changes = append(changes, policies...)
+		}
 	}
 	if cfg.EncryptedDNS != nil {
 		dns, err := planEncryptedDNS(ctx, client, site, *cfg.EncryptedDNS)
@@ -375,6 +459,18 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 	}
 	slices.SortFunc(wlans, func(a, b config.WLAN) int { return strings.Compare(a.Name, b.Name) })
 
+	liveZones, err := listZones(ctx, client, site)
+	if err != nil {
+		return config.Config{}, Notices{}, err
+	}
+	bound.bindZones(liveZones)
+	zones, partialZones := projectZones(liveZones, bound)
+
+	policies, indescribablePolicies, err := projectFirewallPolicies(ctx, client, site, bound)
+	if err != nil {
+		return config.Config{}, Notices{}, err
+	}
+
 	slots, partial, err := projectWANSlots(all)
 	if err != nil {
 		return config.Config{}, Notices{}, err
@@ -385,12 +481,21 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 		return config.Config{}, Notices{}, err
 	}
 
-	return config.Config{Networks: networks, WLANs: wlans, WAN: slots, EncryptedDNS: dns},
+	return config.Config{
+			Networks:         networks,
+			WLANs:            wlans,
+			Zones:            zones,
+			FirewallPolicies: policies,
+			WAN:              slots,
+			EncryptedDNS:     dns,
+		},
 		Notices{
-			IndescribableWLANs: indescribable,
-			PartialWANSlots:    partial,
-			NoEncryptedDNS:     dns == nil,
-			UnmodelledDNSState: unmodelledState,
+			IndescribableWLANs:    indescribable,
+			PartialZones:          partialZones,
+			IndescribablePolicies: indescribablePolicies,
+			PartialWANSlots:       partial,
+			NoEncryptedDNS:        dns == nil,
+			UnmodelledDNSState:    unmodelledState,
 		}, nil
 }
 
@@ -405,6 +510,15 @@ type Notices struct {
 	// because there is no network unifig manages for them to name (see
 	// listWLANs).
 	IndescribableWLANs []string
+	// PartialZones names the zones whose membership the config states only in
+	// part, because they hold something that is not one of this site's LANs —
+	// the WAN network in a built-in External zone, most often. The zone is in the
+	// file and unifig manages the members it can name; the rest it leaves alone
+	// rather than removing (see overwriteManagedZone).
+	PartialZones []string
+	// IndescribablePolicies names the firewall policies left out of the config
+	// entirely, because a zone on one end of them is one unifig cannot name.
+	IndescribablePolicies []string
 	// PartialWANSlots names the WAN slots written as nothing but a slot,
 	// because the way they connect is not one unifig models.
 	PartialWANSlots []string

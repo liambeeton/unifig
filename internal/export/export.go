@@ -132,6 +132,51 @@ func WriteOmissions(w io.Writer, wlans []string) error {
 	return err
 }
 
+// WritePartialZones names the zones whose membership the config states only in
+// part, so that a file which says less than it appears to says why.
+//
+// The shortfall is one member rather than a whole object: a zone holds something
+// that is not one of this site's LANs — the WAN in the built-in External zone,
+// most often — and there is no name for the config to put in the list for it. So
+// the zone is in the file, unifig manages the members it can name, and the one
+// it cannot stays exactly where it is. Saying so is what stops an operator
+// reading `networks:` on External as the whole truth about what is in it.
+func WritePartialZones(w io.Writer, zones []string) error {
+	if len(zones) == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nWrote %s listing only part of what it holds: %s.\n",
+		count(len(zones), "zone"), quoteAll(zones))
+	b.WriteString("Each also holds something that is not one of this site's LANs — a WAN network, for example — which the config has no name for. unifig manages the networks listed and leaves the rest of the membership exactly as it is.\n")
+
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// WriteIndescribablePolicies names the firewall policies export left out
+// entirely, on the same promise as WriteOmissions: a file that came back short
+// says so.
+//
+// A policy is all three of its fields — its verdict and the zones on either end
+// — so unlike a zone there is no partial way to write one. A policy whose zone
+// unifig cannot name, or whose verdict it does not model, is one the config has
+// no way to state at all.
+func WriteIndescribablePolicies(w io.Writer, policies []string) error {
+	if len(policies) == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nLeft out %s, which unifig cannot describe: %s.\n",
+		countOf(len(policies), "firewall policy", "firewall policies"), quoteAll(policies))
+	b.WriteString("Each either governs a zone that is not one of this site's, or does something to the traffic that unifig does not model. It manages nothing about them, and `--prune` will not delete them.\n")
+
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
 // WritePartialWANSlots names the WAN slots the config describes by slot alone,
 // so that a file which says less than the operator expects says why.
 //
@@ -187,11 +232,21 @@ func WriteUnmodelledDNSState(w io.Writer, state string) error {
 	return err
 }
 
+// count says how many of something there are, in the words that read naturally
+// aloud: "1 WLAN", "3 WLANs".
 func count(n int, noun string) string {
+	return countOf(n, noun, noun+"s")
+}
+
+// countOf is count for a noun whose plural is not its singular with an "s" on
+// the end. There is one so far — "firewall policies" — and it needs its own
+// entry point rather than a rule, because English has no rule here worth
+// encoding for the handful of nouns this package names.
+func countOf(n int, one, many string) string {
 	if n == 1 {
-		return "1 " + noun
+		return "1 " + one
 	}
-	return fmt.Sprintf("%d %ss", n, noun)
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 func quoteAll(values []string) string {

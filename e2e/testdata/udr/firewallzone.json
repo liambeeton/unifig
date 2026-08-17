@@ -1,0 +1,37 @@
+[
+  {
+    "_id": "6613a1f0c4b2d90a5e1f2001",
+    "attr_no_delete": true,
+    "name": "Internal",
+    "network_ids": ["6613a1f0c4b2d90a5e1f0001"],
+    "site_id": "6613a1f0c4b2d90a5e1f0000"
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f2002",
+    "attr_no_delete": true,
+    "name": "External",
+    "network_ids": ["6613a1f0c4b2d90a5e1f1001"],
+    "site_id": "6613a1f0c4b2d90a5e1f0000"
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f2003",
+    "attr_no_delete": true,
+    "name": "Gateway",
+    "network_ids": [],
+    "site_id": "6613a1f0c4b2d90a5e1f0000"
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f2004",
+    "attr_no_delete": true,
+    "name": "VPN",
+    "network_ids": [],
+    "site_id": "6613a1f0c4b2d90a5e1f0000"
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f2005",
+    "attr_no_delete": true,
+    "name": "Hotspot",
+    "network_ids": [],
+    "site_id": "6613a1f0c4b2d90a5e1f0000"
+  }
+]

@@ -1,0 +1,37 @@
+[
+  {
+    "_id": "6613a1f0c4b2d90a5e1f3001",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "create_allow_respond": true,
+    "description": "",
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f2002"
+    },
+    "enabled": true,
+    "index": 10000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Internal to External",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS",
+      "repeat_on_days": [],
+      "time_all_day": true
+    },
+    "site_id": "6613a1f0c4b2d90a5e1f0000",
+    "source": {
+      "match_mac": false,
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f2001"
+    }
+  }
+]

@@ -4,8 +4,8 @@
 //
 // Run it as `make record-udr`, with UNIFIG_HOST and UNIFIG_API_KEY pointing at
 // the router — the same variables unifig itself reads. It is read-only against
-// the Controller: four GETs, no other method anywhere in this program, so the
-// worst it can do to a live site is nothing.
+// the Controller: one GET per recorded endpoint, no other method anywhere in
+// this program, so the worst it can do to a live site is nothing.
 //
 // What it does, in order:
 //
@@ -20,7 +20,7 @@
 // The raw responses never touch the repository: they go to a temporary
 // directory outside it, and are deleted before this program exits. They carry
 // the PPPoE password and the DNS stamps in the clear, which is the whole reason
-// this program is not four curl commands.
+// this program is not a handful of curl commands.
 package main
 
 import (
@@ -40,14 +40,20 @@ import (
 	"time"
 )
 
-// The three responses, and the paths they come from. These are the paths
+// The recorded responses, and the paths they come from. These are the paths
 // e2e/replay_test.go serves back — recording anything else would produce files
 // the stand-in never reaches.
+//
+// The firewall pair comes from the Controller's v2 tree and answers with a bare
+// JSON array rather than the {meta, data} envelope the rest of the Internal API
+// wraps everything in, which is why the recording holds two shapes of file.
 var endpoints = []struct{ file, path string }{
 	{"sysinfo.json", "/proxy/network/api/s/default/stat/sysinfo"},
 	{"networkconf.json", "/proxy/network/api/s/default/rest/networkconf"},
 	{"wlanconf.json", "/proxy/network/api/s/default/rest/wlanconf"},
 	{"setting.json", "/proxy/network/api/s/default/get/setting"},
+	{"firewallzone.json", "/proxy/network/v2/api/site/default/firewall/zone"},
+	{"firewallpolicy.json", "/proxy/network/v2/api/site/default/firewall-policies"},
 }
 
 func main() {
@@ -157,7 +163,7 @@ func connectionFromEnv() (connection, error) {
 	return connection{url: host, apiKey: apiKey, insecure: insecure}, nil
 }
 
-// record asks the Controller for the three responses. It keeps the raw bodies
+// record asks the Controller for each recorded response. It keeps the raw bodies
 // in a temporary directory outside the repository, named on stdout, so that an
 // operator can look at what actually arrived while this program waits at a
 // prompt; the caller deletes the directory before exiting. They carry the
@@ -191,6 +197,14 @@ func record(conn connection) (recording, string, error) {
 		}
 		if err := os.WriteFile(filepath.Join(dir, endpoint.file), body, 0o600); err != nil {
 			return recording{}, dir, fmt.Errorf("keeping the raw %s: %w", endpoint.file, err)
+		}
+		if into := raw.bare(endpoint.file); into != nil {
+			entries, err := readList(body)
+			if err != nil {
+				return recording{}, dir, fmt.Errorf("%s answered with something that is not a list: %w", endpoint.path, err)
+			}
+			*into = entries
+			continue
 		}
 		doc, err := read(body)
 		if err != nil {
@@ -230,17 +244,23 @@ func get(client *http.Client, conn connection, path string) ([]byte, error) {
 
 	// An Internal API response can carry a failure inside a 200, and a
 	// recording of one would be a fixture that answers "no" to everything.
-	var envelope struct {
-		Meta struct {
-			RC  string `json:"rc"`
-			Msg string `json:"msg"`
-		} `json:"meta"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
+	//
+	// Only the v1 tree wraps its answers in that envelope. A v2 endpoint answers
+	// with a bare array and has no rc to check, so the check is on the shape that
+	// has one rather than on every response — while still insisting that whatever
+	// arrived is JSON at all, since an HTML login page is exactly what a
+	// Controller serves when it does not believe the key.
+	var answered any
+	if err := json.Unmarshal(body, &answered); err != nil {
 		return nil, fmt.Errorf("%s answered with something that is not JSON: %w", path, err)
 	}
-	if envelope.Meta.RC != "ok" {
-		return nil, fmt.Errorf("%s answered rc=%q %s", path, envelope.Meta.RC, envelope.Meta.Msg)
+	if object, wrapped := answered.(map[string]any); wrapped {
+		meta, _ := object["meta"].(map[string]any)
+		rc, _ := meta["rc"].(string)
+		if rc != "ok" {
+			msg, _ := meta["msg"].(string)
+			return nil, fmt.Errorf("%s answered rc=%q %s", path, rc, msg)
+		}
 	}
 	return body, nil
 }
@@ -279,7 +299,7 @@ func readRecording(name string) (document, error) {
 
 func writeRecording(scrubbed recording) error {
 	for _, endpoint := range endpoints {
-		body, err := scrubbed.file(endpoint.file).bytes()
+		body, err := recorded(scrubbed, endpoint.file)
 		if err != nil {
 			return fmt.Errorf("writing %s: %w", endpoint.file, err)
 		}
@@ -290,6 +310,15 @@ func writeRecording(scrubbed recording) error {
 		}
 	}
 	return nil
+}
+
+// recorded is one scrubbed response as it goes into the repository, whichever of
+// the two shapes it is.
+func recorded(scrubbed recording, name string) ([]byte, error) {
+	if entries := scrubbed.bare(name); entries != nil {
+		return entries.bytes()
+	}
+	return scrubbed.file(name).bytes()
 }
 
 // atRepoRoot fails early rather than writing a recording somewhere surprising.

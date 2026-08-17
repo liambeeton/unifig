@@ -379,6 +379,12 @@ func runExport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := export.WriteOmissions(stderr, notices.IndescribableWLANs); err != nil {
 		return err
 	}
+	if err := export.WritePartialZones(stderr, notices.PartialZones); err != nil {
+		return err
+	}
+	if err := export.WriteIndescribablePolicies(stderr, notices.IndescribablePolicies); err != nil {
+		return err
+	}
 	if err := export.WritePartialWANSlots(stderr, notices.PartialWANSlots); err != nil {
 		return err
 	}

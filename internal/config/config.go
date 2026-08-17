@@ -32,10 +32,12 @@ import (
 // preserves that distinction, so nothing here may normalise a nil section into
 // an empty slice.
 type Config struct {
-	Networks     []Network     `yaml:"networks,omitempty"`
-	WLANs        []WLAN        `yaml:"wlans,omitempty"`
-	WAN          []WANSlot     `yaml:"wan,omitempty"`
-	EncryptedDNS *EncryptedDNS `yaml:"encrypted-dns,omitempty"`
+	Networks         []Network        `yaml:"networks,omitempty"`
+	WLANs            []WLAN           `yaml:"wlans,omitempty"`
+	Zones            []Zone           `yaml:"zones,omitempty"`
+	FirewallPolicies []FirewallPolicy `yaml:"firewall-policies,omitempty"`
+	WAN              []WANSlot        `yaml:"wan,omitempty"`
+	EncryptedDNS     *EncryptedDNS    `yaml:"encrypted-dns,omitempty"`
 }
 
 // Network is the operator-facing projection of a Controller network Resource,
@@ -60,6 +62,47 @@ type WLAN struct {
 	Name       string `yaml:"name"`
 	Network    string `yaml:"network"`
 	Passphrase string `yaml:"passphrase,omitempty"`
+}
+
+// Zone is a named group of networks in the Controller's zone-based firewall,
+// keyed by name like every other Resource.
+//
+// Networks is nil and empty for different reasons, in the same load-bearing way
+// as a Config section and as EncryptedDNS.Servers: no `networks:` key leaves the
+// Controller's own membership alone, while `networks: []` states that the zone
+// should hold none. It is one field of one Resource rather than a collection, so
+// stating it makes this list the zone's list — a network that drops out of it is
+// one the next apply takes out of the zone.
+//
+// Which is why it is the one field here without `omitempty`. A zone the
+// Controller holds with no networks in it has to export as `networks: []`, and
+// `omitempty` would drop that to no key at all, which says the opposite.
+type Zone struct {
+	Name     string   `yaml:"name"`
+	Networks []string `yaml:"networks"`
+}
+
+// FirewallPolicy is a rule governing traffic between a pair of Zones, keyed by
+// name.
+//
+// Source and Destination name Zones, and deliberately not only Zones this file
+// defines. The interesting policies are the ones that reach the Controller's own
+// built-in zones — `External` is the internet — and those are never in the file,
+// because a built-in Zone is matchable but not something unifig creates or
+// prunes. So the reference is resolved against the Controller rather than
+// offline, the same way a WAN slot's is (ADR-0010), and checkReferences says
+// nothing about it.
+//
+// Action is required by the schema alongside the pair, unlike the optional
+// fields everywhere else in this file. A policy exists to allow or block
+// something, so there is no such thing as a policy unifig could create without
+// knowing which — the same reason a WLAN has to name the network its clients
+// join.
+type FirewallPolicy struct {
+	Name        string `yaml:"name"`
+	Action      string `yaml:"action"`
+	Source      string `yaml:"source"`
+	Destination string `yaml:"destination"`
 }
 
 // WANSlot is one of the Controller's internet uplinks — a Setting rather than a

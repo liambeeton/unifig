@@ -92,6 +92,11 @@ type document struct {
 	Data []map[string]any `json:"data"`
 }
 
+// list is a recorded response from the Controller's v2 API, which answers with a
+// bare JSON array rather than wrapping anything in an envelope. The firewall
+// zones and policies are the only two so far.
+type list []map[string]any
+
 // recording is the responses together — the whole of what the replay stand-in
 // serves, and the unit this program fetches, scrubs and writes.
 type recording struct {
@@ -99,11 +104,14 @@ type recording struct {
 	networkconf document
 	wlanconf    document
 	setting     document
+	zones       list
+	policies    list
 }
 
 // file is the response one recorded endpoint answers with, addressed by the
-// file that holds it. One place knows this mapping, so adding another endpoint
-// is an entry in `endpoints` and a field here.
+// file that holds it, and nil for an endpoint whose response is a bare array.
+// One place knows this mapping, so adding another endpoint is an entry in
+// `endpoints` and a field here.
 func (r *recording) file(name string) *document {
 	switch name {
 	case "sysinfo.json":
@@ -115,7 +123,19 @@ func (r *recording) file(name string) *document {
 	case "setting.json":
 		return &r.setting
 	default:
-		panic("no recorded response is held in " + name)
+		return nil
+	}
+}
+
+// bare is the same for the v2 responses, which carry no envelope.
+func (r *recording) bare(name string) *list {
+	switch name {
+	case "firewallzone.json":
+		return &r.zones
+	case "firewallpolicy.json":
+		return &r.policies
+	default:
+		return nil
 	}
 }
 
@@ -152,6 +172,7 @@ func scrub(raw recording, committed document) (recording, error) {
 	// counted placeholders they already hold keep the numbers they already had
 	// and a re-recording is still an empty diff where nothing changed.
 	setting := s.object("setting["+dohKey+"]", doh)
+	zones, policies := s.firewall(raw, lan, uplinks)
 
 	out := recording{
 		sysinfo:     document{Meta: s.object("sysinfo.meta", raw.sysinfo.Meta), Data: console},
@@ -161,7 +182,9 @@ func scrub(raw recording, committed document) (recording, error) {
 		wlanconf: document{Meta: s.object("wlanconf.meta", raw.wlanconf.Meta), Data: []map[string]any{}},
 		// Reduced to the one key unifig reads, for the reason at the top of
 		// this file: the rest of that response is the whole console.
-		setting: document{Meta: s.object("setting.meta", raw.setting.Meta), Data: []map[string]any{setting}},
+		setting:  document{Meta: s.object("setting.meta", raw.setting.Meta), Data: []map[string]any{setting}},
+		zones:    zones,
+		policies: policies,
 	}
 
 	// Everything that came off the router, and only that. The LAN came from
@@ -180,6 +203,12 @@ func scrub(raw recording, committed document) (recording, error) {
 	}
 	for _, entry := range slots {
 		checked = append(checked, checkable{fmt.Sprintf("networkconf[%s]", slotOf(entry)), entry})
+	}
+	for i, entry := range zones {
+		checked = append(checked, checkable{fmt.Sprintf("firewallzone[%d]", i), entry})
+	}
+	for i, entry := range policies {
+		checked = append(checked, checkable{fmt.Sprintf("firewallpolicy[%d]", i), entry})
 	}
 	if leaked := s.leaks(checked); len(leaked) > 0 {
 		return recording{}, fmt.Errorf("the scrub would have written values it had already taken out, so it wrote nothing:\n%s\n"+
@@ -349,6 +378,8 @@ var byName = map[string]shape{
 	"networkconf_id":          shapeObjectID,
 	"usergroup_id":            shapeObjectID,
 	"ap_group_ids":            shapeObjectID,
+	"network_ids":             shapeObjectID,
+	"zone_id":                 shapeObjectID,
 	"external_id":             shapeUUID,
 	"uuid":                    shapeUUID,
 	"anonymous_controller_id": shapeUUID,
@@ -378,6 +409,108 @@ func (s *scrubber) uplinks(entries []map[string]any) ([]map[string]any, error) {
 		out = append(out, s.object(where, named))
 	}
 	return out, nil
+}
+
+// firewall is the scrub of the zone-based firewall, and it answers the "how much
+// has to be real" question the same way the rest of this program does — by
+// keeping the least it can.
+//
+// What only a router can supply is the set of zones and policies the Controller
+// ships for itself: which built-ins exist, what they are called, what they hold,
+// and which markers say they are the Controller's own. That is precisely what
+// unifig's built-in exemption reads (ADR-0005), and precisely what no
+// gateway-less container produces. So those are kept.
+//
+// A zone or policy the operator made themselves is dropped, not scrubbed. It is
+// named after what it is for — the children's tablets, the flat downstairs, the
+// camera the neighbour can see — and every test that wants a custom zone seeds
+// its own. Not recording something remains the only rule that cannot be got
+// wrong (ADR-0011).
+//
+// The membership needs rewriting rather than merely scrubbing, because the
+// router's own LANs are dropped in favour of the committed one. A zone member
+// that named a LAN this recording no longer holds is pointed at the LAN it does
+// hold, so the built-in Internal zone still holds a network and the built-in
+// External zone still holds the uplink. Without that the zones would come back
+// referring to networks that are not in the recording, and every test about what
+// a zone holds would be testing a dangling reference.
+func (s *scrubber) firewall(raw recording, lan, uplinks []map[string]any) (zones, policies list) {
+	// The committed LAN is this repository's own and is never scrubbed, so its
+	// id has to survive being mentioned by a zone. Recorded as its own
+	// placeholder, it passes through untouched instead of being renumbered into
+	// a reference that points nowhere.
+	committed := idOf(lan[0])
+	s.placeholders[seen{shapeObjectID, committed}] = committed
+
+	uplinkIDs := map[string]bool{}
+	for _, entry := range uplinks {
+		uplinkIDs[idOf(entry)] = true
+	}
+
+	kept := map[string]bool{}
+	zones = list{}
+	for _, zone := range raw.zones {
+		if zone["attr_no_delete"] != true {
+			continue
+		}
+		kept[idOf(zone)] = true
+
+		// Rewritten before the scrub rather than after, so that the ids that
+		// survive are substituted consistently with everything else that
+		// mentions them.
+		rewritten := maps.Clone(zone)
+		rewritten["network_ids"] = membership(zone, uplinkIDs, committed)
+		zones = append(zones, s.object(fmt.Sprintf("firewallzone[%v]", zone["name"]), rewritten))
+	}
+
+	policies = list{}
+	for _, policy := range raw.policies {
+		if policy["predefined"] != true {
+			continue
+		}
+		// A policy whose zones were not kept would describe a firewall this
+		// recording does not hold, which is worse than not describing one.
+		if !kept[zoneEnd(policy, "source")] || !kept[zoneEnd(policy, "destination")] {
+			continue
+		}
+		policies = append(policies, s.object(fmt.Sprintf("firewallpolicy[%v]", policy["name"]), policy))
+	}
+	return zones, policies
+}
+
+// membership is a zone's networks with the router's own LANs folded onto the one
+// LAN this recording keeps, and its uplinks left as they are. Duplicates
+// collapse, because a zone that held two of the router's LANs holds one network
+// here rather than the same network twice.
+func membership(zone map[string]any, uplinkIDs map[string]bool, committed string) []any {
+	held, _ := zone["network_ids"].([]any)
+
+	out := make([]any, 0, len(held))
+	for _, raw := range held {
+		id, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		if !uplinkIDs[id] {
+			id = committed
+		}
+		if !slices.Contains(out, any(id)) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// zoneEnd is the zone a policy names on one side of itself.
+func zoneEnd(policy map[string]any, side string) string {
+	end, _ := policy[side].(map[string]any)
+	id, _ := end["zone_id"].(string)
+	return id
+}
+
+func idOf(entry map[string]any) string {
+	id, _ := entry["_id"].(string)
+	return id
 }
 
 // sysinfo is the same for the response that says which Controller answered:
@@ -658,6 +791,31 @@ func read(body []byte) (document, error) {
 		return document{}, err
 	}
 	return doc, nil
+}
+
+func readList(body []byte) (list, error) {
+	var entries list
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+// bytes is document.bytes for a bare array: the same formatting, and an empty
+// array rather than a null where the Controller had nothing to list.
+func (l list) bytes() ([]byte, error) {
+	if l == nil {
+		l = list{}
+	}
+
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(l); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 // bytes is the recorded response as it goes into the repository: two-space

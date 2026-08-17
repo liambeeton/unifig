@@ -23,6 +23,32 @@ wlans:
     # exactly this form.
     passphrase: ${WIFI_IOT_PASSPHRASE}
 
+zones:
+  # A zone groups networks for the firewall. The Controller ships its own —
+  # External, Internal, Gateway and so on — and you can name one here to manage
+  # what is in it. unifig never creates or deletes a built-in zone, whatever
+  # `--prune` is told.
+  - name: Untrusted
+    # Stating `networks` states the whole membership: a network you stop naming
+    # here is one the next apply takes out of the zone. Omit the key to leave
+    # the Controller's own membership alone.
+    networks:
+      - IoT
+
+firewall-policies:
+  # A policy governs the traffic between two zones. Both ends are matched by
+  # name, and either may be a zone the Controller already has rather than one
+  # this file defines — which is why `External` needs no entry above.
+  - name: IoT to internet
+    action: allow
+    source: Untrusted
+    destination: External
+
+  - name: IoT off the LAN
+    action: block
+    source: Untrusted
+    destination: Internal
+
 wan:
   # A WAN slot is a Setting, not a Resource: the router has the slots it has, so
   # unifig only ever updates one — it never creates, deletes or prunes a slot.

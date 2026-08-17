@@ -157,7 +157,7 @@ func createWLAN(desired config.WLAN, bound bindings) Change {
 			// Read at the moment of writing rather than the moment of
 			// planning: the network this WLAN joins may have been created by a
 			// change earlier in this very apply.
-			networkID, err := bound.networkID(desired.Network)
+			networkID, err := bound.networkID(desired.Network, "for this WLAN's clients to join")
 			if err != nil {
 				return err
 			}
@@ -207,7 +207,7 @@ func updateWLAN(desired config.WLAN, live unifi.WLAN, bound bindings) (Change, b
 		Name:   desired.Name,
 		Fields: fields,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
-			networkID, err := bound.networkID(desired.Network)
+			networkID, err := bound.networkID(desired.Network, "for this WLAN's clients to join")
 			if err != nil {
 				return err
 			}

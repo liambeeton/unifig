@@ -19,7 +19,7 @@ A fixed-slot or singleton configuration area of the Controller that can only be 
 _Avoid_: resource (for these)
 
 **Kind**:
-The managed type a change is about — `network`, `wlan`, `encrypted-dns`, `wan` — covering Resources and Settings alike, because an operator reads and approves a change to either the same way. It is the word a Plan line leads with and the field `plan --json` carries.
+The managed type a change is about — `network`, `wlan`, `zone`, `firewall-policy`, `encrypted-dns`, `wan` — covering Resources and Settings alike, because an operator reads and approves a change to either the same way. It is the word a Plan line leads with and the field `plan --json` carries.
 _Avoid_: resource (a Setting is not one), type (says nothing about what is being typed)
 
 **WAN slot**:
@@ -39,10 +39,12 @@ A wireless network (SSID) the Controller broadcasts. A Resource, matched by name
 _Avoid_: SSID (that names the broadcast identifier, not the configured object), wifi network
 
 **Zone**:
-A named group of networks/interfaces in the Controller's zone-based firewall. Custom Zones are Resources; built-in Zones (Internal, External, …) are matchable but never prunable.
+A named group of networks in the Controller's zone-based firewall. A Resource, matched by name. Custom Zones have the full lifecycle; built-in Zones (Internal, External, …) are matchable and updatable but never prunable, on the Controller's own marker rather than a list of names (ADR-0005). Its membership is one field rather than a collection, so stating it states the whole list — and a member unifig cannot name, such as the WAN in the built-in External Zone, is left exactly where it is rather than removed.
+_Avoid_: firewall group (that is a different Controller object), interface group
 
 **Firewall Policy**:
-A rule governing traffic between a pair of Zones. A Resource, matched by name.
+A rule governing traffic between a pair of Zones. A Resource, matched by name, and the only one whose config states required fields beyond its key: a verdict (`allow`, `block`, `reject`) and both ends. The Zones it names need not be in the config file, because the interesting ones are built-in, so that reference is resolved against the Controller rather than offline.
+_Avoid_: firewall rule (that names the pre-Zone object the Controller still has), ACL
 
 **DHCP Reservation**:
 A fixed-IP assignment for a client, projected from the Controller's per-client record rather than existing as a standalone object. Its natural key is the MAC address.
