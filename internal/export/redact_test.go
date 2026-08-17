@@ -211,6 +211,72 @@ func TestRedactReplacesAPPPoEPasswordWithAReferenceNamedAfterItsSlot(t *testing.
 	}
 }
 
+// A DNS stamp is the third secret, and the variable is named after the resolver
+// for the same reason a passphrase's is named after its WLAN: a file with two
+// of them has to say which is which.
+func TestRedactReplacesADNSStampWithAReferenceNamedAfterItsServer(t *testing.T) {
+	redacted, vars := export.Redact(config.Config{EncryptedDNS: &config.EncryptedDNS{
+		State: "custom",
+		Servers: []config.DNSServer{
+			{Name: "AdGuard-DNS", Stamp: "sdns://the-private-endpoint"},
+			{Name: "Quad9", Stamp: "sdns://the-other-one"},
+		},
+	}})
+
+	want := []string{"UNIFIG_DNS_ADGUARD_DNS_STAMP", "UNIFIG_DNS_QUAD9_STAMP"}
+	if len(vars) != len(want) {
+		t.Fatalf("redacted %d secrets, want %d: %v", len(vars), len(want), vars)
+	}
+	for i, name := range want {
+		if vars[i] != name {
+			t.Errorf("vars[%d] = %q, want %q", i, vars[i], name)
+		}
+		if got := redacted.EncryptedDNS.Servers[i].Stamp; got != "${"+name+"}" {
+			t.Errorf("encrypted-dns.servers[%d].stamp = %q, want a reference to %s", i, got, name)
+		}
+	}
+	// Everything else survives: the state and the names are how the config says
+	// which resolver each stamp belongs to.
+	if redacted.EncryptedDNS.State != "custom" {
+		t.Errorf("redaction changed the state: %+v", redacted.EncryptedDNS)
+	}
+	if redacted.EncryptedDNS.Servers[0].Name != "AdGuard-DNS" {
+		t.Errorf("redaction changed a server's identity: %+v", redacted.EncryptedDNS.Servers[0])
+	}
+}
+
+// The section is a pointer and its servers are a slice, so there are two ways
+// for redaction to reach back into the config the caller may still write with
+// --with-secrets. Neither may.
+func TestRedactLeavesTheEncryptedDNSSectionItWasGivenAlone(t *testing.T) {
+	original := config.Config{EncryptedDNS: &config.EncryptedDNS{
+		State:   "custom",
+		Servers: []config.DNSServer{{Name: "AdGuard-DNS", Stamp: "sdns://the-private-endpoint"}},
+	}}
+
+	redacted, _ := export.Redact(original)
+
+	if original.EncryptedDNS.Servers[0].Stamp != "sdns://the-private-endpoint" {
+		t.Errorf("Redact rewrote its argument: %+v", original.EncryptedDNS.Servers[0])
+	}
+	if redacted.EncryptedDNS == original.EncryptedDNS {
+		t.Errorf("the redacted config shares its encrypted-dns section with the original")
+	}
+}
+
+func TestRedactHasNothingToSayAboutAControllerWithNoEncryptedDNS(t *testing.T) {
+	redacted, vars := export.Redact(config.Config{
+		Networks: []config.Network{{Name: "Default", Subnet: "192.168.1.1/24"}},
+	})
+
+	if len(vars) != 0 {
+		t.Errorf("redacted %v, but there was no secret to redact", vars)
+	}
+	if redacted.EncryptedDNS != nil {
+		t.Errorf("redaction invented an encrypted-dns section: %+v", redacted.EncryptedDNS)
+	}
+}
+
 func TestEverySecretInOneFileGetsItsOwnVariable(t *testing.T) {
 	_, vars := export.Redact(config.Config{
 		WLANs: []config.WLAN{wlan("Home", "correct horse battery")},
@@ -218,9 +284,15 @@ func TestEverySecretInOneFileGetsItsOwnVariable(t *testing.T) {
 			{Slot: "WAN", Type: "pppoe", Password: "the-isp-password"},
 			{Slot: "WAN2", Type: "pppoe", Password: "the-backup-password"},
 		},
+		EncryptedDNS: &config.EncryptedDNS{
+			Servers: []config.DNSServer{{Name: "AdGuard-DNS", Stamp: "sdns://the-private-endpoint"}},
+		},
 	})
 
-	want := []string{"UNIFIG_WLAN_HOME_PASSPHRASE", "UNIFIG_WAN_PASSWORD", "UNIFIG_WAN2_PASSWORD"}
+	want := []string{
+		"UNIFIG_WLAN_HOME_PASSPHRASE", "UNIFIG_WAN_PASSWORD", "UNIFIG_WAN2_PASSWORD",
+		"UNIFIG_DNS_ADGUARD_DNS_STAMP",
+	}
 	if len(vars) != len(want) {
 		t.Fatalf("redacted %d secrets, want %d: %v", len(vars), len(want), vars)
 	}
@@ -268,6 +340,10 @@ func TestNoSecretSurvivesRedaction(t *testing.T) {
 			wlan("Home Guest", secret),
 		},
 		WAN: []config.WANSlot{{Slot: "WAN", Type: "pppoe", Password: secret}},
+		EncryptedDNS: &config.EncryptedDNS{
+			State:   "custom",
+			Servers: []config.DNSServer{{Name: "AdGuard-DNS", Stamp: "sdns://" + secret}},
+		},
 	})
 
 	var written strings.Builder

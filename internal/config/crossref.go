@@ -74,6 +74,24 @@ func checkReferences(cfg Config, idx index) []Problem {
 		configured[slot.Slot] = true
 	}
 
+	// A custom DNS server is named by the operator, and that name is how unifig
+	// tells one entry in the Encrypted DNS setting from another — so two of them
+	// sharing one name is the same ambiguity as two networks sharing one, and is
+	// caught here for the same reason.
+	if dns := cfg.EncryptedDNS; dns != nil {
+		resolvers := make(map[string]bool, len(dns.Servers))
+		for i, server := range dns.Servers {
+			if resolvers[server.Name] {
+				at := idx.nestedField("encrypted-dns", "servers", i, "name")
+				problems = append(problems, Problem{
+					Line: at.line, Path: at.path,
+					Message: alreadyDefined("custom DNS server", "custom DNS servers", server.Name),
+				})
+			}
+			resolvers[server.Name] = true
+		}
+	}
+
 	return problems
 }
 

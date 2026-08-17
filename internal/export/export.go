@@ -56,6 +56,24 @@ func Redact(cfg config.Config) (config.Config, []string) {
 		redacted.WAN[i].Password = "${" + name + "}"
 		vars = append(vars, name)
 	}
+	// A DNS stamp is the third secret, and the copy is one level deeper than
+	// the others: the section is a pointer and its servers are a slice, so both
+	// are replaced rather than shared with the config the caller handed in.
+	if cfg.EncryptedDNS != nil {
+		dns := *cfg.EncryptedDNS
+		dns.Servers = make([]config.DNSServer, len(cfg.EncryptedDNS.Servers))
+		copy(dns.Servers, cfg.EncryptedDNS.Servers)
+		redacted.EncryptedDNS = &dns
+
+		for i, server := range dns.Servers {
+			if server.Stamp == "" {
+				continue
+			}
+			name := unique(taken, envVar("UNIFIG_DNS", server.Name, "STAMP"))
+			dns.Servers[i].Stamp = "${" + name + "}"
+			vars = append(vars, name)
+		}
+	}
 	return redacted, vars
 }
 
@@ -131,6 +149,41 @@ func WritePartialWANSlots(w io.Writer, slots []string) error {
 	b.WriteString("Each connects in a way unifig does not model — static addressing, for example — so there is nothing for the config to say about it. unifig will match the slot and change nothing about how it connects.\n")
 
 	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// WriteNoEncryptedDNS says why the config has no `encrypted-dns:` section, for
+// the same reason WriteOmissions names a WLAN it left out: a file that came back
+// short says why it did.
+//
+// The shortfall here belongs to the Controller rather than to unifig. There is
+// no Encrypted DNS setting on the other end — an older Network version, or a
+// site without it — so there is nothing to describe, and an operator who went
+// looking for the section deserves to know which of the two that is.
+func WriteNoEncryptedDNS(w io.Writer, absent bool) error {
+	if !absent {
+		return nil
+	}
+	_, err := io.WriteString(w,
+		"\nWrote no `encrypted-dns:` section: this Controller has no Encrypted DNS setting to describe.\n")
+	return err
+}
+
+// WriteUnmodelledDNSState names an Encrypted DNS state unifig does not model,
+// so that a section written without one says why.
+//
+// It is WritePartialWANSlots one level down: the section is in the file and
+// unifig will manage the resolvers in it, but the mode the Controller is in is
+// not one the config can state, so the file says nothing about it and neither
+// will an apply. Writing it anyway would produce a file unifig's own validate
+// rejects, which is the shortfall this notice exists instead of.
+func WriteUnmodelledDNSState(w io.Writer, state string) error {
+	if state == "" {
+		return nil
+	}
+	_, err := fmt.Fprintf(w,
+		"\nWrote the `encrypted-dns:` section with no `state`: this Controller's is %q, which unifig does not model.\nIt manages the custom servers listed there and changes nothing about which mode encrypted DNS is in.\n",
+		state)
 	return err
 }
 

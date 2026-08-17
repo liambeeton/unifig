@@ -418,6 +418,84 @@ func TestValidateNeverEchoesAPPPoEPassword(t *testing.T) {
 	}
 }
 
+// Encrypted DNS is the second Setting and the first singleton: a Controller has
+// exactly one, so the section is a mapping with no key to match on.
+func TestValidateAcceptsEncryptedDNSWithAStampFromTheEnvironment(t *testing.T) {
+	runValidate(t, `encrypted-dns:
+  state: custom
+  servers:
+    - name: AdGuard-DNS
+      stamp: ${DNS_STAMP}
+`, map[string]string{"DNS_STAMP": "sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t"}).mustPass(t)
+}
+
+// The same rule as everywhere else (ADR-0004): a field the file leaves out is
+// one unifig does not manage. `state:` alone leaves the servers alone, and the
+// section with nothing in it manages nothing.
+func TestValidateAcceptsAnEncryptedDNSSectionThatManagesNothingYet(t *testing.T) {
+	runValidate(t, "encrypted-dns:\n  state: auto\n", nil).mustPass(t)
+	runValidate(t, "encrypted-dns: {}\n", nil).mustPass(t)
+}
+
+// `servers: []` is the file saying there should be none, which is a different
+// statement from leaving the key out — and both have to be sayable.
+func TestValidateAcceptsAnEmptyListOfCustomDNSServers(t *testing.T) {
+	runValidate(t, "encrypted-dns:\n  servers: []\n", nil).mustPass(t)
+}
+
+func TestValidateRejectsAnEncryptedDNSStateUnifigDoesNotModel(t *testing.T) {
+	runValidate(t, "encrypted-dns:\n  state: encrypted\n", nil).
+		mustFailWith(t, "line 2", "encrypted-dns.state", `"encrypted"`, `"custom"`)
+}
+
+func TestValidateRejectsACustomDNSServerWithNoStamp(t *testing.T) {
+	runValidate(t, `encrypted-dns:
+  servers:
+    - name: AdGuard-DNS
+`, nil).mustFailWith(t, "encrypted-dns.servers[0]", "stamp")
+}
+
+func TestValidateCatchesTwoCustomDNSServersSharingAName(t *testing.T) {
+	res := runValidate(t, `encrypted-dns:
+  servers:
+    - name: AdGuard-DNS
+      stamp: sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t
+    - name: AdGuard-DNS
+      stamp: sdns://AgMAAAAAAAAAAAAQZG5zMi5leGFtcGxlLmNvbQ
+`, nil).mustFailWith(t, "line 5", "encrypted-dns.servers[1].name", "AdGuard-DNS")
+
+	if strings.Count(res.stderr, "already defined") != 1 {
+		t.Errorf("a duplicated name should be reported once, got:\n%s", res.stderr)
+	}
+}
+
+// A DNS stamp is a secret on exactly the same terms as a WLAN passphrase and a
+// PPPoE password: the complaint says what was wrong with it, never what it was.
+// A stamp for a private endpoint carries the account it belongs to.
+func TestValidateNeverEchoesADNSStamp(t *testing.T) {
+	const secret = "sdns://not a stamp, and this half identifies somebody"
+	res := runValidate(t, `encrypted-dns:
+  state: custom
+  servers:
+    - name: AdGuard-DNS
+      stamp: ${DNS_STAMP}
+`, map[string]string{"DNS_STAMP": secret})
+
+	if res.exitCode != 1 {
+		t.Fatalf("validate exited %d, want 1 — that is not the shape of a DNS stamp\nstderr: %s",
+			res.exitCode, res.stderr)
+	}
+	if strings.Contains(res.stderr, "identifies somebody") {
+		t.Errorf("validate printed the stamp it was complaining about:\n%s", res.stderr)
+	}
+	if !strings.Contains(res.stderr, "encrypted-dns.servers[0].stamp") {
+		t.Errorf("stderr should say which field was wrong, got:\n%s", res.stderr)
+	}
+	if !strings.Contains(res.stderr, "sdns://") {
+		t.Errorf("stderr should say what a stamp looks like, got:\n%s", res.stderr)
+	}
+}
+
 func TestValidateInterpolatesEnvVarsIntoValues(t *testing.T) {
 	runValidate(t, `networks:
   - name: ${IOT_NAME}

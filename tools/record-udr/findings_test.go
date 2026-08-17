@@ -42,7 +42,7 @@ func TestTheAnswersReportThePPPoEFlagsAsTheyStand(t *testing.T) {
 	slot(t, doc, "WAN")["wan_pppoe_password_enabled"] = false
 	delete(slot(t, doc, "WAN"), "wan_pppoe_username_enabled")
 
-	report := reportOf(t, answers(doc))
+	report := reportOf(t, answers(doc), nil)
 
 	// Whatever the router holds, verbatim: this is the fact unifig's own
 	// behaviour was guessed from, so a report that tidied it up would be
@@ -56,7 +56,7 @@ func TestTheAnswersReportThePPPoEFlagsAsTheyStand(t *testing.T) {
 }
 
 func TestTheAnswersNeverPrintTheCredentialItself(t *testing.T) {
-	report := reportOf(t, answers(parse(t, rawNetworkconf)))
+	report := reportOf(t, answers(parse(t, rawNetworkconf)), nil)
 
 	for _, secret := range []string{"hunter2-off-the-router", "user@fibreco.example"} {
 		if strings.Contains(report, secret) {
@@ -72,7 +72,7 @@ func TestTheReportSaysWhenNoUplinkCanAnswer(t *testing.T) {
 	doc := parse(t, rawNetworkconf)
 	slot(t, doc, "WAN")["wan_type"] = "dhcp"
 
-	report := reportOf(t, answers(doc))
+	report := reportOf(t, answers(doc), nil)
 
 	if !strings.Contains(report, "no uplink on PPPoE") {
 		t.Errorf("the report should say the questions went unanswered, got:\n%s", report)
@@ -82,9 +82,50 @@ func TestTheReportSaysWhenNoUplinkCanAnswer(t *testing.T) {
 	}
 }
 
-func reportOf(t *testing.T, given []answer) string {
+// ADR-0012's one deferred question, asked of the third secret unifig models.
+func TestTheAnswersSayWhetherTheDNSStampReadsBackPopulated(t *testing.T) {
+	setting := parse(t, rawSetting)
+
+	given := stampAnswer(setting)
+	if len(given) != 1 {
+		t.Fatalf("asked about %d resolvers, want the one the router holds: %+v", len(given), given)
+	}
+	if given[0].password != populated {
+		t.Errorf("the stamp read back %v, want %v", given[0].password, populated)
+	}
+
+	servers, _ := doh(t, setting)["custom_servers"].([]any)
+	servers[0].(map[string]any)["sdns_stamp"] = ""
+	if given := stampAnswer(setting); given[0].password != empty {
+		t.Errorf("an empty stamp read back as %v, want %v", given[0].password, empty)
+	}
+}
+
+func TestTheAnswersNeverPrintTheStampItself(t *testing.T) {
+	report := reportOf(t, nil, stampAnswer(parse(t, rawSetting)))
+
+	if strings.Contains(report, "secret-endpoint") {
+		t.Errorf("the report printed the stamp, and this program's whole point is that it does not:\n%s", report)
+	}
+}
+
+// A router with encrypted DNS switched off cannot answer, and saying so is the
+// answer — the alternative is a clean report read as a confirmation it never
+// gave.
+func TestTheReportSaysWhenNoResolverCanAnswer(t *testing.T) {
+	setting := parse(t, rawSetting)
+	delete(doh(t, setting), "custom_servers")
+
+	report := reportOf(t, nil, stampAnswer(setting))
+
+	if !strings.Contains(report, "no custom DNS server") {
+		t.Errorf("the report should say the question went unanswered, got:\n%s", report)
+	}
+}
+
+func reportOf(t *testing.T, given []answer, stamped stamps) string {
 	t.Helper()
 	var out strings.Builder
-	report(&out, given)
+	report(&out, given, stamped)
 	return out.String()
 }

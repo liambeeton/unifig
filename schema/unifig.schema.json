@@ -23,6 +23,11 @@
       "description": "The Controller's internet uplinks. These are Settings, not Resources: the Controller has a fixed set of WAN slots, so unifig only ever updates one — it never creates, deletes or prunes a slot, and a slot this file leaves out is one it does not manage.",
       "type": "array",
       "items": { "$ref": "#/$defs/wanSlot" }
+    },
+    "encrypted-dns": {
+      "title": "Encrypted DNS",
+      "description": "The Controller's Encrypted DNS setting, which UniFi's UI calls DNS Shield. A Setting like the WAN slots, and a singleton: a Controller has exactly one, so unifig only ever updates it and this section is a mapping rather than a list. Omitting the section leaves encrypted DNS entirely alone.",
+      "$ref": "#/$defs/encryptedDNS"
     }
   },
   "$defs": {
@@ -114,6 +119,46 @@
           "type": "string",
           "minLength": 1,
           "pattern": "^[^\"' ]+$"
+        }
+      }
+    },
+    "encryptedDNS": {
+      "title": "Encrypted DNS",
+      "description": "How the Controller resolves DNS over an encrypted transport.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "title": "State",
+          "description": "Which encrypted resolvers the Controller uses: off for none, auto for the Controller's own choice, manual for the built-in providers picked in its UI, custom for the servers listed below. Omit it to leave the Controller's own choice alone. unifig does not model the built-in provider list, so `manual` says which mode to be in and leaves the choice of providers to the Controller's UI.",
+          "enum": ["off", "auto", "manual", "custom"]
+        },
+        "servers": {
+          "title": "Custom DNS servers",
+          "description": "The custom encrypted resolvers, each given as a DNS stamp. This is one field rather than a collection of Resources: stating it makes this list the Controller's list, so a server the file stops naming is one the next apply removes — and the plan says so before it does. Omit the key entirely to leave the Controller's servers alone; write `servers: []` to say there should be none.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/dnsServer" }
+        }
+      }
+    },
+    "dnsServer": {
+      "title": "Custom DNS server",
+      "description": "One encrypted resolver, named and described by its DNS stamp.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "stamp"],
+      "properties": {
+        "name": {
+          "title": "Name",
+          "description": "What to call this resolver in the Controller. It is the server's natural key within this section, so two servers cannot share one.",
+          "type": "string",
+          "minLength": 1
+        },
+        "stamp": {
+          "title": "DNS Stamp",
+          "description": "The resolver's DNS stamp — the single sdns:// string that carries its address, protocol and public key. A stamp for a private endpoint identifies the account it belongs to, so unifig treats every stamp as a secret: write it as a ${ENV_VAR} reference rather than in the file, and unifig replaces it from the environment as it loads.",
+          "type": "string",
+          "pattern": "^sdns://[A-Za-z0-9_-]+$"
         }
       }
     }

@@ -41,7 +41,7 @@ func (p Plan) Apply(ctx context.Context, client unifi.Client, site string, out i
 			}
 			_, _ = fmt.Fprint(out,
 				"\nNothing was rolled back; apply is safe to run again once this is fixed.\n")
-			return fmt.Errorf("%s %s %q: %w", change.Action, change.Kind, change.Name, err)
+			return fmt.Errorf("%s %s: %w", change.Action, change.subject(), err)
 		}
 		_, _ = fmt.Fprintf(out, "  %s %s\n", change.Summary(), actions[change.Action].past)
 	}

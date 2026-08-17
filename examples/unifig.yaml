@@ -37,3 +37,19 @@ wan:
   # managing anything about it" — the same as `- name:` on a network.
   - slot: WAN2
 
+# Encrypted DNS is a Setting too, and a singleton: the Controller has exactly
+# one, so this section is a mapping rather than a list. UniFi's UI calls it
+# DNS Shield. Leave the section out entirely and unifig does not touch it.
+encrypted-dns:
+  state: custom
+
+  # `servers` is one field, not a list of Resources: stating it makes this list
+  # the Controller's list, so a resolver you stop naming here is one the next
+  # apply removes — and the plan says so first. Omit the key to leave the
+  # Controller's resolvers alone; write `servers: []` to say there are none.
+  servers:
+    - name: AdGuard-DNS
+      # A stamp for a private endpoint identifies the account it belongs to, so
+      # it is a secret like a passphrase: keep it in the environment.
+      stamp: ${DNS_ADGUARD_STAMP}
+

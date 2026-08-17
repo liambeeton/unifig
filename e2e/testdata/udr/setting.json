@@ -1,0 +1,21 @@
+{
+  "meta": {
+    "rc": "ok"
+  },
+  "data": [
+    {
+      "_id": "6613a1f0c4b2d90a5e1f1003",
+      "custom_servers": [
+        {
+          "enabled": true,
+          "sdns_stamp": "sdns://recorded-dns-stamp-1",
+          "server_name": "recorded-dns-server-1"
+        }
+      ],
+      "key": "doh",
+      "server_names": [],
+      "site_id": "6613a1f0c4b2d90a5e1f0000",
+      "state": "custom"
+    }
+  ]
+}

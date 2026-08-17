@@ -140,6 +140,43 @@ const rawWlanconf = `{
   ]
 }`
 
+// The settings response is the whole console's configuration, and unifig reads
+// one key out of it. Everything here that is not that key is a reason the scrub
+// keeps only the one it reads.
+const rawSetting = `{
+  "meta": { "rc": "ok" },
+  "data": [
+    {
+      "_id": "65f1c0a1d4e2b30af1c00c01",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "key": "super_mail",
+      "provider": "smtp",
+      "smtp_username": "beetons@example.com",
+      "x_smtp_password": "the-mail-password"
+    },
+    {
+      "_id": "65f1c0a1d4e2b30af1c00c02",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "key": "doh",
+      "state": "custom",
+      "server_names": [],
+      "custom_servers": [
+        {
+          "enabled": true,
+          "server_name": "Beeton AdGuard",
+          "sdns_stamp": "sdns://AgcAAAAAAAAABzEuMi4zLjSgnou0mUYSbFcvIGxNAgNzc2VjcmV0LWVuZHBvaW50"
+        }
+      ]
+    },
+    {
+      "_id": "65f1c0a1d4e2b30af1c00c03",
+      "site_id": "65f1c0a1d4e2b30af1c00000",
+      "key": "mgmt",
+      "x_ssh_password": "the-device-password"
+    }
+  ]
+}`
+
 // The committed recording the scrub takes its LAN from — the one already in
 // e2e/testdata/udr, which came from the dockerized Controller and so describes
 // nobody's house.
@@ -417,6 +454,99 @@ func TestScrubIsStableAndIdempotent(t *testing.T) {
 	}
 }
 
+// `get/setting` answers with the whole console: mail credentials, remote
+// access, RADIUS secrets, guest portals. unifig reads one key out of it, and
+// the recording holds that one key and nothing else.
+func TestScrubKeepsNothingFromTheSettingsButEncryptedDNS(t *testing.T) {
+	out := scrubbed(t)
+
+	if len(out.setting.Data) != 1 {
+		t.Fatalf("the scrubbed settings hold %d entries, want only the Encrypted DNS one: %+v",
+			len(out.setting.Data), out.setting.Data)
+	}
+	if key := out.setting.Data[0]["key"]; key != "doh" {
+		t.Errorf("the scrubbed settings kept %q, want %q", key, "doh")
+	}
+	for _, secret := range []string{"the-mail-password", "beetons@example.com", "the-device-password"} {
+		if strings.Contains(string(written(t, out.setting)), secret) {
+			t.Errorf("the scrubbed settings still carry %q from a setting unifig never reads", secret)
+		}
+	}
+}
+
+// The stamp is the third secret unifig models, and a stamp for a private
+// endpoint carries the account it belongs to. The name beside it is the
+// operator's own word for their resolver, replaced for the same reason their
+// name for their connection is.
+func TestScrubReplacesTheDNSStampsAndTheirNames(t *testing.T) {
+	servers := dohServers(t, scrubbed(t).setting)
+
+	if len(servers) != 1 {
+		t.Fatalf("the scrub kept %d custom DNS servers, want the one the router sent", len(servers))
+	}
+	stamp, _ := servers[0]["sdns_stamp"].(string)
+	if !strings.HasPrefix(stamp, "sdns://") {
+		t.Errorf("sdns_stamp = %q, want something still shaped like a stamp", stamp)
+	}
+	if strings.Contains(stamp, "secret-endpoint") {
+		t.Errorf("sdns_stamp = %q, and it still carries the endpoint off the router", stamp)
+	}
+	if name, _ := servers[0]["server_name"].(string); name == "" || strings.Contains(name, "Beeton") {
+		t.Errorf("server_name = %q, want a placeholder that names nobody", name)
+	}
+	// Everything the recording exists to state about the shape survives.
+	if servers[0]["enabled"] != true {
+		t.Errorf("the resolver's enabled flag did not survive the scrub: %+v", servers[0])
+	}
+	if state := doh(t, scrubbed(t).setting)["state"]; state != "custom" {
+		t.Errorf("the setting's state = %v, want the one the router sent", state)
+	}
+}
+
+// Two resolvers stay two resolvers, and one used twice stays one: a fixed
+// placeholder would say the site has one resolver written down twice.
+func TestScrubGivesTwoDNSStampsTwoPlaceholders(t *testing.T) {
+	raw := rawRecording(t)
+	servers, _ := doh(t, raw.setting)["custom_servers"].([]any)
+	doh(t, raw.setting)["custom_servers"] = append(servers, map[string]any{
+		"enabled":     false,
+		"server_name": "Beeton Backup",
+		"sdns_stamp":  "sdns://AgcAAAAAAAAABzUuNi43LjigbotherEndpointHere",
+	})
+
+	out, err := scrub(raw, parse(t, committedNetworkconf))
+	if err != nil {
+		t.Fatalf("scrubbing the recording: %v", err)
+	}
+
+	scrubbedServers := dohServers(t, out.setting)
+	if len(scrubbedServers) != 2 {
+		t.Fatalf("the scrub kept %d resolvers, want 2", len(scrubbedServers))
+	}
+	if scrubbedServers[0]["sdns_stamp"] == scrubbedServers[1]["sdns_stamp"] {
+		t.Errorf("both resolvers were given the stamp %v, so the recording says the site has one",
+			scrubbedServers[0]["sdns_stamp"])
+	}
+	if scrubbedServers[0]["server_name"] == scrubbedServers[1]["server_name"] {
+		t.Errorf("both resolvers were given the name %v", scrubbedServers[0]["server_name"])
+	}
+}
+
+// A Network version with no Encrypted DNS setting cannot supply the shape the
+// DNS suite replays, and a recording written without it would leave that suite
+// passing against the old fixture while the operator believed it was theirs.
+func TestScrubRefusesARecordingWithNoEncryptedDNSSetting(t *testing.T) {
+	raw := rawRecording(t)
+	raw.setting.Data = slices.DeleteFunc(raw.setting.Data, func(entry map[string]any) bool {
+		return entry["key"] == "doh"
+	})
+
+	_, err := scrub(raw, parse(t, committedNetworkconf))
+	if err == nil || !strings.Contains(err.Error(), "Encrypted DNS") {
+		t.Fatalf("scrubbing a recording with no doh setting returned %v, want an error saying so", err)
+	}
+}
+
 func TestScrubRefusesARecordingWithNoUplinkInIt(t *testing.T) {
 	raw := rawRecording(t)
 	raw.networkconf.Data = slices.DeleteFunc(raw.networkconf.Data, func(entry map[string]any) bool {
@@ -490,7 +620,35 @@ func rawRecording(t *testing.T) recording {
 		sysinfo:     parse(t, rawSysinfo),
 		networkconf: parse(t, rawNetworkconf),
 		wlanconf:    parse(t, rawWlanconf),
+		setting:     parse(t, rawSetting),
 	}
+}
+
+// doh is the Encrypted DNS setting in a scrubbed settings response — the only
+// entry there is meant to be left in one.
+func doh(t *testing.T, doc document) map[string]any {
+	t.Helper()
+	entry, held := dohIn(doc)
+	if !held {
+		t.Fatalf("the recording holds no Encrypted DNS setting")
+	}
+	return entry
+}
+
+// dohServers is the custom resolvers on a scrubbed Encrypted DNS setting.
+func dohServers(t *testing.T, doc document) []map[string]any {
+	t.Helper()
+	raw, _ := doh(t, doc)["custom_servers"].([]any)
+
+	servers := make([]map[string]any, 0, len(raw))
+	for _, server := range raw {
+		entry, ok := server.(map[string]any)
+		if !ok {
+			t.Fatalf("a custom DNS server came out of the scrub as %T", server)
+		}
+		servers = append(servers, entry)
+	}
+	return servers
 }
 
 func parse(t *testing.T, body string) document {

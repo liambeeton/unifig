@@ -29,7 +29,7 @@ On the UDR: UniFi OS → Control Plane → Admins & Users → your admin → Cre
 
 One `unifig.yaml` describes the Controller's configuration. `examples/unifig.yaml` is a working starting point; `schema/unifig.schema.json` is the contract.
 
-Sections reconcile as they land. `networks`, `wlans` and `wan` are the sections every verb handles today; the rest of the v1 catalogue — Encrypted DNS, firewall Zones and Policies, port forwards, DHCP reservations — follows.
+Sections reconcile as they land. `networks`, `wlans`, `wan` and `encrypted-dns` are the sections every verb handles today; the rest of the v1 catalogue — firewall Zones and Policies, port forwards, DHCP reservations — follows.
 
 A WLAN names the network its clients join, and that reference is checked offline:
 
@@ -49,6 +49,12 @@ wan:
     type: pppoe
     username: ${WAN_PPPOE_USERNAME}
     password: ${WAN_PPPOE_PASSWORD}
+
+encrypted-dns:                         # a mapping, not a list: there is one
+  state: custom
+  servers:
+    - name: AdGuard-DNS
+      stamp: ${DNS_ADGUARD_STAMP}      # a stamp is a secret — see below
 ```
 
 ### WAN slots are Settings, not Resources
@@ -60,6 +66,31 @@ Your router has the uplinks it has. So `wan` entries are matched by `slot` — `
 - **Every WAN change is confirmed on its own** before it is applied — see [Risky changes](#risky-changes).
 
 `type` is `dhcp`, `pppoe` or `disabled`. Static addressing, DS-Lite and MAP-E are not modelled yet, so a slot configured that way is left to the Controller entirely: `export` writes it as `- slot: WAN` and says so, and unifig changes nothing about how it connects.
+
+### Encrypted DNS is a Setting too, and there is exactly one
+
+`encrypted-dns` is what UniFi's UI calls DNS Shield. It is a Setting like the WAN slots — only ever updated, never created, deleted or pruned — and a **singleton**: a Controller has one, so the section is a mapping rather than a list, there is nothing to match it by, and a plan line about it carries no name:
+
+```
+  ~ encrypted-dns
+      state:                 off -> custom
+      servers:               (none) -> "AdGuard-DNS"
+      server "AdGuard-DNS":  (hidden)
+```
+
+`state` is `off`, `auto`, `manual` or `custom`. `manual` picks from the Controller's built-in providers, which unifig does not model — so it says which mode to be in and leaves the choice of providers to the UI.
+
+**`servers` is one field, not a list of Resources.** That is the one place in unifig where deleting a line from your file changes something on the Controller, so it is worth being precise about:
+
+- **Leave `servers` out** and unifig does not manage the list at all — your resolvers stay exactly as they are, even while unifig changes the `state` around them.
+- **State `servers`** and that list *is* the Controller's list. A resolver you stop naming is removed on the next apply — announced in the plan first, as `servers: "AdGuard-DNS", "Quad9" -> "AdGuard-DNS"`, so nothing goes unless you approve the line that says it is going.
+- **Write `servers: []`** to say there should be none. This is what `export` writes for a Controller with no custom resolvers, so an exported file always states the list rather than trailing off.
+
+A resolver's `name` is its natural key within the section, so two cannot share one — in your file, where `validate` catches it offline, or on the Controller, where unifig stops rather than guess which of the two you meant.
+
+A resolver already on the Controller keeps everything unifig does not model, including whether it is switched on: rotating a stamp does not re-enable a resolver you turned off in the UI. One unifig adds is enabled, because a resolver stored and ignored is a config line that does nothing.
+
+Changing encrypted DNS is **not** a [Risky change](#risky-changes), and the line is deliberate: a bad stamp breaks name resolution, but the uplink stays up, the Controller stays reachable, and the fix is one field away. Risky is reserved for changes whose recovery could need physical access (`docs/adr/0012-encrypted-dns-is-a-singleton-setting.md`).
 
 Every verb that reads config takes an optional file argument, defaulting to `./unifig.yaml`:
 
@@ -110,9 +141,9 @@ Interpolation keeps a secret out of the file. What keeps it out of everything el
 - **Validation messages never print one.** A passphrase outside the Controller's own 8-to-64-character bound is reported as a length, never as the value.
 - **Export redacts by default.** See [Export](#export).
 
-The modelled secrets today are a WLAN's `passphrase` and a WAN slot's PPPoE `password`, and both behave identically.
+The modelled secrets today are a WLAN's `passphrase`, a WAN slot's PPPoE `password` and a custom DNS server's `stamp`, and all three behave identically. A stamp is a secret because one for a private endpoint identifies the account it belongs to.
 
-Where a secret does have to be readable, it is because reconcile could not work otherwise: the Controller hands a WLAN's passphrase and a slot's PPPoE password back in the clear, which is what lets unifig tell "already correct" from "needs rotating" with no state file (`docs/adr/0007-secrets-read-back-so-they-diff-normally.md`).
+Where a secret does have to be readable, it is because reconcile could not work otherwise: the Controller hands all three back in the clear, which is what lets unifig tell "already correct" from "needs rotating" with no state file (`docs/adr/0007-secrets-read-back-so-they-diff-normally.md`).
 
 ## Plan and apply
 
@@ -261,6 +292,14 @@ so there is nothing for the config to say about it. unifig will match the slot
 and change nothing about how it connects.
 ```
 
+And a Controller old enough to predate encrypted DNS is described by a file with no `encrypted-dns` section, which export says rather than leaving you to wonder whether it forgot:
+
+```
+Wrote no `encrypted-dns:` section: this Controller has no Encrypted DNS setting to describe.
+```
+
+A firmware whose encrypted DNS is in a mode unifig doesn't model gets the same treatment one level down — the section is written, the `state` is left out rather than written as something `validate` would reject, and export says which mode that was.
+
 ### In a pipeline
 
 `plan` distinguishes its outcomes in its exit code, so a CI job or a git hook can gate on drift without reading the output:
@@ -294,6 +333,15 @@ and change nothing about how it connects.
     },
     {
       "action": "update",
+      "kind": "encrypted-dns",
+      "name": "",
+      "fields": [
+        { "name": "state", "from": "off", "to": "custom" },
+        { "name": "server \"AdGuard-DNS\"", "from": null, "to": null, "secret": true }
+      ]
+    },
+    {
+      "action": "update",
       "kind": "wan",
       "name": "WAN",
       "fields": [
@@ -306,7 +354,7 @@ and change nothing about how it connects.
 }
 ```
 
-`kind` is the managed type — `network`, `wlan`, `wan` — covering both the Resources unifig creates and deletes and the Settings it only updates. `risk` is present only on a change that needs individual confirmation.
+`kind` is the managed type — `network`, `wlan`, `encrypted-dns`, `wan` — covering both the Resources unifig creates and deletes and the Settings it only updates. `name` is how unifig matched the change, and is `""` for a singleton Setting, which has nothing to match on. `risk` is present only on a change that needs individual confirmation.
 
 Changes are listed in the order apply will run them, so a consumer reading the array is reading the sequence.
 
@@ -326,7 +374,7 @@ Requirements: Go for `make check`, plus Docker for `make e2e`. `make` installs i
 
 Tests drive the whole tool at the process boundary against a real dockerized Controller (see `docs/adr/0003-apikey-auth-os-gate.md` for the rig design). That suite is `make e2e`; `make test` runs everything else, skipping it. The Controller version pin lives in `e2e/rig_test.go` (`defaultControllerImage`) and in the CI matrix.
 
-WAN slots are the one thing that container cannot stand in for — with no gateway it has no WAN entries at all — so those tests run against recorded Controller responses served at the same base URL, through the same API-key header, to the same real binary (`e2e/replay_test.go`). The recordings live in `e2e/testdata/udr/`. `make record-udr` re-records them from a real router: read-only against the Controller, scrubbed by a program with tests rather than by a filter in prose (`tools/record-udr/`), and stopping to make you read the diff. The committed recording is from a real UDR running Network 10.5.67. `docs/adr/0008-wan-slots-replay-recorded-responses.md` explains the design and what the hardware confirmed; `docs/adr/0011-a-recording-carries-only-the-uplinks.md` explains how much of a recording has to be real.
+The Settings are what that container cannot stand in for — with no gateway it has no WAN entries at all, and no container can be trusted to say what a Setting looks like on the firmware you actually run — so those tests run against recorded Controller responses served at the same base URL, through the same API-key header, to the same real binary (`e2e/replay_test.go`). The recordings live in `e2e/testdata/udr/`. `make record-udr` re-records them from a real router: read-only against the Controller, scrubbed by a program with tests rather than by a filter in prose (`tools/record-udr/`), and stopping to make you read the diff. The committed recording is from a real UDR running Network 10.5.67. `docs/adr/0008-wan-slots-replay-recorded-responses.md` explains the design and what the hardware confirmed; `docs/adr/0011-a-recording-carries-only-the-uplinks.md` explains how much of a recording has to be real; `docs/adr/0012-encrypted-dns-is-a-singleton-setting.md` covers the second Setting.
 
 Validate's tests are the exception, and deliberately so: it is offline by design, and requiring Docker to prove no Controller is needed would be an odd way to demonstrate it. They sit at the highest Docker-free seam instead — `cli.Run`, driven from an external test package in `internal/cli/` so they cannot reach past it.
 

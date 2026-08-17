@@ -85,15 +85,15 @@ func pppoeConfig(slot string) string {
 
 // exportedSecretEnv is the environment a freshly exported config needs in order
 // to plan: every secret export redacted, put back to the value the Controller
-// holds for it.
+// holds for it. Both Settings suites end a brownfield test this way.
 //
 // The variable names are read out of export's own output rather than written
-// down again here. Export names them after the WLAN or the slot they belong to
-// and de-duplicates the result, so a second copy of that rule in the test suite
-// is a thing that can drift — and it would only ever be right for the WLANs and
-// slots the committed recording happens to hold. What the file says is `${VAR}`
-// beside the natural key of the thing the secret belongs to, which is all it
-// takes to ask the recording for the value.
+// down again here. Export names them after the WLAN, the slot or the resolver
+// they belong to and de-duplicates the result, so a second copy of that rule in
+// the test suite is a thing that can drift — and it would only ever be right
+// for the secrets the committed recording happens to hold. What the file says
+// is `${VAR}` beside the natural key of the thing the secret belongs to, which
+// is all it takes to ask the recording for the value.
 func exportedSecretEnv(t *testing.T, r *replay, exported []byte) map[string]string {
 	t.Helper()
 
@@ -107,6 +107,13 @@ func exportedSecretEnv(t *testing.T, r *replay, exported []byte) map[string]stri
 	for _, slot := range cfg.WAN {
 		if name, ok := envReference(slot.Password); ok {
 			env[name] = r.slotPassword(t, slot.Slot)
+		}
+	}
+	if cfg.EncryptedDNS != nil {
+		for _, server := range cfg.EncryptedDNS.Servers {
+			if name, ok := envReference(server.Stamp); ok {
+				env[name] = r.stampFor(t, server.Name)
+			}
 		}
 	}
 	return env

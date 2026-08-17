@@ -42,3 +42,57 @@ func TestAnAbsentSectionLoadsAsNilAndAnEmptyOneDoesNot(t *testing.T) {
 		})
 	}
 }
+
+// The same distinction one level down. Encrypted DNS is a singleton Setting, so
+// prune never reaches it — but its `servers:` is a list unifig writes whole, and
+// "leave the Controller's servers alone" and "there should be none" are opposite
+// instructions that differ only by a nil.
+func TestAnAbsentServerListLoadsAsNilAndAnEmptyOneDoesNot(t *testing.T) {
+	for _, section := range []struct {
+		what    string
+		body    string
+		wantNil bool
+	}{
+		{"no servers key at all", "encrypted-dns:\n  state: auto\n", true},
+		{"an empty servers list", "encrypted-dns:\n  state: auto\n  servers: []\n", false},
+	} {
+		t.Run(section.what, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "unifig.yaml")
+			if err := os.WriteFile(path, []byte(section.body), 0o600); err != nil {
+				t.Fatalf("writing config: %v", err)
+			}
+
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("loading config: %v", err)
+			}
+			if cfg.EncryptedDNS == nil {
+				t.Fatalf("the file has an encrypted-dns section, but it loaded as nil")
+			}
+			if len(cfg.EncryptedDNS.Servers) != 0 {
+				t.Fatalf("loaded %d servers from a file that lists none", len(cfg.EncryptedDNS.Servers))
+			}
+			if (cfg.EncryptedDNS.Servers == nil) != section.wantNil {
+				t.Errorf("Servers == nil is %v for %s, want %v",
+					cfg.EncryptedDNS.Servers == nil, section.what, section.wantNil)
+			}
+		})
+	}
+}
+
+// And the section itself: a file with no `encrypted-dns:` key says nothing about
+// encrypted DNS, which is what keeps plan from even reading the setting.
+func TestAnAbsentEncryptedDNSSectionLoadsAsNil(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "unifig.yaml")
+	if err := os.WriteFile(path, []byte("networks:\n  - name: IoT\n    vlan: 20\n"), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+	if cfg.EncryptedDNS != nil {
+		t.Errorf("a file with no encrypted-dns section loaded as %+v, want nil", cfg.EncryptedDNS)
+	}
+}

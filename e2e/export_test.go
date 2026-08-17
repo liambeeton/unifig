@@ -14,9 +14,10 @@ import (
 // expected values are independent literals: the demo Controller's built-in
 // Default network, and networks the rig seeds through the Controller's API.
 type exportedConfig struct {
-	Networks []exportedNetwork `yaml:"networks"`
-	WLANs    []exportedWLAN    `yaml:"wlans"`
-	WAN      []exportedWANSlot `yaml:"wan"`
+	Networks     []exportedNetwork     `yaml:"networks"`
+	WLANs        []exportedWLAN        `yaml:"wlans"`
+	WAN          []exportedWANSlot     `yaml:"wan"`
+	EncryptedDNS *exportedEncryptedDNS `yaml:"encrypted-dns"`
 }
 
 type exportedNetwork struct {
@@ -39,6 +40,19 @@ type exportedWANSlot struct {
 	Type     string `yaml:"type"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+}
+
+// exportedEncryptedDNS is the other Setting, and a pointer because absence is
+// a thing export can say: a Controller with no such setting is described by a
+// file that leaves the section out.
+type exportedEncryptedDNS struct {
+	State   string              `yaml:"state"`
+	Servers []exportedDNSServer `yaml:"servers"`
+}
+
+type exportedDNSServer struct {
+	Name  string `yaml:"name"`
+	Stamp string `yaml:"stamp"`
 }
 
 // exportedYAML parses what export wrote. It lives beside the shape it parses,

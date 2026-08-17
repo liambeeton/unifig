@@ -6,10 +6,11 @@ import (
 )
 
 // ADR-0008 records two things about a WAN slot that no container can settle,
-// and the moment somebody has a real router on the other end of this program
-// is the moment to ask. Both are read off the response that has just come
-// back — nothing extra is requested, nothing is written — and both are
-// answered without printing the credential they are about.
+// and ADR-0012 one more about the Encrypted DNS setting. The moment somebody
+// has a real router on the other end of this program is the moment to ask. All
+// are read off the responses that have just come back — nothing extra is
+// requested, nothing is written — and all are answered without printing the
+// secret they are about.
 
 // readback is what the Controller did with the PPPoE password when asked for
 // the slot back. The three cases are three different worlds: populated means
@@ -54,7 +55,41 @@ func answers(networkconf document) []answer {
 }
 
 func readbackOf(entry map[string]any) readback {
-	value, ok := entry["x_wan_password"]
+	return fieldReadback(entry, "x_wan_password")
+}
+
+// stamps is what the Controller did with each custom DNS server's stamp when
+// asked for the setting back — ADR-0012's one deferred question, and the same
+// question as the PPPoE password's, asked about the third secret unifig models.
+//
+// Each answer is named by its resolver rather than by its stamp, for the same
+// reason the slot names the uplink: the value is the thing being asked about.
+type stamps []answer
+
+func stampAnswer(setting document) stamps {
+	doh, held := dohIn(setting)
+	if !held {
+		return nil
+	}
+	servers, _ := doh["custom_servers"].([]any)
+
+	var given stamps
+	for i, server := range servers {
+		entry, ok := server.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := entry["server_name"].(string)
+		if name == "" {
+			name = fmt.Sprintf("custom_servers[%d]", i)
+		}
+		given = append(given, answer{slot: name, password: fieldReadback(entry, "sdns_stamp")})
+	}
+	return given
+}
+
+func fieldReadback(entry map[string]any, name string) readback {
+	value, ok := entry[name]
 	switch {
 	case !ok || value == nil:
 		return absent
@@ -78,31 +113,43 @@ func flagValue(entry map[string]any, name string) string {
 }
 
 // report writes the answers where the operator running this will read them,
-// in the form the ADR wants them in.
-func report(w io.Writer, given []answer) {
+// in the form the ADRs want them in.
+func report(w io.Writer, given []answer, stamped stamps) {
 	line := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-	line("ADR-0008 leaves two questions open that only a real router can answer.\n")
-	line("This recording was read, not written, and it says:\n\n")
+	line("The ADRs leave questions open that only a real router can answer. This\n")
+	line("recording was read, not written, and it says:\n\n")
 
+	line("ADR-0008, about a WAN slot:\n\n")
 	if len(given) == 0 {
 		line("  Nothing yet: this router has no uplink on PPPoE, and both questions are\n")
 		line("  about a slot that signs in. They stay open.\n\n")
-		return
+	} else {
+		line("  1. Does x_wan_password read back populated?\n")
+		for _, a := range given {
+			line("     %s: %s\n", a.slot, a.password)
+		}
+		line("\n  2. What do the PPPoE flags hold on a slot that works?\n")
+		for _, a := range given {
+			line("     %s:", a.slot)
+			for _, f := range a.flags {
+				line(" %s=%s", f.name, f.value)
+			}
+			line("\n")
+		}
+		line("\n  If one of those uplinks is the one this site actually connects on, that\n")
+		line("  is the answer to both: record it in docs/adr/0008-wan-slots-replay-recorded-responses.md.\n\n")
 	}
 
-	line("  1. Does x_wan_password read back populated?\n")
-	for _, a := range given {
+	line("ADR-0012, about the Encrypted DNS setting:\n\n")
+	if len(stamped) == 0 {
+		line("  Nothing yet: this router has no custom DNS server configured, and the\n")
+		line("  question is about a stamp it would have to hold. It stays open.\n\n")
+		return
+	}
+	line("  3. Does sdns_stamp read back populated?\n")
+	for _, a := range stamped {
 		line("     %s: %s\n", a.slot, a.password)
 	}
-	line("\n  2. What do the PPPoE flags hold on a slot that works?\n")
-	for _, a := range given {
-		line("     %s:", a.slot)
-		for _, f := range a.flags {
-			line(" %s=%s", f.name, f.value)
-		}
-		line("\n")
-	}
-	line("\n  If one of those uplinks is the one this site actually connects on, that\n")
-	line("  is the answer to both: record it in docs/adr/0008-wan-slots-replay-recorded-responses.md.\n\n")
+	line("\n  Record it in docs/adr/0012-encrypted-dns-is-a-singleton-setting.md.\n\n")
 }

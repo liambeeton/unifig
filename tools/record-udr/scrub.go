@@ -15,20 +15,29 @@ import (
 // program with tests rather than a filter in a README. Two questions, answered
 // here once:
 //
-// **How much of a recording has to be real?** Only the uplinks. The dockerized
-// Controller is a real Network application and already covers the networks and
-// the WLANs; the one thing a gateway-less container cannot produce is a WAN
-// entry (ADR-0008). So the WAN entries come from the router, the LAN comes
-// from the recording already committed, and the WLANs are emptied. Recording
-// the rest would prove nothing the container does not already prove, and would
-// cost the household's subnets, VLAN layout and every SSID.
+// **How much of a recording has to be real?** Only the Settings — the uplinks
+// and the Encrypted DNS setting. The dockerized Controller is a real Network
+// application and already covers the networks and the WLANs; what a gateway-less
+// container cannot produce is a WAN entry (ADR-0008), and what no container can
+// be trusted to produce is the shape of a Setting on the firmware an operator
+// actually runs (ADR-0012). So those come from the router, the LAN comes from
+// the recording already committed, and the WLANs are emptied. Recording the rest
+// would prove nothing the container does not already prove, and would cost the
+// household's subnets, VLAN layout and every SSID.
 //
-// **What is left of an uplink?** Everything except the parts that name a
-// person: the credentials, the addressing the ISP handed out, the identifiers
-// that name one console, and the operator's own name for their connection.
-// Each is replaced by a placeholder of the same type rather than removed — a
-// field that vanished is a field the tests stopped exercising, and nobody
-// would find out until a UDR behaved differently from the recording.
+// The settings response is the one place this program throws most of a response
+// away rather than replacing it. `get/setting` answers with the whole console's
+// configuration — mail servers, RADIUS, guest portals, remote access — and
+// unifig reads exactly one key out of it. Keeping only that key is the same
+// decision as emptying the WLANs, taken where the stakes are higher.
+//
+// **What is left of what it keeps?** Everything except the parts that name a
+// person: the credentials, the DNS stamps, the addressing the ISP handed out,
+// the identifiers that name one console, and the operator's own names for their
+// connection and their resolvers. Each is replaced by a placeholder of the same
+// type rather than removed — a field that vanished is a field the tests stopped
+// exercising, and nobody would find out until a UDR behaved differently from
+// the recording.
 //
 // The last line of defence is `leaks`: whatever the scrub took out, it goes
 // looking for again in what it is about to write, and refuses to write a
@@ -49,6 +58,16 @@ const (
 	placeholderHostname   = "unifi"
 	placeholderTimezone   = "UTC"
 	placeholderConsole    = "UniFi Console"
+
+	// A stamp and a resolver's name are counted rather than fixed for the same
+	// reason an address is: a site with two resolvers has two of each, and
+	// collapsing them into one would say the site has one resolver written down
+	// twice. The stamp keeps its `sdns://` prefix and the alphabet a real one
+	// uses, so the recording stays a config unifig's own schema accepts.
+	placeholderStamp     = "sdns://recorded-dns-stamp-%d"
+	placeholderResolver  = "recorded-dns-server-%d"
+	documentationStamps  = "sdns://recorded-dns-stamp-"
+	documentationServers = "recorded-dns-server-"
 
 	// Counted placeholders, one per distinct value. The addresses come from
 	// the ranges the RFCs set aside for documentation (RFC 5737, RFC 3849,
@@ -73,17 +92,18 @@ type document struct {
 	Data []map[string]any `json:"data"`
 }
 
-// recording is the three responses together — the whole of what the WAN suite
-// replays, and the unit this program fetches, scrubs and writes.
+// recording is the responses together — the whole of what the replay stand-in
+// serves, and the unit this program fetches, scrubs and writes.
 type recording struct {
 	sysinfo     document
 	networkconf document
 	wlanconf    document
+	setting     document
 }
 
 // file is the response one recorded endpoint answers with, addressed by the
-// file that holds it. One place knows this mapping, so adding a fourth
-// endpoint is an entry in `endpoints` and a field here.
+// file that holds it. One place knows this mapping, so adding another endpoint
+// is an entry in `endpoints` and a field here.
 func (r *recording) file(name string) *document {
 	switch name {
 	case "sysinfo.json":
@@ -92,6 +112,8 @@ func (r *recording) file(name string) *document {
 		return &r.networkconf
 	case "wlanconf.json":
 		return &r.wlanconf
+	case "setting.json":
+		return &r.setting
 	default:
 		panic("no recorded response is held in " + name)
 	}
@@ -111,6 +133,10 @@ func scrub(raw recording, committed document) (recording, error) {
 	if len(raw.sysinfo.Data) == 0 {
 		return recording{}, fmt.Errorf("the recording holds no sysinfo, so it does not say which Controller answered")
 	}
+	doh, held := dohIn(raw.setting)
+	if !held {
+		return recording{}, fmt.Errorf("the recording holds no Encrypted DNS setting (no %q key in get/setting), which is the other shape only a real router can supply; a Network version that predates encrypted DNS cannot re-record these fixtures", dohKey)
+	}
 
 	s := &scrubber{
 		site:         siteOf(committed),
@@ -122,6 +148,10 @@ func scrub(raw recording, committed document) (recording, error) {
 		return recording{}, err
 	}
 	console := s.sysinfo(raw.sysinfo.Data)
+	// Scrubbed after the two responses that were here first, so that the
+	// counted placeholders they already hold keep the numbers they already had
+	// and a re-recording is still an empty diff where nothing changed.
+	setting := s.object("setting["+dohKey+"]", doh)
 
 	out := recording{
 		sysinfo:     document{Meta: s.object("sysinfo.meta", raw.sysinfo.Meta), Data: console},
@@ -129,6 +159,9 @@ func scrub(raw recording, committed document) (recording, error) {
 		// Emptied rather than dropped: the endpoint still answers, because a
 		// recording is a statement of what unifig talks to.
 		wlanconf: document{Meta: s.object("wlanconf.meta", raw.wlanconf.Meta), Data: []map[string]any{}},
+		// Reduced to the one key unifig reads, for the reason at the top of
+		// this file: the rest of that response is the whole console.
+		setting: document{Meta: s.object("setting.meta", raw.setting.Meta), Data: []map[string]any{setting}},
 	}
 
 	// Everything that came off the router, and only that. The LAN came from
@@ -139,6 +172,8 @@ func scrub(raw recording, committed document) (recording, error) {
 		{"sysinfo.meta", out.sysinfo.Meta},
 		{"networkconf.meta", out.networkconf.Meta},
 		{"wlanconf.meta", out.wlanconf.Meta},
+		{"setting.meta", out.setting.Meta},
+		{"setting[" + dohKey + "]", setting},
 	}
 	for i, entry := range console {
 		checked = append(checked, checkable{fmt.Sprintf("sysinfo[%d]", i), entry})
@@ -165,6 +200,21 @@ func uplinksIn(doc document) []map[string]any {
 		}
 	}
 	return uplinks
+}
+
+// dohKey is the Controller's own name for the Encrypted DNS setting, and the
+// key unifig picks out of the settings response.
+const dohKey = "doh"
+
+// dohIn finds the Encrypted DNS setting in a settings response — the one entry
+// of that response this recording keeps.
+func dohIn(doc document) (map[string]any, bool) {
+	for _, entry := range doc.Data {
+		if entry["key"] == dohKey {
+			return entry, true
+		}
+	}
+	return nil, false
 }
 
 func networksIn(doc document) []map[string]any {
@@ -233,6 +283,8 @@ const (
 	shapeIPv4
 	shapeIPv6
 	shapeMAC
+	shapeStamp
+	shapeResolver
 
 	// shapeCount is how many there are, so that a test can check every one has
 	// a rule below. Keep it last: a shape with no rule would empty the field it
@@ -266,6 +318,8 @@ var rules = map[shape]rule{
 	shapeIPv4:        {counted: placeholderIPv4, written: writtenAddress},
 	shapeIPv6:        {counted: placeholderIPv6, written: writtenAddress},
 	shapeMAC:         {counted: placeholderMAC, written: prefixedBy(documentationMACs)},
+	shapeStamp:       {counted: placeholderStamp, written: prefixedBy(documentationStamps)},
+	shapeResolver:    {counted: placeholderResolver, written: prefixedBy(documentationServers)},
 }
 
 // byName is the table of fields replaced because of what they are called. No
@@ -281,6 +335,10 @@ var byName = map[string]shape{
 	"x_username":     shapeUsername,
 	"username":       shapeUsername,
 	"hostname":       shapeHostname,
+	// A DNS stamp for a private endpoint carries the account it belongs to, and
+	// the name beside it is the operator's own word for their resolver.
+	"sdns_stamp":  shapeStamp,
+	"server_name": shapeResolver,
 	// A timezone is where the operator lives, spelled as a city.
 	"timezone": shapeTimezone,
 	"site_id":  shapeSite,

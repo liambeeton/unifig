@@ -379,7 +379,13 @@ func runExport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := export.WriteOmissions(stderr, notices.IndescribableWLANs); err != nil {
 		return err
 	}
-	return export.WritePartialWANSlots(stderr, notices.PartialWANSlots)
+	if err := export.WritePartialWANSlots(stderr, notices.PartialWANSlots); err != nil {
+		return err
+	}
+	if err := export.WriteNoEncryptedDNS(stderr, notices.NoEncryptedDNS); err != nil {
+		return err
+	}
+	return export.WriteUnmodelledDNSState(stderr, notices.UnmodelledDNSState)
 }
 
 // writeConfig writes the config to path, or to stdout when there is no path.

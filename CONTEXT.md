@@ -15,16 +15,24 @@ A Controller configuration object with a full create/update/delete lifecycle and
 _Avoid_: object, entity
 
 **Setting**:
-A fixed-slot or singleton configuration area of the Controller that can only be updated — never created, deleted, or pruned. WAN slots and Encrypted DNS are Settings.
+A fixed-slot or singleton configuration area of the Controller that can only be updated — never created, deleted, or pruned. WAN slots and Encrypted DNS are Settings. A slot is matched by the Controller's own name for it; a singleton is matched by being the only one, so it has no name at all and a Plan line about one carries none.
 _Avoid_: resource (for these)
 
 **Kind**:
-The managed type a change is about — `network`, `wlan`, `wan` — covering Resources and Settings alike, because an operator reads and approves a change to either the same way. It is the word a Plan line leads with and the field `plan --json` carries.
+The managed type a change is about — `network`, `wlan`, `encrypted-dns`, `wan` — covering Resources and Settings alike, because an operator reads and approves a change to either the same way. It is the word a Plan line leads with and the field `plan --json` carries.
 _Avoid_: resource (a Setting is not one), type (says nothing about what is being typed)
 
 **WAN slot**:
 One of the Controller's internet uplinks, and the first Setting. Matched by the Controller's own name for the slot — `WAN`, `WAN2`, `WAN_LTE_FAILOVER` — rather than by the entry's name, which an operator can rename to their ISP without it ceasing to be the primary uplink. Every change to one is a Risky change.
 _Avoid_: WAN network (it lives in the same collection as the networks but is not one), WAN interface, uplink port
+
+**Encrypted DNS**:
+The Controller's setting for resolving DNS over an encrypted transport, which UniFi's UI calls DNS Shield. The second Setting and the first singleton: a Controller has exactly one, so there is nothing to match it by. Its custom resolvers are one field of it rather than a collection of Resources, which is why stating them in the config states the whole list.
+_Avoid_: DNS Shield (Ubiquiti's marketing name for it), DoH (names one of the transports a DNS Stamp can describe, not the setting)
+
+**DNS Stamp**:
+The single `sdns://` string that describes an encrypted resolver — its address, protocol and public key in one value. A Secret, because a stamp for a private endpoint identifies the account it belongs to. It is how the config states a custom resolver, since it is the only thing the Controller asks for.
+_Avoid_: DNS URL, resolver string
 
 **WLAN**:
 A wireless network (SSID) the Controller broadcasts. A Resource, matched by name, and bound to the Network its clients join — the reference that makes cross-reference validation necessary.
@@ -47,7 +55,7 @@ _Avoid_: sync (ambiguous about direction)
 Deleting live Resources of a managed type that are absent from the config. Never implicit — only on explicit request, and built-in undeletable objects are always exempt.
 
 **Risky change**:
-A change that can sever internet or management connectivity (e.g. any WAN/PPPoE mutation). Always individually confirmed, never silently applied — and never hard-blocked.
+A change that can sever internet or management connectivity (e.g. any WAN/PPPoE mutation). Always individually confirmed, never silently applied — and never hard-blocked. The test is whether recovery could need physical access: an Encrypted DNS change can break name resolution for a whole site and is still not Risky, because the Controller stays reachable and the fix is one field away (ADR-0012).
 
 ### Workflow
 

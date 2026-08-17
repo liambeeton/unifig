@@ -32,9 +32,10 @@ import (
 // preserves that distinction, so nothing here may normalise a nil section into
 // an empty slice.
 type Config struct {
-	Networks []Network `yaml:"networks,omitempty"`
-	WLANs    []WLAN    `yaml:"wlans,omitempty"`
-	WAN      []WANSlot `yaml:"wan,omitempty"`
+	Networks     []Network     `yaml:"networks,omitempty"`
+	WLANs        []WLAN        `yaml:"wlans,omitempty"`
+	WAN          []WANSlot     `yaml:"wan,omitempty"`
+	EncryptedDNS *EncryptedDNS `yaml:"encrypted-dns,omitempty"`
 }
 
 // Network is the operator-facing projection of a Controller network Resource,
@@ -75,6 +76,39 @@ type WANSlot struct {
 	Type     string `yaml:"type,omitempty"`
 	Username string `yaml:"username,omitempty"`
 	Password string `yaml:"password,omitempty"`
+}
+
+// EncryptedDNS is the Controller's Encrypted DNS setting — the second Setting
+// unifig manages, and the first singleton. A Controller has exactly one, which
+// is why this is a pointer on Config rather than a slice: there is no key to
+// match on, and the only question the file answers is whether it says anything
+// about encrypted DNS at all.
+//
+// Servers is nil and empty for different reasons, in the same load-bearing way
+// as a Config section: no `servers:` key leaves the Controller's own list
+// alone, while `servers: []` states that there should be none.
+//
+// Which is why it is the one field here without `omitempty`. A Controller with
+// no custom resolvers has to export as `servers: []` — the file saying the list
+// is empty — and `omitempty` would drop that to no key at all, which says the
+// opposite: leave whatever is there alone. A distinction worth preserving on
+// the way in is worth being able to write on the way out.
+type EncryptedDNS struct {
+	State   string      `yaml:"state,omitempty"`
+	Servers []DNSServer `yaml:"servers"`
+}
+
+// DNSServer is one custom encrypted resolver — an entry in the Controller's own
+// `custom_servers`.
+//
+// Stamp is the third secret unifig models. A stamp for a private endpoint
+// carries the identifier of the account it belongs to, so it behaves exactly
+// like a WLAN passphrase or a PPPoE password: written as a `${ENV_VAR}`
+// reference, resolved by Load, and redacted everywhere it could leave
+// (ADR-0007).
+type DNSServer struct {
+	Name  string `yaml:"name"`
+	Stamp string `yaml:"stamp"`
 }
 
 // DefaultPath is where unifig looks for config when no file is named.

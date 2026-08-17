@@ -19,7 +19,7 @@ func (p Plan) Write(out io.Writer) error {
 	for _, change := range p.Changes {
 		// The mark leads each line so a long plan can be skimmed down the
 		// left margin without reading a word of it.
-		fmt.Fprintf(&b, "  %s %s %q\n", actions[change.Action].mark, change.Kind, change.Name)
+		fmt.Fprintf(&b, "  %s\n", change.Summary())
 		width := change.fieldWidth()
 		for _, field := range change.Fields {
 			fmt.Fprintf(&b, "      %-*s %s\n", width, field.Name+":", change.render(field))
@@ -69,15 +69,29 @@ func (p Plan) WriteJSON(out io.Writer) error {
 }
 
 // Summary is the change as a single line — its mark, its kind and its name —
-// the way the plan's own heading line reads.
+// and it is literally the plan's own heading line.
 //
 // It is exported because a change gets talked about outside a plan: apply says
 // which ones it did not reach, and the command layer asks the operator about a
-// Risky one by name. All three have to be recognisably the same change, and the
-// way to guarantee that is for there to be one place that says what a change
-// looks like.
+// Risky one by name. All of them have to be recognisably the same change, and
+// the way to guarantee that is for there to be one place that says what a
+// change looks like.
 func (c Change) Summary() string {
-	return fmt.Sprintf("%s %s %q", actions[c.Action].mark, c.Kind, c.Name)
+	return actions[c.Action].mark + " " + c.subject()
+}
+
+// subject is what a change is about: its kind, and the name unifig matched it
+// by where there is one.
+//
+// A singleton Setting has no name, and printing an empty pair of quotes for one
+// would be reporting an identity that does not exist — there is one Encrypted
+// DNS setting on a Controller, and `~ encrypted-dns` is the whole of what there
+// is to say about which one this is.
+func (c Change) subject() string {
+	if c.Name == "" {
+		return string(c.Kind)
+	}
+	return fmt.Sprintf("%s %q", c.Kind, c.Name)
 }
 
 // fieldWidth is how wide the field-name column has to be for this change's

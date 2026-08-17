@@ -1,25 +1,26 @@
-// Command record-udr re-records the Controller responses the WAN suite
-// replays, from a real UniFi Dream Router, with everything that names a
+// Command record-udr re-records the Controller responses the Settings suites
+// replay, from a real UniFi Dream Router, with everything that names a
 // household taken out on the way through.
 //
 // Run it as `make record-udr`, with UNIFIG_HOST and UNIFIG_API_KEY pointing at
 // the router — the same variables unifig itself reads. It is read-only against
-// the Controller: three GETs, no other method anywhere in this program, so the
+// the Controller: four GETs, no other method anywhere in this program, so the
 // worst it can do to a live site is nothing.
 //
 // What it does, in order:
 //
-//  1. asks the Controller for the three responses the recording holds;
-//  2. answers the two questions ADR-0008 leaves open, out of what came back;
+//  1. asks the Controller for the responses the recording holds;
+//  2. answers the questions ADR-0008 and ADR-0012 leave open, out of what came
+//     back;
 //  3. scrubs the recording (scrub.go — the part worth reviewing), which
 //     refuses rather than writes if anything it took out survives;
-//  4. writes the three files and stops, so the operator reads the diff before
+//  4. writes the files and stops, so the operator reads the diff before
 //     anything is committed. Nothing here commits, and nothing here pushes.
 //
 // The raw responses never touch the repository: they go to a temporary
 // directory outside it, and are deleted before this program exits. They carry
-// the PPPoE password in the clear, which is the whole reason this program is
-// not three curl commands.
+// the PPPoE password and the DNS stamps in the clear, which is the whole reason
+// this program is not four curl commands.
 package main
 
 import (
@@ -46,6 +47,7 @@ var endpoints = []struct{ file, path string }{
 	{"sysinfo.json", "/proxy/network/api/s/default/stat/sysinfo"},
 	{"networkconf.json", "/proxy/network/api/s/default/rest/networkconf"},
 	{"wlanconf.json", "/proxy/network/api/s/default/rest/wlanconf"},
+	{"setting.json", "/proxy/network/api/s/default/get/setting"},
 }
 
 func main() {
@@ -65,7 +67,7 @@ func run() int {
 	}
 
 	asking := bufio.NewScanner(os.Stdin)
-	say("record-udr reads three responses from the Controller at %s and rewrites\n", conn.url)
+	say("record-udr reads %d responses from the Controller at %s and rewrites\n", len(endpoints), conn.url)
 	say("%s from them. It only ever asks the Controller for things: no\n", recordingDir)
 	say("change is made to the router, and nothing is committed here.\n\n")
 	if !yes(asking, "Go ahead and read the Controller") {
@@ -84,9 +86,10 @@ func run() int {
 		return fail(err)
 	}
 	say("\nRead %d responses. The raw copies are in %s, and this program deletes\n", len(endpoints), rawDir)
-	say("them before it exits — they hold the PPPoE password in the clear.\n\n")
+	say("them before it exits — they hold the PPPoE password and the DNS stamps in\n")
+	say("the clear.\n\n")
 
-	report(os.Stdout, answers(raw.networkconf))
+	report(os.Stdout, answers(raw.networkconf), stampAnswer(raw.setting))
 
 	committed, err := readRecording("networkconf.json")
 	if err != nil {
@@ -104,10 +107,11 @@ func run() int {
 	if err := showDiff(); err != nil {
 		return fail(err)
 	}
-	say("\nThe scrub replaced the credentials, the ISP's addressing, the console's\n")
-	say("identifiers and your own name for your connection, took the LAN from the\n")
-	say("recording already committed, and emptied the WLANs. What it cannot know\n")
-	say("is a field it has never heard of. So, in the diff above:\n\n")
+	say("\nThe scrub replaced the credentials, the DNS stamps, the ISP's addressing,\n")
+	say("the console's identifiers and your own names for your connection and your\n")
+	say("resolvers, took the LAN from the recording already committed, emptied the\n")
+	say("WLANs, and kept nothing from the settings but Encrypted DNS. What it cannot\n")
+	say("know is a field it has never heard of. So, in the diff above:\n\n")
 	say("  - does any value name your ISP, your street, your family or your site?\n")
 	say("  - is any address in it one that is actually routed to you?\n")
 	say("  - is there anything there you would not put on a postcard?\n\n")
@@ -121,7 +125,7 @@ func run() int {
 	}
 
 	say("\nNothing has been committed yet. What is left:\n\n")
-	say("    make e2e          # the WAN suite, now against your router's recording\n")
+	say("    make e2e          # the Settings suites, now against your router's recording\n")
 	say("    git add %s && git commit\n\n", recordingDir)
 	say("If the suite fails, that is worth reading closely: it is the first time\n")
 	say("these tests have run against a real UDR (ADR-0008).\n")

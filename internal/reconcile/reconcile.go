@@ -101,9 +101,10 @@ var actions = map[Action]struct {
 type Kind string
 
 const (
-	Network Kind = "network"
-	WLAN    Kind = "wlan"
-	WANSlot Kind = "wan"
+	Network      Kind = "network"
+	WLAN         Kind = "wlan"
+	EncryptedDNS Kind = "encrypted-dns"
+	WANSlot      Kind = "wan"
 )
 
 // kinds is what the rest of the package needs to know about a managed type:
@@ -117,17 +118,27 @@ const (
 // flips for deletions, because the Controller will not let go of something
 // still referenced.
 //
-// A WAN slot references nothing and nothing references it, so its place is
-// decided by its risk instead: it goes after the rest, which means an apply
-// that fails earlier has not touched the uplink, and one that gets there has
-// already done all the safe work.
+// A Setting references nothing and nothing references it, so its place is
+// decided by what a mistake costs instead. The WAN slot goes last, which means
+// an apply that fails earlier has not touched the uplink, and one that gets
+// there has already done all the safe work. Encrypted DNS sits just before it,
+// on the same reasoning one step down: it can break name resolution for the
+// whole site, and there is no sense in changing how the site resolves names
+// before the changes that decide what there is to resolve.
+//
+// A singleton's plural is unreachable by construction — the messages that use
+// `many` are about telling two of something apart, and there are never two
+// Encrypted DNS settings. It is filled in anyway rather than left blank,
+// because the failure mode of a missing entry is a sentence with a hole in it
+// rather than a compile error.
 var kinds = map[Kind]struct {
 	order     int
 	one, many string
 }{
-	Network: {order: 0, one: "network", many: "networks"},
-	WLAN:    {order: 1, one: "WLAN", many: "WLANs"},
-	WANSlot: {order: 2, one: "WAN slot", many: "WAN slots"},
+	Network:      {order: 0, one: "network", many: "networks"},
+	WLAN:         {order: 1, one: "WLAN", many: "WLANs"},
+	EncryptedDNS: {order: 2, one: "Encrypted DNS setting", many: "Encrypted DNS settings"},
+	WANSlot:      {order: 3, one: "WAN slot", many: "WAN slots"},
 }
 
 // Options are the choices a verb makes on the operator's behalf for a whole
@@ -155,6 +166,12 @@ type Change struct {
 	// Name is how unifig matched this one — a Resource's natural key, a
 	// Setting's slot — and the only identity that appears anywhere outside
 	// this package.
+	//
+	// It is empty for a singleton Setting such as Encrypted DNS, of which a
+	// Controller has exactly one: there was nothing to match on, so there is
+	// nothing to report. The field stays in the JSON rather than being omitted,
+	// so a consumer reads "" where there is no name instead of having to know
+	// which kinds have one.
 	Name   string  `json:"name"`
 	Fields []Field `json:"fields"`
 	// Risk is what an operator stands to lose by applying this change, in the
@@ -299,6 +316,13 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 		}
 		changes = append(changes, wlans...)
 	}
+	if cfg.EncryptedDNS != nil {
+		dns, err := planEncryptedDNS(ctx, client, site, *cfg.EncryptedDNS)
+		if err != nil {
+			return Plan{}, err
+		}
+		changes = append(changes, dns...)
+	}
 	if cfg.WAN != nil {
 		slots, err := planWANSlots(cfg, all)
 		if err != nil {
@@ -356,8 +380,18 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 		return config.Config{}, Notices{}, err
 	}
 
-	return config.Config{Networks: networks, WLANs: wlans, WAN: slots},
-		Notices{IndescribableWLANs: indescribable, PartialWANSlots: partial}, nil
+	dns, unmodelledState, err := projectEncryptedDNS(ctx, client, site)
+	if err != nil {
+		return config.Config{}, Notices{}, err
+	}
+
+	return config.Config{Networks: networks, WLANs: wlans, WAN: slots, EncryptedDNS: dns},
+		Notices{
+			IndescribableWLANs: indescribable,
+			PartialWANSlots:    partial,
+			NoEncryptedDNS:     dns == nil,
+			UnmodelledDNSState: unmodelledState,
+		}, nil
 }
 
 // Notices are the things export has to say out loud about the config it just
@@ -374,6 +408,14 @@ type Notices struct {
 	// PartialWANSlots names the WAN slots written as nothing but a slot,
 	// because the way they connect is not one unifig models.
 	PartialWANSlots []string
+	// NoEncryptedDNS says the config has no `encrypted-dns:` section because
+	// this Controller has no such setting to describe, rather than because
+	// export declined to describe it.
+	NoEncryptedDNS bool
+	// UnmodelledDNSState is the Encrypted DNS state the config could not carry,
+	// because it is not one unifig models — the same shape of shortfall as a
+	// PartialWANSlot, and empty whenever the state came through.
+	UnmodelledDNSState string
 }
 
 // uniquelyNamed reports whether any two live Resources share the name unifig
@@ -470,6 +512,31 @@ func annotate(fields []Field, name, note string) {
 	}
 }
 
+// annotateFirst attaches a note to the first of several fields the change
+// actually has, and to its first field if it has none of them.
+//
+// It exists because some consequences are not about one field. "This will
+// encrypt nothing" follows from the state and the resolver list together, and
+// which of the two is in the plan depends on which one the operator is
+// changing — so hanging the note off a single named field would drop it exactly
+// when the other one moved. The preferred names are the ones the note reads
+// best under; the fallback is that a note about the change as a whole belongs
+// in the change rather than nowhere.
+func annotateFirst(fields []Field, note string, names ...string) {
+	if len(fields) == 0 {
+		return
+	}
+	for _, name := range names {
+		for i := range fields {
+			if fields[i].Name == name {
+				fields[i].Note = note
+				return
+			}
+		}
+	}
+	fields[0].Note = note
+}
+
 // number and text render a field the Controller does not have yet as nothing
 // at all rather than as 0 or "", so that putting a VLAN on an untagged network
 // reads as `(none) -> 20` instead of the `0 -> 20` that would look like a VLAN
@@ -486,4 +553,12 @@ func text(value string) any {
 		return nil
 	}
 	return value
+}
+
+// nameList renders a set of names as one field value: quoted and
+// comma-separated, and nothing at all where there are none, so that adding the
+// first entry to an empty list reads as `(none) -> "AdGuard-DNS"` rather than
+// as `"" -> "AdGuard-DNS"`.
+func nameList(names []string) any {
+	return text(strings.Join(quoted(names), ", "))
 }

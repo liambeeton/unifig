@@ -178,11 +178,12 @@ func describe(invalid *jsonschema.ValidationError, doc document) []Problem {
 // A pattern with no hint still reports the offending value, just without the
 // example — so adding a pattern to the schema can never break this file.
 var patternHints = map[string]string{
-	"networks.subnet":  "a gateway address and prefix length, e.g. 10.20.0.1/24",
-	"wlans.passphrase": "printable ASCII only — no accented letters, tabs or emoji",
-	"wan.slot":         "the Controller's own name for an uplink, such as WAN, WAN2 or WAN_LTE_FAILOVER",
-	"wan.username":     "the username as the ISP issued it, with no quotes or spaces",
-	"wan.password":     "no quotes or spaces — the Controller refuses them",
+	"networks.subnet":             "a gateway address and prefix length, e.g. 10.20.0.1/24",
+	"wlans.passphrase":            "printable ASCII only — no accented letters, tabs or emoji",
+	"wan.slot":                    "the Controller's own name for an uplink, such as WAN, WAN2 or WAN_LTE_FAILOVER",
+	"wan.username":                "the username as the ISP issued it, with no quotes or spaces",
+	"wan.password":                "no quotes or spaces — the Controller refuses them",
+	"encrypted-dns.servers.stamp": "a DNS stamp: the single sdns:// string the resolver's own dashboard gives you",
 }
 
 // secretFields are the fields whose value must never appear in a message,
@@ -194,8 +195,9 @@ var patternHints = map[string]string{
 // enough in one direction only: a field added here that is not secret loses a
 // little detail from one message, while a secret left out of it is printed.
 var secretFields = map[string]bool{
-	"wlans.passphrase": true,
-	"wan.password":     true,
+	"wlans.passphrase":            true,
+	"wan.password":                true,
+	"encrypted-dns.servers.stamp": true,
 }
 
 // orJoin lists the values a closed field accepts the way they would be read

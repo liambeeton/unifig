@@ -32,6 +32,12 @@ func TestWrittenConfigValidates(t *testing.T) {
 			{Slot: "WAN", Type: "pppoe", Username: "isp-user", Password: "correct-horse-battery"},
 			{Slot: "WAN2"},
 		},
+		EncryptedDNS: &config.EncryptedDNS{
+			State: "custom",
+			Servers: []config.DNSServer{
+				{Name: "AdGuard-DNS", Stamp: "sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t"},
+			},
+		},
 	}
 
 	path := filepath.Join(t.TempDir(), "unifig.yaml")
@@ -71,6 +77,22 @@ func TestWrittenConfigValidates(t *testing.T) {
 			t.Errorf("wan[%d] loaded as %+v, want %+v", i, loaded.WAN[i], slot)
 		}
 	}
+
+	dns := loaded.EncryptedDNS
+	if dns == nil {
+		t.Fatalf("the encrypted-dns section did not survive the round trip")
+	}
+	if dns.State != written.EncryptedDNS.State {
+		t.Errorf("encrypted-dns.state loaded as %q, want %q", dns.State, written.EncryptedDNS.State)
+	}
+	if len(dns.Servers) != len(written.EncryptedDNS.Servers) {
+		t.Fatalf("loaded %d custom DNS servers, want %d", len(dns.Servers), len(written.EncryptedDNS.Servers))
+	}
+	for i, server := range written.EncryptedDNS.Servers {
+		if dns.Servers[i] != server {
+			t.Errorf("encrypted-dns.servers[%d] loaded as %+v, want %+v", i, dns.Servers[i], server)
+		}
+	}
 }
 
 // The example is what an operator copies to start from, and it carries the
@@ -84,6 +106,7 @@ func TestTheShippedExampleValidates(t *testing.T) {
 	t.Setenv("WIFI_IOT_PASSPHRASE", "correct horse battery")
 	t.Setenv("WAN_PPPOE_USERNAME", "isp-user")
 	t.Setenv("WAN_PPPOE_PASSWORD", "correct-horse-battery")
+	t.Setenv("DNS_ADGUARD_STAMP", "sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t")
 
 	if _, err := config.Load(filepath.Join("..", "..", "examples", "unifig.yaml")); err != nil {
 		t.Fatalf("examples/unifig.yaml does not validate: %v", err)
@@ -97,7 +120,7 @@ func TestTheShippedExampleKeepsItsSecretInTheEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading example: %v", err)
 	}
-	for _, secret := range []string{"passphrase: ${", "password: ${"} {
+	for _, secret := range []string{"passphrase: ${", "password: ${", "stamp: ${"} {
 		if !strings.Contains(string(example), secret) {
 			t.Errorf("examples/unifig.yaml should show every secret as a ${ENV_VAR} reference, and %q is missing:\n%s",
 				secret, example)

@@ -36,11 +36,21 @@ import (
 // applying or exporting is one of these; anything else arriving here is a
 // change in what unifig does, and the stand-in says so rather than 404ing
 // quietly.
+//
+// The settings pair is not symmetrical, and that is the Internal API rather
+// than a simplification here: reading one setting means asking for all of them,
+// while writing one names the key in the path.
 const (
 	sysinfoPath     = "/proxy/network/api/s/default/stat/sysinfo"
 	networkconfPath = "/proxy/network/api/s/default/rest/networkconf"
 	wlanconfPath    = "/proxy/network/api/s/default/rest/wlanconf"
+	settingPath     = "/proxy/network/api/s/default/get/setting"
+	setDoHPath      = "/proxy/network/api/s/default/set/setting/doh"
 )
+
+// dohKey is the Controller's own name for the Encrypted DNS setting — how it is
+// picked out of the settings collection, in the recording and in unifig alike.
+const dohKey = "doh"
 
 // replayAPIKey is the key the stand-in accepts, standing in for a UDR API key
 // exactly as the rig's proxy does.
@@ -56,7 +66,10 @@ type replay struct {
 	// entries is the networkconf collection as the Controller holds it: the
 	// recording to begin with, and whatever unifig has written since.
 	entries []map[string]any
-	// wlans and sysinfo are served exactly as recorded. Nothing in the WAN
+	// settings is the same for the settings collection, which unifig reads
+	// whole and writes one key of.
+	settings []map[string]any
+	// wlans and sysinfo are served exactly as recorded. Nothing in the Settings
 	// tests writes to either, and a recording that could not be trusted to come
 	// back unchanged would be a poor witness for the one that does.
 	wlans   json.RawMessage
@@ -72,6 +85,7 @@ func startReplay(t *testing.T) *replay {
 
 	r := &replay{t: t}
 	r.entries = recordedEntries(t, "networkconf.json")
+	r.settings = recordedEntries(t, "setting.json")
 	r.wlans = recordedBody(t, "wlanconf.json")
 	r.sysinfo = recordedBody(t, "sysinfo.json")
 
@@ -111,6 +125,10 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 		r.write(w, r.collection())
 	case req.Method == http.MethodPut && strings.HasPrefix(req.URL.Path, networkconfPath+"/"):
 		r.update(w, req, strings.TrimPrefix(req.URL.Path, networkconfPath+"/"))
+	case req.Method == http.MethodGet && req.URL.Path == settingPath:
+		r.write(w, r.recordedSettings())
+	case req.Method == http.MethodPut && req.URL.Path == setDoHPath:
+		r.setDoH(w, req)
 	default:
 		r.t.Errorf("unifig asked the Controller for something the recording does not have: %s %s",
 			req.Method, req.URL.Path)
@@ -149,6 +167,46 @@ func (r *replay) collection() json.RawMessage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return data(r.entries...)
+}
+
+func (r *replay) recordedSettings() json.RawMessage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return data(r.settings...)
+}
+
+// setDoH stores the Encrypted DNS setting unifig sent, the way the Controller
+// does: the setting is replaced by the body rather than merged with it, which
+// is what makes "unifig writes the whole setting back, and only its own fields
+// have changed" a thing this suite can check.
+//
+// Replacing is also the assumption underneath clearing a list. `servers: []`
+// reaches the Controller as a request with no custom_servers in it at all, and
+// only a Controller that replaces the document reads that as "none". That is
+// stated here because it is the one thing about this endpoint the recording
+// cannot answer (ADR-0012).
+func (r *replay) setDoH(w http.ResponseWriter, req *http.Request) {
+	var sent map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&sent); err != nil {
+		r.t.Errorf("unifig sent an Encrypted DNS update that is not JSON: %v", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, setting := range r.settings {
+		if setting["key"] != dohKey {
+			continue
+		}
+		sent["key"] = dohKey
+		r.settings[i] = sent
+		r.write(w, data(sent))
+		return
+	}
+
+	r.t.Errorf("unifig wrote an Encrypted DNS setting to a Controller that does not have one")
+	http.Error(w, "not found", http.StatusNotFound)
 }
 
 func (r *replay) write(w http.ResponseWriter, body json.RawMessage) {
@@ -237,6 +295,21 @@ func (r *replay) slotPassword(t *testing.T, slot string) string {
 	t.Helper()
 	password, _ := r.slot(t, slot)["x_wan_password"].(string)
 	return password
+}
+
+// stampFor is the DNS stamp the Controller holds for a custom resolver — what a
+// test setting the environment for an exported config has to put back, without
+// spelling out a value only the Controller supplies.
+func (r *replay) stampFor(t *testing.T, name string) string {
+	t.Helper()
+	for _, server := range r.dohServers(t) {
+		if server["server_name"] == name {
+			stamp, _ := server["sdns_stamp"].(string)
+			return stamp
+		}
+	}
+	t.Fatalf("the Controller holds no custom DNS server named %q", name)
+	return ""
 }
 
 // wlanPassphrase is the same thing for a WLAN. An export redacts every secret
@@ -370,6 +443,78 @@ func (r *replay) addSlot(t *testing.T, slot string, fields map[string]any) {
 		entry[name] = value
 	}
 	r.entries = append(r.entries, entry)
+}
+
+// doh is the Encrypted DNS setting as the stand-in holds it now — how a DNS
+// test checks what an apply actually wrote, the way replay.slot does for an
+// uplink.
+func (r *replay) doh(t *testing.T) map[string]any {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, setting := range r.settings {
+		if setting["key"] == dohKey {
+			return setting
+		}
+	}
+	t.Fatalf("the recording holds no Encrypted DNS setting")
+	return nil
+}
+
+// dohServers is the custom resolvers on it, in the order the Controller holds
+// them.
+func (r *replay) dohServers(t *testing.T) []map[string]any {
+	t.Helper()
+	raw, _ := r.doh(t)["custom_servers"].([]any)
+
+	servers := make([]map[string]any, 0, len(raw))
+	for _, server := range raw {
+		entry, ok := server.(map[string]any)
+		if !ok {
+			t.Fatalf("the Controller holds a custom DNS server that is not an object: %T", server)
+		}
+		servers = append(servers, entry)
+	}
+	return servers
+}
+
+// seedDoH puts the Encrypted DNS setting into the state a test starts from,
+// without going through unifig — the stand-in's version of the rig seeding the
+// Controller through its own API.
+//
+// Every DNS test seeds, for the same reason every WAN test does: what the
+// recording happens to hold is one router's answer, and a test that depended on
+// it would fail on a re-recording for a reason that has nothing to do with
+// unifig.
+func (r *replay) seedDoH(t *testing.T, fields map[string]any) {
+	t.Helper()
+	setting := r.doh(t)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name, value := range fields {
+		setting[name] = value
+	}
+}
+
+// withoutEncryptedDNS takes the setting off the Controller altogether, which is
+// how a test states what unifig does against a Network version that predates
+// encrypted DNS: it cannot create a Setting, so it says so.
+func (r *replay) withoutEncryptedDNS(t *testing.T) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.settings = slices.DeleteFunc(r.settings, func(setting map[string]any) bool {
+		return setting["key"] == dohKey
+	})
+}
+
+// customServer is one entry of the Controller's custom_servers, in the shape
+// the recording holds them, for a test seeding the state it needs.
+func customServer(name, stamp string, enabled bool) map[string]any {
+	return map[string]any{"server_name": name, "sdns_stamp": stamp, "enabled": enabled}
 }
 
 // data wraps entries in the envelope every Internal API response carries.

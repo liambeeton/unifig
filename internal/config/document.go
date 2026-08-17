@@ -236,6 +236,13 @@ func (i index) field(section string, entry int, name string) location {
 	return i.at([]string{section, strconv.Itoa(entry), name})
 }
 
+// nestedField is the same for a list that sits inside a section rather than at
+// the top of the file, e.g. encrypted-dns.servers[0].name. Both go through at,
+// so there is one place that knows how a location is addressed.
+func (i index) nestedField(section, list string, entry int, name string) location {
+	return i.at([]string{section, list, strconv.Itoa(entry), name})
+}
+
 func jsonPointer(tokens []string) string {
 	var b strings.Builder
 	for _, token := range tokens {
