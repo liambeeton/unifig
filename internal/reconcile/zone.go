@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -123,12 +124,22 @@ func (o zoneOwnership) owns(zone unifi.FirewallZone) bool { return o.builtIn[zon
 // client does not expose after resolving. Hence trying both. The dockerized
 // Controller is old-style and a UniFi OS console is new-style, so this repo's own
 // suites exercise each.
+// Not reaching the endpoint and not understanding it are different answers, and
+// only the first is worth trying the other path for. The body is taken as raw
+// JSON so the two stay apart: a request that failed may be the wrong style, and
+// the other one is tried; a request that succeeded and answered something this
+// cannot read is a Controller unifig does not understand, which is a settled
+// "cannot tell" rather than a reason to go asking elsewhere.
 func builtInZones(ctx context.Context, client unifi.Client, site string) zoneOwnership {
 	for _, base := range []string{unifi.NewStyleAPI.ApiV2Path, unifi.OldStyleAPI.ApiV2Path} {
-		var owned []ownedZone
-		err := client.Get(ctx, fmt.Sprintf("%s/site/%s/firewall/zone", base, site), nil, &owned)
-		if err != nil {
+		var body json.RawMessage
+		if err := client.Get(ctx, fmt.Sprintf("%s/site/%s/firewall/zone", base, site), nil, &body); err != nil {
 			continue
+		}
+
+		var owned []ownedZone
+		if err := json.Unmarshal(body, &owned); err != nil {
+			return zoneOwnership{}
 		}
 		builtIn := make(map[string]bool, len(owned))
 		for _, zone := range owned {

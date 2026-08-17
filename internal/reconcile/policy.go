@@ -66,9 +66,15 @@ func planFirewallPolicies(
 	if err != nil {
 		return nil, err
 	}
+	// A policy without a key is left out of the collection rather than filed
+	// under an empty one: nothing in the file can match it, and prune must not
+	// reach it either — deleting a policy unifig could not describe is a change
+	// it could not have shown the operator first.
 	byKey := make(map[policyKey]unifi.FirewallZonePolicy, len(live))
 	for _, policy := range live {
-		byKey[keyOfLivePolicy(policy, bound)] = policy
+		if key, keyed := keyOfLivePolicy(policy, bound); keyed {
+			byKey[key] = policy
+		}
 	}
 
 	// A zone a policy names is resolved against the Controller and against the
@@ -134,16 +140,20 @@ func (k policyKey) String() string {
 	return fmt.Sprintf("%q (%s to %s)", k.name, k.source, k.destination)
 }
 
-// keyOfLivePolicy is a live policy's key. A policy whose zones unifig cannot
-// name yields a key with empty ends, which no config policy can equal — that
-// policy is unmatchable rather than mismatched, and projectFirewallPolicies
-// reports it as one it cannot describe.
-func keyOfLivePolicy(policy unifi.FirewallZonePolicy, bound bindings) policyKey {
-	return policyKey{
-		name:        policy.Name,
-		source:      bound.zoneName(policy.Source.ZoneID),
-		destination: bound.zoneName(policy.Destination.ZoneID),
+// keyOfLivePolicy is a live policy's key, and whether the policy has one at all.
+//
+// A policy whose zones unifig cannot name has no key: both ends would be empty,
+// which no config policy can equal and which two such policies would share with
+// each other. It is unmatchable rather than mismatched — projectFirewallPolicies
+// reports it as one it cannot describe, and nothing here should mistake two of
+// them for a clash.
+func keyOfLivePolicy(policy unifi.FirewallZonePolicy, bound bindings) (policyKey, bool) {
+	source := bound.zoneName(policy.Source.ZoneID)
+	destination := bound.zoneName(policy.Destination.ZoneID)
+	if source == "" || destination == "" {
+		return policyKey{}, false
 	}
+	return policyKey{name: policy.Name, source: source, destination: destination}, true
 }
 
 func keyOfDesiredPolicy(desired config.FirewallPolicy) policyKey {
@@ -170,10 +180,16 @@ func listFirewallPolicies(ctx context.Context, client unifi.Client, site string,
 // uniquelyKeyed refuses a site holding two policies unifig could not tell apart.
 // It reads like uniquelyNamed's message because it is the same failure, reported
 // about a wider key.
+//
+// A policy without a key is left out rather than counted: it is not one of a
+// pair unifig had to choose between, and counting it would refuse the site over
+// a clash between two ends that could not be named.
 func uniquelyKeyed(live []unifi.FirewallZonePolicy, bound bindings) error {
 	counts := make(map[policyKey]int, len(live))
 	for _, policy := range live {
-		counts[keyOfLivePolicy(policy, bound)]++
+		if key, keyed := keyOfLivePolicy(policy, bound); keyed {
+			counts[key]++
+		}
 	}
 
 	var shared []string

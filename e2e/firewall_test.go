@@ -460,6 +460,93 @@ func TestAPolicyNamingAZoneThatExistsNowhereIsRefusedWithTheZonesThatDo(t *testi
 
 // ADR-0001 matches Resources by name and calls a duplicate a hard error rather
 // than a guess.
+// ADR-0005's addition, and the reason it was added: where unifig cannot
+// establish which zones are the Controller's own, prune leaves every zone alone
+// rather than treating them all as fair game. "Cannot tell" has to mean "do not
+// delete" for the one change that can sever a site from the internet (issue #23).
+//
+// The marker is read off the zone endpoint separately from the list, so a
+// firmware that changed its type would leave the list readable and the marker
+// not — which is what this seeds. A zone whose `default_zone` is a string is
+// enough: the ownership read decodes the whole answer or none of it.
+func TestPruneLeavesEveryZoneAloneWhenItCannotTellWhichAreTheControllersOwn(t *testing.T) {
+	r := startReplay(t)
+	lan := aLAN(t, r)
+	r.seedZone(t, "Prunable", []string{lan}, map[string]any{"default_zone": "not a bool"})
+
+	// A config that names none of the live zones, pruned. Every one of them is a
+	// candidate for deletion, and none may be proposed.
+	res := planFirewall(t, r, `zones:
+  - name: Keeper
+`, "--prune")
+
+	if strings.Contains(string(res.Stdout), `- zone "`) {
+		t.Errorf("prune proposes deleting a zone though it could not tell which are built-in:\n%s", res.Stdout)
+	}
+	for _, zone := range r.liveZones(t) {
+		name, _ := zone["name"].(string)
+		if strings.Contains(string(res.Stdout), fmt.Sprintf(`zone %q`, name)) {
+			t.Errorf("plan --prune proposes deleting the %s zone:\n%s", name, res.Stdout)
+		}
+	}
+}
+
+// A policy's key is its name and the pair of zones it governs, so a name on its
+// own repeating is ordinary — the Controller's own predefined set does it
+// nineteen times over (ADR-0001, issue #24). What has no answer is two policies
+// alike in all three, and that is still refused rather than guessed at.
+func TestPlanRefusesToGuessBetweenTwoPoliciesSharingANameAndBothEnds(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Twice Over", "ALLOW", "Internal", "External", nil)
+	r.seedPolicy(t, "Twice Over", "BLOCK", "Internal", "External", nil)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Twice Over
+    action: allow
+    source: Internal
+    destination: External
+`)
+
+	if res.ExitCode != exitError {
+		t.Fatalf("plan exited %d, want %d — it picked one of two policies alike in name and both ends\nstdout: %s",
+			res.ExitCode, exitError, res.Stdout)
+	}
+	// The pair is named, because the name alone does not identify which policies
+	// the operator has to go and look at.
+	stderr := string(res.Stderr)
+	for _, fragment := range []string{"Twice Over", "Internal", "External", "UI"} {
+		if !strings.Contains(stderr, fragment) {
+			t.Errorf("stderr should mention %q, got: %s", fragment, stderr)
+		}
+	}
+}
+
+// The same name on two policies whose zones unifig cannot name is not that
+// ambiguity. Their keys collapse to empty ends, so counting them as duplicates
+// reports a clash between a pair of nothings — `2 matching "X" ( to )` — about
+// policies that were never matchable in the first place. They belong to export's
+// "could not describe" list rather than to a refusal (issue #24).
+func TestTwoPoliciesOnZonesUnifigCannotNameAreNotADuplicate(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Adrift", "ALLOW", "Nowhere", "External", nil)
+	r.seedPolicy(t, "Adrift", "BLOCK", "Nowhere Else", "External", nil)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Kept
+    action: allow
+    source: Internal
+    destination: External
+`)
+
+	if res.ExitCode == exitError {
+		t.Fatalf("plan exited %d — it refused a site over policies it cannot match at all\nstderr: %s",
+			res.ExitCode, res.Stderr)
+	}
+	if got := string(res.Stderr); strings.Contains(got, "( to )") {
+		t.Errorf("the refusal names a pair of nothings, so it is about unmatchable policies: %s", got)
+	}
+}
+
 func TestPlanRefusesToGuessBetweenTwoZonesSharingAName(t *testing.T) {
 	r := startReplay(t)
 	lan := aLAN(t, r)
