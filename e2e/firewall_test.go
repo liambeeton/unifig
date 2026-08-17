@@ -489,6 +489,42 @@ func TestPruneLeavesEveryZoneAloneWhenItCannotTellWhichAreTheControllersOwn(t *t
 			t.Errorf("plan --prune proposes deleting the %s zone:\n%s", name, res.Stdout)
 		}
 	}
+
+	// Skipping quietly is the other half of the failure. An operator who asked
+	// for a prune and got none has to be told, or the plan reads as a site with
+	// nothing to prune.
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{"zone", "no zone will be deleted", "could not read"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan should say why it pruned no zones, looking for %q:\n%s", fragment, stdout)
+		}
+	}
+}
+
+// The same silence, in the case that hides it best: a plan with nothing else in
+// it. "No changes" and "no changes I was willing to make" are different
+// statements and must not print the same (issue #23).
+func TestAnEmptyPlanStillSaysWhyItPrunedNoZones(t *testing.T) {
+	r := startReplay(t)
+	r.seedZone(t, "Unreadable", nil, map[string]any{"default_zone": "not a bool"})
+
+	// Names every zone the recording holds, so nothing is left to prune and the
+	// plan is empty but for the caveat.
+	body := "zones:\n"
+	for _, zone := range r.liveZones(t) {
+		name, _ := zone["name"].(string)
+		body += fmt.Sprintf("  - name: %s\n", name)
+	}
+
+	res := planFirewall(t, r, body, "--prune")
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, "No changes") {
+		t.Fatalf("expected an otherwise-empty plan, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "no zone will be deleted") {
+		t.Errorf("an empty plan dropped the reason it pruned nothing:\n%s", stdout)
+	}
 }
 
 // A policy's key is its name and the pair of zones it governs, so a name on its

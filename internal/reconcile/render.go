@@ -11,7 +11,10 @@ import (
 // from, and a summary to end on.
 func (p Plan) Write(out io.Writer) error {
 	if p.Empty() {
-		_, err := io.WriteString(out, "No changes. The Controller already matches the config.\n")
+		// A plan with nothing in it still has to carry its caveats, and this is
+		// the case they exist for: without them "No changes" is indistinguishable
+		// from a site where prune was asked for and quietly did nothing.
+		_, err := io.WriteString(out, "No changes. The Controller already matches the config.\n"+p.caveats())
 		return err
 	}
 
@@ -39,9 +42,25 @@ func (p Plan) Write(out io.Writer) error {
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "Plan: %s.\n", p.summary())
+	b.WriteString(p.caveats())
 
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+// caveats is what the plan does not do, printed after what it does so that the
+// last thing read is the thing most easily missed. Empty when there is nothing
+// to say, which is the ordinary case.
+func (p Plan) caveats() string {
+	if len(p.Caveats) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n")
+	for _, caveat := range p.Caveats {
+		fmt.Fprintf(&b, "! %s: %s.\n", caveat.Kind, caveat.Reason)
+	}
+	return b.String()
 }
 
 // WriteJSON emits the plan as JSON: the same changes with a machine on the
@@ -62,6 +81,9 @@ func (p Plan) Write(out io.Writer) error {
 func (p Plan) WriteJSON(out io.Writer) error {
 	if p.Changes == nil {
 		p.Changes = []Change{}
+	}
+	if p.Caveats == nil {
+		p.Caveats = []Caveat{}
 	}
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")

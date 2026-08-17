@@ -41,6 +41,18 @@ propose them**. For most Resources that is merely cautious. For a zone it is the
 difference between a plan that does nothing and a plan that offers to sever the
 site from the internet, so "cannot tell" has to resolve to "leave it alone".
 
+**And it must say so.** Skipping quietly trades one failure for a smaller one:
+an operator who asked for a prune and silently got none reads the plan as a site
+with nothing to prune, and finds out otherwise later. A plan is a list of changes
+and this is not a change, so it is not one — it is a `Caveat`, printed after the
+changes and carried in the JSON, and it survives an otherwise-empty plan because
+that is the case where "No changes. The Controller already matches the config."
+would otherwise be a confident lie.
+
+That distinction generalises past this exemption: anywhere unifig declines part
+of what was asked and the result still looks like success, the plan owes the
+operator a sentence. Silence is only honest when nothing was withheld.
+
 ## Considered Options
 
 - **A list of built-in names in unifig** — rejected above: it encodes a guess about someone else's product, and goes stale silently.

@@ -309,10 +309,13 @@ func updateFirewallPolicy(desired config.FirewallPolicy, live unifi.FirewallZone
 // config does not name.
 //
 // A policy the Controller ships is exempt on its own marker, like every other
-// built-in (ADR-0005). There are two markers rather than one here: the
-// undeletable flag every Controller object can carry, and `predefined`, which is
-// how the zone-based firewall marks the default policies it generates for a pair
-// of zones. Both are the Controller saying the object is its own.
+// built-in (ADR-0005). A policy's marker is `predefined`, which is how the
+// zone-based firewall marks the default policies it generates for a pair of
+// zones — and the eighty-three of those a migrated router ships are exactly what
+// prune must not touch. `NoDelete` is checked beside it because the library
+// models the field on this type, not because a policy has been seen carrying it:
+// the marker is per Resource and only a network is known to use that one, so
+// nothing here should be read as saying which field a new type would use.
 func pruneFirewallPolicies(live map[policyKey]unifi.FirewallZonePolicy, named map[policyKey]bool, bound bindings) []Change {
 	changes := make([]Change, 0, len(live))
 	for key, policy := range live {

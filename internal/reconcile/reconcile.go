@@ -163,6 +163,27 @@ type Options struct {
 // mutates nothing.
 type Plan struct {
 	Changes []Change `json:"changes"`
+	// Caveats are the places where this plan is narrower than what was asked
+	// for, and why. See Caveat.
+	Caveats []Caveat `json:"caveats"`
+}
+
+// Caveat is something a plan has to say about itself: unifig was asked to do
+// something, declined to plan part of it, and the operator would otherwise have
+// no way to tell.
+//
+// It is not a change, so it is not in Changes — a plan is a list of what will
+// happen (ADR-0005) — and it is not an error, because the run is still correct.
+// It is the third thing: an absence with a reason, which is invisible unless
+// something says it out loud. An empty plan carrying a caveat is the case this
+// exists for, because "No changes. The Controller already matches the config."
+// would otherwise be a lie told confidently.
+type Caveat struct {
+	// Kind is the managed type the plan is quiet about.
+	Kind Kind `json:"kind"`
+	// Reason reads as a sentence to an operator, and says what was not done as
+	// well as why.
+	Reason string `json:"reason"`
 }
 
 // Change is one thing apply would create, update or delete, in the terms an
@@ -363,6 +384,7 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 	bound := newBindings(live)
 
 	var changes []Change
+	var caveats []Caveat
 	if cfg.Networks != nil {
 		byName := make(map[string]unifi.Network, len(live))
 		for _, network := range live {
@@ -390,7 +412,17 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 		bound.bindZones(zones)
 
 		if cfg.Zones != nil {
-			changes = append(changes, planZones(cfg, zones, builtInZones(ctx, client, site), bound, opts)...)
+			// Who owns which zone is only asked when it could change what the
+			// plan does, which is under --prune. A plan that cannot delete
+			// anything has no use for the answer and should not pay a request
+			// for it.
+			var owned zoneOwnership
+			if opts.Prune {
+				owned = builtInZones(ctx, client, site)
+			}
+			zoneChanges, zoneCaveats := planZones(cfg, zones, owned, bound, opts)
+			changes = append(changes, zoneChanges...)
+			caveats = append(caveats, zoneCaveats...)
 		}
 		if cfg.FirewallPolicies != nil {
 			policies, err := planFirewallPolicies(ctx, client, site, cfg, bound, opts)
@@ -416,7 +448,7 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 	}
 
 	sortChanges(changes)
-	return Plan{Changes: changes}, nil
+	return Plan{Changes: changes, Caveats: caveats}, nil
 }
 
 // Project is the config that describes the Controller as it stands — the

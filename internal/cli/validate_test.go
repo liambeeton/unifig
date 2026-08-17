@@ -456,6 +456,44 @@ func TestValidateCatchesDuplicateFirewallPolicyNames(t *testing.T) {
 `, nil).mustFailWith(t, "line 6", "firewall-policies[1].name", `"Twice"`)
 }
 
+// The other half of that rule, and the one a real site depends on: a policy's
+// key is its name *and* both ends, so the same name on a different pair of zones
+// is two policies rather than one written twice. A file describing a migrated
+// Controller has to be able to say this — its predefined set repeats "Allow All
+// Traffic" once per pair (ADR-0001, issue #24).
+func TestValidateAcceptsPoliciesSharingANameOnDifferentZonePairs(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: Allow All Traffic
+    action: allow
+    source: Internal
+    destination: External
+  - name: Allow All Traffic
+    action: allow
+    source: Internal
+    destination: Gateway
+  - name: Allow All Traffic
+    action: allow
+    source: Gateway
+    destination: External
+`, nil).mustPass(t)
+}
+
+// Direction is part of the key, not decoration: a policy from Internal to
+// External and one from External to Internal govern opposite traffic and are
+// two policies, however alike they look.
+func TestValidateAcceptsAPolicyAndItsReverse(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: Between Them
+    action: allow
+    source: Internal
+    destination: External
+  - name: Between Them
+    action: block
+    source: External
+    destination: Internal
+`, nil).mustPass(t)
+}
+
 // A WAN slot is a Setting, and its key is the Controller's own name for a
 // physical uplink rather than a name the operator chose — so the file names the
 // slot it means, and unifig only ever updates it.

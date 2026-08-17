@@ -333,10 +333,12 @@ func TestPlanJSONOnAMatchingControllerIsAnEmptyChangeList(t *testing.T) {
 		t.Fatalf("plan --json exited %d, want %d\nstdout: %s\nstderr: %s",
 			res.ExitCode, exitNoChanges, res.Stdout, res.Stderr)
 	}
-	// An empty list rather than a null, so a consumer can count without
-	// special-casing the quiet case.
-	if got := strings.Join(strings.Fields(string(res.Stdout)), ""); got != `{"changes":[]}` {
-		t.Errorf("empty plan JSON = %s, want an empty changes array", res.Stdout)
+	// Empty lists rather than nulls, so a consumer can count without
+	// special-casing the quiet case — for the caveats as much as the changes,
+	// since a pipeline gating on drift also wants to know when unifig declined
+	// to plan something it was asked for.
+	if got := strings.Join(strings.Fields(string(res.Stdout)), ""); got != `{"changes":[],"caveats":[]}` {
+		t.Errorf("empty plan JSON = %s, want empty changes and caveats arrays", res.Stdout)
 	}
 }
 

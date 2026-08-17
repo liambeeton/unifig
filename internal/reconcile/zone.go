@@ -14,16 +14,18 @@ import (
 
 // Zones are the first Resource unifig manages that the Controller itself ships
 // instances of. A network has one built-in (Default) and a WLAN has none; a
-// zone-based firewall arrives with a full set — External, Internal, Gateway,
-// VPN, Hotspot — and the interesting configuration is mostly about them rather
-// than about zones an operator invents.
+// zone-based firewall arrives with a full set — six of them on the router this
+// repository's recording came from — and the interesting configuration is mostly
+// about them rather than about zones an operator invents.
 //
 // That makes ADR-0005 load-bearing here in a way it has not been before. A
 // built-in zone is matched from config and managed like any other, and is exempt
-// from deletion because the Controller marks it undeletable — not because unifig
-// keeps a list of the names Ubiquiti ships. The list would be wrong the first
-// time a firmware added a zone, and being wrong here means proposing to delete
-// the zone that stands for the internet.
+// from deletion because the Controller marks it its own with `default_zone` —
+// not because unifig keeps a list of the names Ubiquiti ships. The list would be
+// wrong the first time a firmware added a zone, and being wrong here means
+// proposing to delete the zone that stands for the internet. This comment used
+// to name the five zones a hand-written fixture guessed at, which is the same
+// mistake in prose: a real router ships six and spells two differently.
 //
 // The other thing a zone brings is a reference in both directions: it holds
 // networks, and firewall policies hold it. So it sits between the two in the
@@ -33,7 +35,7 @@ import (
 // planZones is the zone half of a reconcile. Its caller only reaches it when the
 // config has a `zones:` section at all (ADR-0006), so a file that says nothing
 // about zones leaves every one of them alone.
-func planZones(cfg config.Config, live []unifi.FirewallZone, owned zoneOwnership, bound bindings, opts Options) []Change {
+func planZones(cfg config.Config, live []unifi.FirewallZone, owned zoneOwnership, bound bindings, opts Options) ([]Change, []Caveat) {
 	byName := make(map[string]unifi.FirewallZone, len(live))
 	for _, zone := range live {
 		byName[zone.Name] = zone
@@ -53,10 +55,19 @@ func planZones(cfg config.Config, live []unifi.FirewallZone, owned zoneOwnership
 			changes = append(changes, change)
 		}
 	}
-	if opts.Prune {
-		changes = append(changes, pruneZones(byName, named, owned, bound)...)
+	if !opts.Prune {
+		return changes, nil
 	}
-	return changes
+	// Prune was asked for and the zones were left out of it, so the plan says so
+	// rather than looking like a site with nothing to prune (ADR-0005, #23).
+	if !owned.known {
+		return changes, []Caveat{{
+			Kind: Zone,
+			Reason: "no zone will be deleted: unifig could not read which zones the Controller marks as its own, " +
+				"and deleting the wrong one would take the site off the internet",
+		}}
+	}
+	return append(changes, pruneZones(byName, named, owned, bound)...), nil
 }
 
 // listZones reads the site's firewall zones, refusing a site where two of them
@@ -82,14 +93,18 @@ func listZones(ctx context.Context, client unifi.Client, site string) ([]unifi.F
 	return live, nil
 }
 
-// ownedZone is the part of a zone that says whose it is, which go-unifi's
+// zoneMarker is the part of a zone that says whose it is, which go-unifi's
 // FirewallZone does not carry: the library models `attr_no_delete` and
 // `attr_no_edit`, and a real zone has neither of the first and uses the second
 // for something else.
-type ownedZone struct {
+//
+// `zone_key` is deliberately not here. A built-in also carries one, so it looks
+// like a second way to ask the same question, but it is not the Controller
+// saying the zone is its own — it is a name for which built-in this is. Reading
+// it would be keeping a list of Ubiquiti's zones by another route (ADR-0005).
+type zoneMarker struct {
 	ID      string `json:"_id"`
 	Default bool   `json:"default_zone"`
-	ZoneKey string `json:"zone_key"`
 }
 
 // zoneOwnership is which zones the Controller marks as its own, and whether that
@@ -124,6 +139,7 @@ func (o zoneOwnership) owns(zone unifi.FirewallZone) bool { return o.builtIn[zon
 // client does not expose after resolving. Hence trying both. The dockerized
 // Controller is old-style and a UniFi OS console is new-style, so this repo's own
 // suites exercise each.
+//
 // Not reaching the endpoint and not understanding it are different answers, and
 // only the first is worth trying the other path for. The body is taken as raw
 // JSON so the two stay apart: a request that failed may be the wrong style, and
@@ -137,7 +153,7 @@ func builtInZones(ctx context.Context, client unifi.Client, site string) zoneOwn
 			continue
 		}
 
-		var owned []ownedZone
+		var owned []zoneMarker
 		if err := json.Unmarshal(body, &owned); err != nil {
 			return zoneOwnership{}
 		}

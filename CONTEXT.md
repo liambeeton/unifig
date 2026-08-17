@@ -43,7 +43,7 @@ A named group of networks in the Controller's zone-based firewall. A Resource, m
 _Avoid_: firewall group (that is a different Controller object), interface group
 
 **Firewall Policy**:
-A rule governing traffic between a pair of Zones. A Resource, matched by name, and the only one whose config states required fields beyond its key: a verdict (`allow`, `block`, `reject`) and both ends. The Zones it names need not be in the config file, because the interesting ones are built-in, so that reference is resolved against the Controller rather than offline.
+A rule governing traffic between a pair of Zones. A Resource, and the one whose key is not its name: it is matched by its name **together with the pair of Zones it governs**, because the Controller ships its own policies one per pair and reuses names across them — a migrated router answers with nineteen called `Allow All Traffic`. Two policies may share a name; two may not share a name and both ends. Its config states one required field beyond that key, a verdict (`allow`, `block`, `reject`). The Zones it names need not be in the config file, because the interesting ones are built-in, so that reference is resolved against the Controller rather than offline.
 _Avoid_: firewall rule (that names the pre-Zone object the Controller still has), ACL
 
 **DHCP Reservation**:

@@ -58,8 +58,11 @@ the whole return on the exercise:
   as issue #24, on ADR-0001's per-type natural keys.
 - **The built-in set is six, not five**: `Internal`, `External`, `Gateway`,
   `Vpn`, `Hotspot`, `Dmz`. The guess had no `Dmz` and spelled `Vpn` differently.
-  The suite no longer names any of them; the prune test reads the built-ins out
-  of the recording.
+  The prune tests no longer name any of them — they read the built-ins out of
+  the recording, so a firmware that adds a seventh does not make them wrong.
+  Other tests still name `Internal` and `External` deliberately: a test about
+  what a zone holds needs a zone it can point at, and those two are the ones the
+  recording is known to hold. What matters is that nothing *asserts the set*.
 
 Both defects had the same shape, and it is the shape this ADR predicted. Each was
 a guess about someone else's product, written into a fixture in the same change

@@ -279,7 +279,16 @@ Plan: 1 to create, 1 to delete.
 Four things `--prune` will not do:
 
 - **Reach a section your file doesn't have.** A file with no `wlans:` key says nothing about WLANs, so prune deletes none of them — the same rule as an omitted field, one level up (see `docs/adr/0006-prune-reaches-only-the-sections-the-file-has.md`). Write `wlans: []` to say there should be none; that is a statement, and prune acts on it.
-- **Delete what the Controller says it owns.** The built-in Default network is marked undeletable on the Controller itself, and unifig reads that marker rather than keeping a list of names (see `docs/adr/0005-builtin-exemption-from-the-controller.md`). It is never pruned, whether or not your file names it.
+- **Delete what the Controller says it owns.** The built-in Default network is marked undeletable on the Controller itself, and unifig reads that marker rather than keeping a list of names (see `docs/adr/0005-builtin-exemption-from-the-controller.md`). It is never pruned, whether or not your file names it. Each type has its own marker — a network's is `attr_no_delete`, a firewall zone's is `default_zone`, a policy's is `predefined` — and where unifig cannot read one, it deletes nothing of that type and says so rather than guessing:
+
+  ```
+  Plan: 1 to create.
+
+  ! zone: no zone will be deleted: unifig could not read which zones the Controller
+    marks as its own, and deleting the wrong one would take the site off the internet.
+  ```
+
+  That line survives an otherwise-empty plan, and `plan --json` carries the same thing as `"caveats"`, so a pipeline can tell "nothing to do" apart from "nothing I was willing to do".
 - **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, so unifig updates them and never deletes one, whether or not your file names them. Nor does prune see a WLAN attached to something that isn't one of your LANs — unifig has no name to write for it, so it can't be exported either, and the two go together on purpose: a WLAN adoption couldn't describe is not one prune may delete.
 - **Persist.** The flag applies to the run you passed it to. There is no state file, so nothing remembers it.
 
