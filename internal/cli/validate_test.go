@@ -424,7 +424,7 @@ func TestValidateAcceptsEncryptedDNSWithAStampFromTheEnvironment(t *testing.T) {
 	runValidate(t, `encrypted-dns:
   state: custom
   servers:
-    - name: AdGuard-DNS
+    - name: Quad9
       stamp: ${DNS_STAMP}
 `, map[string]string{"DNS_STAMP": "sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t"}).mustPass(t)
 }
@@ -451,18 +451,18 @@ func TestValidateRejectsAnEncryptedDNSStateUnifigDoesNotModel(t *testing.T) {
 func TestValidateRejectsACustomDNSServerWithNoStamp(t *testing.T) {
 	runValidate(t, `encrypted-dns:
   servers:
-    - name: AdGuard-DNS
+    - name: Quad9
 `, nil).mustFailWith(t, "encrypted-dns.servers[0]", "stamp")
 }
 
 func TestValidateCatchesTwoCustomDNSServersSharingAName(t *testing.T) {
 	res := runValidate(t, `encrypted-dns:
   servers:
-    - name: AdGuard-DNS
+    - name: Quad9
       stamp: sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t
-    - name: AdGuard-DNS
+    - name: Quad9
       stamp: sdns://AgMAAAAAAAAAAAAQZG5zMi5leGFtcGxlLmNvbQ
-`, nil).mustFailWith(t, "line 5", "encrypted-dns.servers[1].name", "AdGuard-DNS")
+`, nil).mustFailWith(t, "line 5", "encrypted-dns.servers[1].name", "Quad9")
 
 	if strings.Count(res.stderr, "already defined") != 1 {
 		t.Errorf("a duplicated name should be reported once, got:\n%s", res.stderr)
@@ -477,7 +477,7 @@ func TestValidateNeverEchoesADNSStamp(t *testing.T) {
 	res := runValidate(t, `encrypted-dns:
   state: custom
   servers:
-    - name: AdGuard-DNS
+    - name: Quad9
       stamp: ${DNS_STAMP}
 `, map[string]string{"DNS_STAMP": secret})
 

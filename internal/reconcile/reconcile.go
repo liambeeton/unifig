@@ -557,8 +557,8 @@ func text(value string) any {
 
 // nameList renders a set of names as one field value: quoted and
 // comma-separated, and nothing at all where there are none, so that adding the
-// first entry to an empty list reads as `(none) -> "AdGuard-DNS"` rather than
-// as `"" -> "AdGuard-DNS"`.
+// first entry to an empty list reads as `(none) -> "Quad9"` rather than
+// as `"" -> "Quad9"`.
 func nameList(names []string) any {
 	return text(strings.Join(quoted(names), ", "))
 }

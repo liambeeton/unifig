@@ -218,12 +218,12 @@ func TestRedactReplacesADNSStampWithAReferenceNamedAfterItsServer(t *testing.T) 
 	redacted, vars := export.Redact(config.Config{EncryptedDNS: &config.EncryptedDNS{
 		State: "custom",
 		Servers: []config.DNSServer{
-			{Name: "AdGuard-DNS", Stamp: "sdns://the-private-endpoint"},
-			{Name: "Quad9", Stamp: "sdns://the-other-one"},
+			{Name: "Quad9", Stamp: "sdns://the-private-endpoint"},
+			{Name: "Cloudflare", Stamp: "sdns://the-other-one"},
 		},
 	}})
 
-	want := []string{"UNIFIG_DNS_ADGUARD_DNS_STAMP", "UNIFIG_DNS_QUAD9_STAMP"}
+	want := []string{"UNIFIG_DNS_QUAD9_STAMP", "UNIFIG_DNS_CLOUDFLARE_STAMP"}
 	if len(vars) != len(want) {
 		t.Fatalf("redacted %d secrets, want %d: %v", len(vars), len(want), vars)
 	}
@@ -240,7 +240,7 @@ func TestRedactReplacesADNSStampWithAReferenceNamedAfterItsServer(t *testing.T) 
 	if redacted.EncryptedDNS.State != "custom" {
 		t.Errorf("redaction changed the state: %+v", redacted.EncryptedDNS)
 	}
-	if redacted.EncryptedDNS.Servers[0].Name != "AdGuard-DNS" {
+	if redacted.EncryptedDNS.Servers[0].Name != "Quad9" {
 		t.Errorf("redaction changed a server's identity: %+v", redacted.EncryptedDNS.Servers[0])
 	}
 }
@@ -251,7 +251,7 @@ func TestRedactReplacesADNSStampWithAReferenceNamedAfterItsServer(t *testing.T) 
 func TestRedactLeavesTheEncryptedDNSSectionItWasGivenAlone(t *testing.T) {
 	original := config.Config{EncryptedDNS: &config.EncryptedDNS{
 		State:   "custom",
-		Servers: []config.DNSServer{{Name: "AdGuard-DNS", Stamp: "sdns://the-private-endpoint"}},
+		Servers: []config.DNSServer{{Name: "Quad9", Stamp: "sdns://the-private-endpoint"}},
 	}}
 
 	redacted, _ := export.Redact(original)
@@ -285,13 +285,13 @@ func TestEverySecretInOneFileGetsItsOwnVariable(t *testing.T) {
 			{Slot: "WAN2", Type: "pppoe", Password: "the-backup-password"},
 		},
 		EncryptedDNS: &config.EncryptedDNS{
-			Servers: []config.DNSServer{{Name: "AdGuard-DNS", Stamp: "sdns://the-private-endpoint"}},
+			Servers: []config.DNSServer{{Name: "Quad9", Stamp: "sdns://the-private-endpoint"}},
 		},
 	})
 
 	want := []string{
 		"UNIFIG_WLAN_HOME_PASSPHRASE", "UNIFIG_WAN_PASSWORD", "UNIFIG_WAN2_PASSWORD",
-		"UNIFIG_DNS_ADGUARD_DNS_STAMP",
+		"UNIFIG_DNS_QUAD9_STAMP",
 	}
 	if len(vars) != len(want) {
 		t.Fatalf("redacted %d secrets, want %d: %v", len(vars), len(want), vars)
@@ -342,7 +342,7 @@ func TestNoSecretSurvivesRedaction(t *testing.T) {
 		WAN: []config.WANSlot{{Slot: "WAN", Type: "pppoe", Password: secret}},
 		EncryptedDNS: &config.EncryptedDNS{
 			State:   "custom",
-			Servers: []config.DNSServer{{Name: "AdGuard-DNS", Stamp: "sdns://" + secret}},
+			Servers: []config.DNSServer{{Name: "Quad9", Stamp: "sdns://" + secret}},
 		},
 	})
 

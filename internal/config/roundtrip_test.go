@@ -35,7 +35,7 @@ func TestWrittenConfigValidates(t *testing.T) {
 		EncryptedDNS: &config.EncryptedDNS{
 			State: "custom",
 			Servers: []config.DNSServer{
-				{Name: "AdGuard-DNS", Stamp: "sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t"},
+				{Name: "Quad9", Stamp: "sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t"},
 			},
 		},
 	}
@@ -106,7 +106,7 @@ func TestTheShippedExampleValidates(t *testing.T) {
 	t.Setenv("WIFI_IOT_PASSPHRASE", "correct horse battery")
 	t.Setenv("WAN_PPPOE_USERNAME", "isp-user")
 	t.Setenv("WAN_PPPOE_PASSWORD", "correct-horse-battery")
-	t.Setenv("DNS_ADGUARD_STAMP", "sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t")
+	t.Setenv("DNS_QUAD9_STAMP", "sdns://AgMAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29t")
 
 	if _, err := config.Load(filepath.Join("..", "..", "examples", "unifig.yaml")); err != nil {
 		t.Fatalf("examples/unifig.yaml does not validate: %v", err)

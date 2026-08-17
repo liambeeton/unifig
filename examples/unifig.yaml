@@ -48,8 +48,8 @@ encrypted-dns:
   # apply removes — and the plan says so first. Omit the key to leave the
   # Controller's resolvers alone; write `servers: []` to say there are none.
   servers:
-    - name: AdGuard-DNS
+    - name: Quad9
       # A stamp for a private endpoint identifies the account it belongs to, so
       # it is a secret like a passphrase: keep it in the environment.
-      stamp: ${DNS_ADGUARD_STAMP}
+      stamp: ${DNS_QUAD9_STAMP}
 

@@ -53,8 +53,8 @@ wan:
 encrypted-dns:                         # a mapping, not a list: there is one
   state: custom
   servers:
-    - name: AdGuard-DNS
-      stamp: ${DNS_ADGUARD_STAMP}      # a stamp is a secret — see below
+    - name: Quad9
+      stamp: ${DNS_QUAD9_STAMP}      # a stamp is a secret — see below
 ```
 
 ### WAN slots are Settings, not Resources
@@ -73,9 +73,9 @@ Your router has the uplinks it has. So `wan` entries are matched by `slot` — `
 
 ```
   ~ encrypted-dns
-      state:                 off -> custom
-      servers:               (none) -> "AdGuard-DNS"
-      server "AdGuard-DNS":  (hidden)
+      state:          off -> custom
+      servers:        (none) -> "Quad9"
+      server "Quad9": (hidden)
 ```
 
 `state` is `off`, `auto`, `manual` or `custom`. `manual` picks from the Controller's built-in providers, which unifig does not model — so it says which mode to be in and leaves the choice of providers to the UI.
@@ -83,7 +83,7 @@ Your router has the uplinks it has. So `wan` entries are matched by `slot` — `
 **`servers` is one field, not a list of Resources.** That is the one place in unifig where deleting a line from your file changes something on the Controller, so it is worth being precise about:
 
 - **Leave `servers` out** and unifig does not manage the list at all — your resolvers stay exactly as they are, even while unifig changes the `state` around them.
-- **State `servers`** and that list *is* the Controller's list. A resolver you stop naming is removed on the next apply — announced in the plan first, as `servers: "AdGuard-DNS", "Quad9" -> "AdGuard-DNS"`, so nothing goes unless you approve the line that says it is going.
+- **State `servers`** and that list *is* the Controller's list. A resolver you stop naming is removed on the next apply — announced in the plan first, as `servers: "Quad9", "Cloudflare" -> "Quad9"`, so nothing goes unless you approve the line that says it is going.
 - **Write `servers: []`** to say there should be none. This is what `export` writes for a Controller with no custom resolvers, so an exported file always states the list rather than trailing off.
 
 A resolver's `name` is its natural key within the section, so two cannot share one — in your file, where `validate` catches it offline, or on the Controller, where unifig stops rather than guess which of the two you meant.
@@ -337,7 +337,7 @@ A firmware whose encrypted DNS is in a mode unifig doesn't model gets the same t
       "name": "",
       "fields": [
         { "name": "state", "from": "off", "to": "custom" },
-        { "name": "server \"AdGuard-DNS\"", "from": null, "to": null, "secret": true }
+        { "name": "server \"Quad9\"", "from": null, "to": null, "secret": true }
       ]
     },
     {

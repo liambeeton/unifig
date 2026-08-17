@@ -25,8 +25,8 @@ import (
 const (
 	testDNSStamp     = "sdns://AgcAAAAAAAAAAAAPZG5zLmV4YW1wbGUuY29tOnByaXZhdGUtZW5kcG9pbnQ"
 	testDNSStampTwo  = "sdns://AgcAAAAAAAAAAAAQZG5zMi5leGFtcGxlLmNvbQ"
-	testDNSServer    = "AdGuard-DNS"
-	testDNSServerTwo = "Quad9"
+	testDNSServer    = "Quad9"
+	testDNSServerTwo = "Cloudflare"
 )
 
 // withDNSStamp is the environment a config with a ${DNS_STAMP} reference needs,

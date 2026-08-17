@@ -28,7 +28,7 @@ const rawNetworkconf = `{
       "networkgroup": "LAN",
       "enabled": true,
       "ip_subnet": "192.168.4.1/24",
-      "domain_name": "beeton.home",
+      "domain_name": "example.home",
       "dhcpd_start": "192.168.4.6",
       "dhcpd_stop": "192.168.4.254"
     },
@@ -100,8 +100,8 @@ const rawSysinfo = `{
     {
       "version": "10.0.162",
       "build": "atag_10.0.162_32076",
-      "name": "Beeton Home Console",
-      "hostname": "liams-udr",
+      "name": "Example Home Console",
+      "hostname": "example-udr",
       "timezone": "Africa/Johannesburg",
       "ubnt_device_type": "UDR",
       "udm_version": "4.3.9",
@@ -122,7 +122,7 @@ const rawWlanconf = `{
     {
       "_id": "65f1c0a1d4e2b30af1c00b01",
       "site_id": "65f1c0a1d4e2b30af1c00000",
-      "name": "Beeton Family",
+      "name": "Example Family",
       "enabled": true,
       "security": "wpapsk",
       "x_passphrase": "the-family-wifi-password",
@@ -131,7 +131,7 @@ const rawWlanconf = `{
     {
       "_id": "65f1c0a1d4e2b30af1c00b02",
       "site_id": "65f1c0a1d4e2b30af1c00000",
-      "name": "Beeton Guests",
+      "name": "Example Guests",
       "enabled": true,
       "security": "wpapsk",
       "x_passphrase": "the-guest-wifi-password",
@@ -151,7 +151,7 @@ const rawSetting = `{
       "site_id": "65f1c0a1d4e2b30af1c00000",
       "key": "super_mail",
       "provider": "smtp",
-      "smtp_username": "beetons@example.com",
+      "smtp_username": "postmaster@example.invalid",
       "x_smtp_password": "the-mail-password"
     },
     {
@@ -163,7 +163,7 @@ const rawSetting = `{
       "custom_servers": [
         {
           "enabled": true,
-          "server_name": "Beeton AdGuard",
+          "server_name": "Example Resolver",
           "sdns_stamp": "sdns://AgcAAAAAAAAABzEuMi4zLjSgnou0mUYSbFcvIGxNAgNzc2VjcmV0LWVuZHBvaW50"
         }
       ]
@@ -242,7 +242,7 @@ func TestScrubTakesTheLANFromTheCommittedRecording(t *testing.T) {
 
 	// The router's own topology is the thing that must not survive: not the
 	// subnets, not the VLAN layout, not the guest network's existence.
-	for _, gone := range []string{"Guest", "10.20.30.1/24", "192.168.4.1/24", "beeton.home", "192.168.4.6"} {
+	for _, gone := range []string{"Guest", "10.20.30.1/24", "192.168.4.1/24", "example.home", "192.168.4.6"} {
 		if strings.Contains(string(written(t, out.networkconf)), gone) {
 			t.Errorf("the scrubbed networkconf still holds %q", gone)
 		}
@@ -331,8 +331,8 @@ func TestScrubReplacesTheConsoleIdentifiers(t *testing.T) {
 	// The console's name, its hostname and its timezone are the operator's
 	// words and the operator's city.
 	for field, unwanted := range map[string]string{
-		"name":     "Beeton",
-		"hostname": "liams-udr",
+		"name":     "Example",
+		"hostname": "example-udr",
 		"timezone": "Africa",
 	} {
 		value, _ := console[field].(string)
@@ -467,7 +467,7 @@ func TestScrubKeepsNothingFromTheSettingsButEncryptedDNS(t *testing.T) {
 	if key := out.setting.Data[0]["key"]; key != "doh" {
 		t.Errorf("the scrubbed settings kept %q, want %q", key, "doh")
 	}
-	for _, secret := range []string{"the-mail-password", "beetons@example.com", "the-device-password"} {
+	for _, secret := range []string{"the-mail-password", "postmaster@example.invalid", "the-device-password"} {
 		if strings.Contains(string(written(t, out.setting)), secret) {
 			t.Errorf("the scrubbed settings still carry %q from a setting unifig never reads", secret)
 		}
@@ -491,7 +491,7 @@ func TestScrubReplacesTheDNSStampsAndTheirNames(t *testing.T) {
 	if strings.Contains(stamp, "secret-endpoint") {
 		t.Errorf("sdns_stamp = %q, and it still carries the endpoint off the router", stamp)
 	}
-	if name, _ := servers[0]["server_name"].(string); name == "" || strings.Contains(name, "Beeton") {
+	if name, _ := servers[0]["server_name"].(string); name == "" || strings.Contains(name, "Example") {
 		t.Errorf("server_name = %q, want a placeholder that names nobody", name)
 	}
 	// Everything the recording exists to state about the shape survives.
@@ -510,7 +510,7 @@ func TestScrubGivesTwoDNSStampsTwoPlaceholders(t *testing.T) {
 	servers, _ := doh(t, raw.setting)["custom_servers"].([]any)
 	doh(t, raw.setting)["custom_servers"] = append(servers, map[string]any{
 		"enabled":     false,
-		"server_name": "Beeton Backup",
+		"server_name": "Example Backup",
 		"sdns_stamp":  "sdns://AgcAAAAAAAAABzUuNi43LjigbotherEndpointHere",
 	})
 
