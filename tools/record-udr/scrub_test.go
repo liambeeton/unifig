@@ -638,25 +638,40 @@ func parseList(t *testing.T, body string) list {
 // The firewall as a real router hands it over: the Controller's own built-in
 // zones and the default policy between two of them, alongside a zone and a
 // policy the operator made and named after their household.
+//
+// The zone shape here is the one a migrated UDR actually sends, which is not the
+// one this fixture used to guess. A built-in zone is marked `default_zone` and
+// carries a stable `zone_key`; **there is no `attr_no_delete` on a zone at all**,
+// which is the convention `networkconf` uses and this file wrongly assumed
+// carried over. See ADR-0005 and ADR-0013.
 const rawFirewallZones = `[
   {
     "_id": "65f1c0a1d4e2b30af1c00b01",
-    "site_id": "65f1c0a1d4e2b30af1c00000",
     "name": "Internal",
-    "attr_no_delete": true,
+    "default_zone": true,
+    "zone_key": "internal",
+    "attr_no_edit": false,
+    "cloud_template": null,
+    "external_id": "7c9e6679-7425-40de-944b-e07fc1f90ae8",
     "network_ids": ["65f1c0a1d4e2b30af1c00a01", "65f1c0a1d4e2b30af1c00a02"]
   },
   {
     "_id": "65f1c0a1d4e2b30af1c00b02",
-    "site_id": "65f1c0a1d4e2b30af1c00000",
     "name": "External",
-    "attr_no_delete": true,
+    "default_zone": true,
+    "zone_key": "external",
+    "attr_no_edit": true,
+    "cloud_template": null,
+    "external_id": "7c9e6679-7425-40de-944b-e07fc1f90ae9",
     "network_ids": ["65f1c0a1d4e2b30af1c00a03"]
   },
   {
     "_id": "65f1c0a1d4e2b30af1c00b03",
-    "site_id": "65f1c0a1d4e2b30af1c00000",
     "name": "Ollie's room",
+    "zone_key": "",
+    "attr_no_edit": false,
+    "cloud_template": null,
+    "external_id": "7c9e6679-7425-40de-944b-e07fc1f90aea",
     "network_ids": ["65f1c0a1d4e2b30af1c00a02"]
   }
 ]`
@@ -704,8 +719,29 @@ func TestScrubKeepsTheControllersOwnZonesAndDropsTheOperatorsOwn(t *testing.T) {
 	}
 
 	for _, zone := range out.zones {
-		if zone["attr_no_delete"] != true {
-			t.Errorf("a kept zone is not marked undeletable, so unifig's exemption would not spare it: %v", zone)
+		if zone["default_zone"] != true {
+			t.Errorf("a kept zone is not marked as the Controller's own, so unifig's exemption would not spare it: %v", zone)
+		}
+	}
+}
+
+// The marker a zone is kept on is the one a real router sends. This is the test
+// that would have caught the original mistake: a fixture written from the
+// `networkconf` convention carries `attr_no_delete`, a real zone never does, and
+// a scrub keying off the wrong field keeps nothing at all — which is exactly what
+// happened on the first run against migrated hardware (ADR-0013).
+func TestScrubKeepsAZoneOnTheMarkerARealRouterSends(t *testing.T) {
+	out := scrubbed(t)
+
+	if len(out.zones) == 0 {
+		t.Fatal("the scrub kept no zones, so it is reading a marker the router does not send")
+	}
+	for _, zone := range out.zones {
+		if _, wrong := zone["attr_no_delete"]; wrong {
+			t.Errorf("a kept zone carries attr_no_delete; a real zone has no such field: %v", zone)
+		}
+		if key, _ := zone["zone_key"].(string); key == "" {
+			t.Errorf("a kept zone has no zone_key, so it is not one of the Controller's: %v", zone)
 		}
 	}
 }

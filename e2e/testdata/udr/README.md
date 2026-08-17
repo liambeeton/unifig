@@ -159,8 +159,11 @@ VLAN layout and every SSID you broadcast. So the scrub:
 - keeps the WAN entries and the Encrypted DNS setting the router sent, including
   every field unifig does not model — those are what the tests exist to protect;
 - keeps the firewall zones and policies the Controller marks as **its own**
-  (`attr_no_delete` on a zone, `predefined` on a policy), which is exactly what
-  unifig's built-in exemption reads and exactly what no container produces. A
+  (`default_zone` on a zone, `predefined` on a policy), which is exactly what
+  unifig's built-in exemption reads and exactly what no container produces. The
+  zone marker is not the one a network uses: a network says it with
+  `attr_no_delete`, a zone says it with `default_zone` and a stable `zone_key`,
+  and reading the network's marker on a zone keeps nothing at all (issue #23). A
   zone or policy you made yourself is dropped rather than scrubbed: it is named
   after your household — the children's tablets, the flat downstairs — and every
   test that wants a custom zone seeds its own;
