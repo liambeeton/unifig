@@ -140,6 +140,19 @@ would make the mark exact and would be a large expansion of what a Firewall Poli
 means in this project — filed here as the reason `index` is visible in the
 recording and read by nothing.
 
+**The spec had already settled this, and the two hardest calls in this ADR turn
+out to be scope compliance rather than judgement.** Issue #1's Out of Scope says:
+
+> Full lockout analysis (graph reasoning about whether a change severs the
+> management path) — only the Risky-change warn-and-confirm class ships.
+
+Reading `index` to decide what a rule set actually does is that graph reasoning,
+and so is asking whether a network moved between zones still has a path to the
+gateway. Both were argued above from first principles, and both were out of scope
+before the argument started. What ships is the warn-and-confirm class, which is
+what this ADR marks: a sentence saying a rule closing the management path is being
+written, not a verdict on what the firewall will do with it.
+
 ## Considered Options
 
 - **Mark any verdict change on a pair involving `External`, plus any prune of
@@ -206,4 +219,13 @@ recording and read by nothing.
   nothing warns. Named above as a gap; the place to fix it, if it is ever worth
   fixing, is a check that a network the config moves still has some policy to the
   gateway — which needs unifig to evaluate a rule set, the same expansion this
-  ADR declined for `index`.
+  ADR declined for `index`, and which #1 puts out of scope.
+- **Issue #1's Risky-change bullet was amended to match, and story 24 was not.**
+  The bullet said "any WAN/Internet-affecting mutation", which read literally makes
+  a policy blocking `Internal -> External` Risky — the spec's copy of the
+  two-clause ambiguity this ADR resolved in `CONTEXT.md`, and the sentence #26
+  quoted as its justification. It now states the physical-access test and names
+  both qualifying classes. Story 24 keeps its original wording with a pointer
+  here, because a user story is a record of what was asked for: rewriting it would
+  have the spec claim the operator always meant the Gateway zone, and working that
+  out took migrated hardware and a recording.
