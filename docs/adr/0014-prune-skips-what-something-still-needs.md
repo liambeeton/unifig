@@ -69,34 +69,43 @@ zones is part of what identifies it (ADR-0001, #24), so a policy that changes
 ends is not the same policy moving but a deletion and a create — and the deletion
 is already in the plan.
 
-Everything else that survives counts, **the Controller's own objects included**. A
-zone's predefined policies are the case that makes this a decision rather than a
-detail: the Controller generates a policy per zone pair and marks it
+Everything else that survives counts, **except a policy the Controller generated
+itself**. A zone's predefined policies are the case that makes this a decision
+rather than a detail: the Controller generates a policy per zone pair and marks it
 `predefined`, prune may not delete one (ADR-0005), so it will still be governing
-its zone after the apply — and the zone is therefore not proposed.
+its zone after the apply — and by the rule above the zone could never be proposed.
 
-It would be convenient to read `predefined` as the Controller promising to remove
-its own policy along with the zone. Nothing establishes that. It is a guess about
-someone else's product, of precisely the shape that has already cost this project
-two bugs in the same area (#23, #24), and no recording can answer it — answering
-it needs a write to real migrated hardware (ADR-0013). The rule therefore stays
-the one that can be read off the Controller rather than inferred about it:
-**something still points at it, so unifig does not offer to delete it.** The cost
-of being over-careful here is a prune that says what it declined; the cost of
-being wrong the other way is the bug this ADR exists to close.
+That exception was not here first. It would have been convenient to read
+`predefined` as the Controller promising to remove its own policy along with the
+zone, nothing established it, and a guess about someone else's product is
+precisely the shape that had already cost this project two bugs in the same area
+(#23, #24). No recording could answer it either — answering it needed a write to
+real migrated hardware (ADR-0013). So the rule stayed the one that could be read
+off the Controller rather than inferred about it, on the grounds that the cost of
+being over-careful was a prune that says what it declined and the cost of being
+wrong the other way was the bug this ADR exists to close.
 
-**Answered on 18 August 2026, in favour of the convenient reading.** A write
-session against the migrated UDR created a custom zone, watched the Controller
-generate eighteen predefined policies for its pairs, and then deleted the zone:
-`DELETE` returned `204` and the Controller reclaimed all eighteen itself
+**Hardware answered it on 18 August 2026, in favour of the convenient reading.** A
+write session against the migrated UDR created a custom zone, watched the
+Controller generate eighteen predefined policies for its pairs, and then deleted
+the zone: `DELETE` returned `204` and the Controller reclaimed all eighteen itself
 (`docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md`).
-The paragraph above was the right position to hold while nobody had looked — the
-cost of being over-careful really was only a prune that says what it declined.
-It is the wrong position now: the deletion this rule declines to propose is one
-the Controller performs without complaint, so the hold-back should narrow to
-operator-authored policies, which is the scope issue #22 asked for. That change
-is issue #28's, and it is a decision rather than a correction this ADR can make
-on its own.
+Both halves resolve against the guard. The generation is real; the refusal is not.
+unifig was declining a deletion nobody had ever seen refused, and the cost was not
+a prune that says what it declined — it was a prune that could never remove a
+custom zone on any router unifig targets, since a zone that holds a member is born
+with generated policies on its pairs. So the rule narrows to the scope issue #22
+asked for (issue #28): **a policy an operator wrote holds its zone back, and a
+policy the Controller generated does not.**
+
+The two lists part company there, and only there. A predefined policy is still
+exempt from deletion on its marker — that is ADR-0005 and it has not moved — it
+just stops being a reason to spare its zone. `pruneFirewallPolicies` answers the
+first question and `zonesInUse` the second, in `policy.go`. `NoDelete` is not
+narrowed with it: that marker says the Controller will not let the object go,
+which is the refusal this ADR exists to stay ahead of, and no policy has ever been
+seen carrying it — narrowing it too would be a fresh guess of exactly the shape
+the measurement just removed.
 
 ## And it says so
 
@@ -129,9 +138,11 @@ sentence.
   Stop-on-first-error plus a safe re-run is the recovery for what unifig could not
   foresee, not a licence to propose what it could. The same argument would excuse
   never reading the built-in marker either.
-- **Keep a rule about which references the Controller enforces** — rejected above:
-  it is a guess about Ubiquiti's internals, and this project has paid for two of
-  those already.
+- **Keep a rule about which references the Controller enforces** — rejected above
+  while it would have been a guess about Ubiquiti's internals, and this project
+  has paid for two of those already. The objection was to guessing rather than to
+  knowing: where hardware has since answered, the answer is in the rule (the
+  predefined exception above, ADR-0019).
 - **Read the referencing collection whether or not prune was asked for** —
   rejected: without `--prune` no deletion can be proposed, so the answer changes
   nothing, and a plan should not pay for a request it cannot use. This is the same
@@ -163,15 +174,14 @@ sentence.
   replays (ADR-0019, issue #27). Nothing else refuses anything, and a prune is
   still not among the things that can — so this bullet stands for the deletion
   it is about, and no longer for the whole of both collections.
-- **On a migrated router, `--prune` declines every custom zone.** Not "may": one
-  custom zone made the Controller generate eighteen predefined policies for its
-  pairs, and each of them holds the zone back. The zone is
-  still deletable in the Controller's UI, and the plan names the policy that kept
-  it, so this is narrower rather than silent. This was written as the bullet to
-  revisit first if hardware ever showed the Controller cleaning those up itself,
-  with a recording rather than a fixture — hardware showed exactly that on
-  18 August 2026, so it is now the bullet being revisited, in issue #28
-  (`docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md`).
+- **On a migrated router, a custom zone is prunable again**, and this bullet is
+  the one that changed. It used to read "`--prune` declines every custom zone",
+  which was not a "may": one custom zone made the Controller generate eighteen
+  predefined policies for its pairs, and each of them held the zone back. It was
+  written as the bullet to revisit first if hardware ever showed the Controller
+  cleaning those up itself, with a recording rather than a fixture — hardware
+  showed exactly that on 18 August 2026, and issue #28 is the revisit. What holds
+  a zone back now is a policy an operator wrote, and the plan still names it.
 - **Reading is not matching**, and the duplicate refusals moved accordingly: the
   WLAN and policy reads no longer refuse a site over two of them unifig cannot
   tell apart, and the verbs that actually match them do it instead. A file with no

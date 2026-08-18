@@ -193,6 +193,18 @@ func unreadableGateway(blocking bool, facts zoneFacts) []Caveat {
 // networksInUse, and what prune asks before proposing to delete a zone
 // (ADR-0014).
 //
+// A policy the Controller generated holds nothing back. It is spared from
+// deletion on its marker like every other built-in (ADR-0005) and it will still
+// be governing its zone afterwards, so by the general rule it would hold the zone
+// back — and it did, until hardware was asked. A write session against a migrated
+// UDR created a custom zone, watched the Controller generate eighteen predefined
+// policies for its pairs, and then deleted the zone: `DELETE` answered 204 and
+// the Controller reclaimed all eighteen itself (ADR-0019, issue #28). So the
+// deletion the general rule declines to propose is one the Controller performs
+// without complaint, and declining it made `--prune` useless for custom zones on
+// every router unifig targets. What holds a zone back is a policy an operator
+// wrote, which is the scope issue #22 asked for.
+//
 // A policy is named by its whole key rather than by its name, because the
 // Controller ships nineteen called "Allow All Traffic" and a Caveat naming one of
 // them has to say which (ADR-0001, issue #24). A policy whose zones unifig cannot
@@ -202,6 +214,9 @@ func unreadableGateway(blocking bool, facts zoneFacts) []Caveat {
 func zonesInUse(spared []unifi.FirewallZonePolicy, bound bindings) referenced {
 	inUse := referenced{}
 	for _, policy := range spared {
+		if policy.Predefined {
+			continue
+		}
 		key, keyed := keyOfLivePolicy(policy, bound)
 		if !keyed {
 			continue
@@ -453,6 +468,11 @@ func updateFirewallPolicy(
 // reason it survived (ADR-0014). A policy with no key is spared too: unifig
 // cannot describe it, so it was never prune's to delete, and it governs zones
 // unifig cannot name so it holds nothing back either.
+//
+// Spared is not the same list as holds-a-zone-back, and `predefined` is where the
+// two part company: the Controller deletes its own generated policies along with
+// the zone, so one of them is exempt here and counts for nothing in `zonesInUse`
+// (ADR-0019, issue #28).
 //
 // It walks the live collection rather than the keyed index so that the deletions
 // come out in the order the Controller listed them. Two policies of one name are

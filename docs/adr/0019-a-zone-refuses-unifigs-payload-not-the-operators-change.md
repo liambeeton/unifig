@@ -160,7 +160,10 @@ policies as #21 confirmed it for zones.
 - ADR-0014's zone hold-back should narrow to operator-authored policies, which is
   what issue #22 originally specified; a policy the Controller marks `predefined`
   stops holding its zone back. That is a decision this ADR supports rather than
-  takes.
+  takes. **Taken in issue #28**, on this evidence: ADR-0014 now carries the
+  narrower rule, `zonesInUse` skips a predefined policy while
+  `pruneFirewallPolicies` still spares it, and the e2e test that asserted the old
+  behaviour asserts the new one.
 - ADR-0013's closing paragraph and `README.md:563` no longer describe an open
   question, and `e2e/testdata/udr/README.md:71` can say what `attr_no_edit` does
   on evidence.

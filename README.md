@@ -406,7 +406,7 @@ Six things `--prune` will not do:
   ```
 
   That line survives an otherwise-empty plan, and `plan --json` carries the same thing as `"caveats"`, so a pipeline can tell "nothing to do" apart from "nothing I was willing to do".
-- **Propose a deletion something still needs.** The Controller will not delete a network a WLAN is still on, a network with a DHCP reservation's address inside its subnet, or a zone a firewall policy still governs — so if this run leaves that WLAN, that reservation or that policy in place, the deletion is not in the plan at all, and the plan says which one kept it (see `docs/adr/0014-prune-skips-what-something-still-needs.md`):
+- **Propose a deletion something still needs.** The Controller will not delete a network a WLAN is still on, a network with a DHCP reservation's address inside its subnet, or a zone one of your firewall policies still governs — so if this run leaves that WLAN, that reservation or that policy in place, the deletion is not in the plan at all, and the plan says which one kept it (see `docs/adr/0014-prune-skips-what-something-still-needs.md`):
 
   ```
   Plan: 1 to delete.
@@ -415,7 +415,9 @@ Six things `--prune` will not do:
     Wi-Fi" on it.
   ```
 
-  The way to delete both is to put both at stake: a file with `networks:` and `wlans: []` deletes the WLAN and then the network under it, in that order. A policy the Controller owns can't be put at stake at all, so a zone it governs stays until you delete it in the Controller's UI.
+  The way to delete both is to put both at stake: a file with `networks:` and `wlans: []` deletes the WLAN and then the network under it, in that order.
+
+  The Controller's own policies are the exception, and they have to be: it generates one for every pair of zones that holds a member, so a zone you create is governed by policies you never wrote and cannot put at stake. Those do not hold a zone back. Deleting such a zone on a real router returns `204` and the Controller reclaims the policies it generated for it — measured rather than assumed (see `docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md`).
 - **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, so unifig updates them and never deletes one, whether or not your file names them. Nor does prune see a WLAN attached to something that isn't one of your LANs, or a port forward whose ports are a range — unifig has no way to write either one in config, so neither can be exported — and the two halves go together on purpose: what an adoption couldn't describe is not something prune may delete.
 - **Delete more of a thing than the section names.** A DHCP reservation is two fields of the client record your Controller keeps, so pruning one gives the fixed address up and leaves that record — its name, its note, its group — exactly where it was. Forgetting the device is a bigger request than deleting a line of YAML, and unifig will not read the second as the first (see [DHCP reservations](#dhcp-reservations)).
 - **Persist.** The flag applies to the run you passed it to. There is no state file, so nothing remembers it.

@@ -583,38 +583,60 @@ func TestPruneLeavesAZoneAPolicyStillGovernsAlone(t *testing.T) {
 	r.policyNamed(t, "Held Policy") // or the policy on it
 }
 
-// What that rule costs, stated deliberately rather than left to be discovered. A
-// policy the Controller ships is exempt from prune (ADR-0005), so it is one that
-// will still be governing its zone however the file is written — `firewall-
-// policies: []` puts every policy the file can reach at stake and cannot reach
-// that one. So the zone is held back, and the operator is told which policy did
-// it and can go and look at it in the Controller's UI.
+// Where the rule above stops, and the measurement that decided it. A policy the
+// Controller generates for a pair of zones is exempt from prune on its marker
+// (ADR-0005), so it survives however the file is written — `firewall-policies:
+// []` puts every policy the file can reach at stake and cannot reach that one.
+// By the rule above it would therefore hold its zone back, and it did, which made
+// `--prune` unable to remove a custom zone on any migrated router: the Controller
+// generates policies for the pairs of every zone that holds a member, so every
+// zone an operator makes is born held.
 //
-// The alternative was to read `predefined` as the Controller promising to clean
-// its own policy up along with the zone. That is a guess about somebody else's
-// product, of exactly the shape that cost issues #23 and #24, and no recording
-// can answer it (ADR-0013). ADR-0014 records why the guess was refused and what
-// refusing it costs on a migrated router.
-func TestTheControllersOwnPolicyStillHoldsItsZoneBack(t *testing.T) {
+// Hardware settled it. A custom zone made the Controller generate eighteen
+// predefined policies of its own; deleting the zone answered `204` and the
+// Controller reclaimed all eighteen itself, so the deletion unifig declined was
+// one nobody had ever seen refused (ADR-0019, issue #28). The hold-back is now
+// what issue #22 asked for: a policy an operator wrote holds its zone back, and a
+// policy the Controller generated does not.
+//
+// The seeded policy is a fixture, with its limit stated rather than glossed. The
+// recording's own predefined policies all govern built-in zones, which prune
+// never proposes anyway, so the arrangement this test needs — a deletable zone
+// with a generated policy on it — exists only on a Controller that generates
+// them. What the fixture asserts is a measurement now (ADR-0019) rather than the
+// guess it would have been; what it cannot show is the Controller's reclaim,
+// which lives in that ADR's prose.
+func TestTheControllersOwnPolicyDoesNotHoldItsZoneBack(t *testing.T) {
 	r := startReplay(t)
 	lan := r.aNetwork(t)
-	r.seedZone(t, "Held By Predefined", []string{lan}, nil)
-	r.seedPolicy(t, "Block All Traffic", "BLOCK", "Held By Predefined", "External",
+	r.seedZone(t, "Generated Against", []string{lan}, nil)
+	r.seedPolicy(t, "Block All Traffic", "BLOCK", "Generated Against", "External",
 		map[string]any{"predefined": true})
+	policies := len(r.livePolicies(t))
 
-	res := planFirewall(t, r, `zones:
+	res := applyFirewall(t, r, `zones:
   - name: Keeper
 firewall-policies: []
 `, "--prune")
 	stdout := string(res.Stdout)
 
-	if strings.Contains(stdout, `- zone "Held By Predefined"`) {
-		t.Errorf("prune proposed deleting a zone the Controller's own policy governs:\n%s", stdout)
+	if !strings.Contains(stdout, `- zone "Generated Against" deleted`) {
+		t.Errorf("prune left a zone only the Controller's own policy governs:\n%s", stdout)
 	}
-	for _, fragment := range []string{`"Held By Predefined" will not be deleted`, `"Block All Traffic"`} {
-		if !strings.Contains(stdout, fragment) {
-			t.Errorf("the plan should say why it kept the zone, looking for %q:\n%s", fragment, stdout)
+	if strings.Contains(stdout, `"Generated Against" will not be deleted`) {
+		t.Errorf("the plan held the zone back on a policy the Controller deletes along with it:\n%s", stdout)
+	}
+	for _, zone := range r.liveZones(t) {
+		if zone["name"] == "Generated Against" {
+			t.Errorf("apply --prune did not carry out the deletion it proposed: %v", zone)
 		}
+	}
+	// The policy is still exempt: what changed is whether it holds a zone back,
+	// not whether prune may delete it (ADR-0005). The stand-in keeps whatever it
+	// is handed, so this counts what unifig chose to delete rather than what a
+	// Controller would have reclaimed.
+	if left := len(r.livePolicies(t)); left != policies {
+		t.Errorf("prune deleted %d of the Controller's own policies", policies-left)
 	}
 }
 
