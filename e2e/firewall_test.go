@@ -802,3 +802,388 @@ func TestExportSaysWhichZonesItCouldOnlyDescribeInPart(t *testing.T) {
 		t.Errorf("export should say what it does about the part it cannot name, got: %s", exported.Stderr)
 	}
 }
+
+// The Risky half of the firewall, and the line it draws (ADR-0018).
+//
+// A Firewall Policy is Risky when it would newly block traffic to the zone the
+// Controller answers in, because that is the change an operator cannot undo over
+// the network: the fix is in a UI they can no longer reach. Every other firewall
+// change — including one that takes the site's internet away — leaves the
+// Controller reachable and the fix one field away, which is ADR-0012's test
+// applied to a second area rather than a new rule.
+//
+// These tests name Internal and External as the existing ones do, but never the
+// gateway: that one is asked for by the Controller's own key, so nothing here
+// asserts what Ubiquiti calls it.
+
+// riskOfBlockingTheGateway is the part of the risk sentence that belongs to it
+// alone. The caveat unifig carries when it cannot find the gateway says "the
+// Controller answers in" and "managed over" too, so a test matching either of
+// those cannot tell a marked change from an unmarked one in a plan that gave up
+// — which is a test that passes whether the lookup works or not (ADR-0013).
+const riskOfBlockingTheGateway = "blocking traffic to it can cut the path"
+
+func TestPlanMarksAPolicyThatWouldBlockTheGatewayAsRisky(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.seedPolicy(t, "Management", "ALLOW", "Internal", gateway, nil)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Management
+    action: block
+    source: Internal
+    destination: %s
+`, gateway))
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d\nstderr: %s", res.ExitCode, exitChangesPending, res.Stderr)
+	}
+	// The plan is where an operator finds out this one is dangerous, before
+	// anyone asks them to approve anything.
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{`~ firewall-policy "Management"`, "! ", riskOfBlockingTheGateway} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("plan should say what blocking the gateway risks, looking for %q:\n%s", fragment, stdout)
+		}
+	}
+}
+
+// The mechanism, stated on its own: unifig finds the gateway by the key the
+// Controller stores beside the name, so a zone that is the gateway under another
+// name is still the gateway. Hard-coding the string "Gateway" would pass every
+// other test in this file and fail this one — which is the whole argument of
+// issue #23 restated one Resource along.
+func TestTheGatewayIsFoundByTheControllersKeyRatherThanItsName(t *testing.T) {
+	r := startReplay(t)
+	r.renameGateway(t, "Router Services")
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Lock it down
+    action: block
+    source: Internal
+    destination: Router Services
+`)
+
+	if !strings.Contains(string(res.Stdout), riskOfBlockingTheGateway) {
+		t.Errorf("a renamed gateway is still the gateway, and blocking it is still Risky:\n%s", res.Stdout)
+	}
+}
+
+// The deliberate no. Blocking the internet is the change this issue was raised
+// about, and it is not Risky: the uplink stays up, the Controller stays
+// reachable on its LAN address, and the operator can undo it in a UI they can
+// still get to. Marking it would put a confirmation in front of the ordinary
+// "stop this VLAN reaching the internet" edit, which is how a prompt stops being
+// read (ADR-0012).
+func TestBlockingTheInternetIsNotARiskyChange(t *testing.T) {
+	r := startReplay(t)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: No internet for the IoT VLAN
+    action: block
+    source: Internal
+    destination: External
+`)
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d\nstderr: %s", res.ExitCode, exitChangesPending, res.Stderr)
+	}
+	stdout := string(res.Stdout)
+	if strings.Contains(stdout, "! ") || strings.Contains(stdout, riskOfBlockingTheGateway) {
+		t.Errorf("a policy blocking the internet was marked Risky:\n%s", stdout)
+	}
+}
+
+// A path already closed cannot be closed again. block -> reject changes what the
+// Controller sends back to a blocked packet and nothing about reachability, so
+// the confirmation would be one an operator learns to click through.
+func TestReplacingOneBlockingVerdictWithAnotherIsNotRisky(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.seedPolicy(t, "Already shut", "BLOCK", "Internal", gateway, nil)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Already shut
+    action: reject
+    source: Internal
+    destination: %s
+`, gateway))
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d\nstderr: %s", res.ExitCode, exitChangesPending, res.Stderr)
+	}
+	if strings.Contains(string(res.Stdout), riskOfBlockingTheGateway) {
+		t.Errorf("a policy that was already blocking was marked Risky:\n%s", res.Stdout)
+	}
+}
+
+// The other direction is the operator getting their management path back, and
+// nothing about it is worth a warning.
+func TestOpeningTheGatewayAgainIsNotRisky(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.seedPolicy(t, "Locked out", "BLOCK", "Internal", gateway, nil)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Locked out
+    action: allow
+    source: Internal
+    destination: %s
+`, gateway))
+
+	if strings.Contains(string(res.Stdout), riskOfBlockingTheGateway) {
+		t.Errorf("opening the management path was marked Risky:\n%s", res.Stdout)
+	}
+}
+
+// A policy created blocking the gateway is Risky for the same reason one turned
+// that way is, and more directly: the Controller's own allow on that pair sits
+// at the lowest precedence there is, so a new rule over it takes effect.
+func TestCreatingAPolicyThatBlocksTheGatewayIsRisky(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Shut the door
+    action: reject
+    source: Internal
+    destination: %s
+`, gateway))
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `+ firewall-policy "Shut the door"`) || !strings.Contains(stdout, riskOfBlockingTheGateway) {
+		t.Errorf("a created policy blocking the gateway should be Risky:\n%s", stdout)
+	}
+}
+
+// A pipeline gating on the changes that can lock an operator out needs to see
+// which ones those are without keeping its own list of dangerous kinds — the
+// same promise the WAN suite makes, now that a second kind can carry a risk.
+func TestPlanJSONMarksAGatewayBlockingPolicyAsRisky(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.seedPolicy(t, "Management", "ALLOW", "Internal", gateway, nil)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Management
+    action: block
+    source: Internal
+    destination: %s
+  - name: No internet
+    action: block
+    source: Internal
+    destination: External
+`, gateway), "--json")
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan --json exited %d, want %d\nstderr: %s", res.ExitCode, exitChangesPending, res.Stderr)
+	}
+
+	var out struct {
+		Changes []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+			Risk string `json:"risk"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(res.Stdout, &out); err != nil {
+		t.Fatalf("plan --json is not valid JSON: %v\nstdout: %s", err, res.Stdout)
+	}
+
+	risks := map[string]string{}
+	for _, change := range out.Changes {
+		risks[change.Name] = change.Risk
+	}
+	if risks["Management"] == "" {
+		t.Errorf("the policy blocking the gateway carries no risk in the JSON: %+v", out.Changes)
+	}
+	if risks["No internet"] != "" {
+		t.Errorf("the policy blocking the internet carries a risk it should not: %q", risks["No internet"])
+	}
+}
+
+// The Risky-change contract, for the second kind that can carry one: an apply
+// the operator already approved wholesale still stops at this change and asks
+// about that one on its own (ADR-0009).
+func TestApplyAsksAboutAGatewayBlockingPolicyEvenWhenItIsAutoApproved(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.seedPolicy(t, "Management", "ALLOW", "Internal", gateway, nil)
+	path := configFile(t, fmt.Sprintf(`firewall-policies:
+  - name: Management
+    action: block
+    source: Internal
+    destination: %s
+`, gateway))
+
+	res := testRig.runUnifigWithInput(t, []string{"apply", "--auto-approve", path}, r.env(), "y\n")
+	t.Logf("unifig apply --auto-approve -> exit %d\n%s\n%s", res.ExitCode, res.Stdout, res.Stderr)
+
+	if res.ExitCode != 0 {
+		t.Fatalf("apply exited %d\nstdout: %s\nstderr: %s", res.ExitCode, res.Stdout, res.Stderr)
+	}
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, "Risky change") || !strings.Contains(stdout, "[y/N]") {
+		t.Errorf("--auto-approve should still ask about the gateway change, got:\n%s", stdout)
+	}
+	if action := r.policyNamed(t, "Management")["action"]; action != "BLOCK" {
+		t.Errorf("the operator said yes and the policy did not change: %#v", action)
+	}
+}
+
+// Refusing one is not cancelling the apply: the question was about that policy,
+// and the rest of the file was still asked for. Nothing is hard-blocked either —
+// the same run with --allow-risky applies it.
+func TestARefusedGatewayPolicyIsSkippedAndTheRestIsApplied(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.seedPolicy(t, "Management", "ALLOW", "Internal", gateway, nil)
+	// The rest of the file is a firewall change that is not the management path,
+	// so that "the rest was still applied" has something to be true of.
+	path := configFile(t, fmt.Sprintf(`firewall-policies:
+  - name: Management
+    action: block
+    source: Internal
+    destination: %s
+  - name: No internet
+    action: block
+    source: Internal
+    destination: External
+`, gateway))
+
+	res := testRig.runUnifigWithInput(t, []string{"apply", "--auto-approve", path}, r.env(), "n\n")
+	t.Logf("unifig apply --auto-approve -> exit %d\n%s\n%s", res.ExitCode, res.Stdout, res.Stderr)
+
+	if res.ExitCode != 0 {
+		t.Fatalf("refusing a Risky change should not be a failure: exit %d\nstdout: %s\nstderr: %s",
+			res.ExitCode, res.Stdout, res.Stderr)
+	}
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{`+ firewall-policy "No internet" created`, `"Management"`, "--allow-risky"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("apply should report %q, got:\n%s", fragment, stdout)
+		}
+	}
+	if action := r.policyNamed(t, "Management")["action"]; action != "ALLOW" {
+		t.Errorf("the operator said no and the policy changed anyway: %#v", action)
+	}
+
+	applyFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Management
+    action: block
+    source: Internal
+    destination: %s
+`, gateway), "--allow-risky")
+	if action := r.policyNamed(t, "Management")["action"]; action != "BLOCK" {
+		t.Errorf("--allow-risky did not apply the change: %#v", action)
+	}
+}
+
+// An apply left running unattended has nobody to answer, and EOF is not a yes.
+func TestAGatewayPolicyWithNoOneToAskIsLeftUnapplied(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.seedPolicy(t, "Management", "ALLOW", "Internal", gateway, nil)
+	path := configFile(t, fmt.Sprintf(`firewall-policies:
+  - name: Management
+    action: block
+    source: Internal
+    destination: %s
+`, gateway))
+
+	res := testRig.runUnifig(t, []string{"apply", "--auto-approve", path}, r.env())
+	t.Logf("unifig apply --auto-approve -> exit %d\n%s\n%s", res.ExitCode, res.Stdout, res.Stderr)
+
+	if action := r.policyNamed(t, "Management")["action"]; action != "ALLOW" {
+		t.Errorf("the management path was blocked with nobody there to approve it: %#v", action)
+	}
+	if !strings.Contains(string(res.Stdout), "--allow-risky") {
+		t.Errorf("apply should say how to approve it in advance, got:\n%s", res.Stdout)
+	}
+}
+
+// Being Risky is what puts a change last, rather than which kind it is. A
+// firewall policy sits mid-table because it must follow the zones it names, so
+// without this an apply would cut the management path and then try to do the
+// rest of its work down a connection that no longer exists.
+func TestARiskyPolicyIsAppliedAfterTheSafeWork(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	// Both are updates to a firewall policy, so action and kind are equal and
+	// the only thing left to order them by is which one is Risky. They are named
+	// so that the Risky one sorts first alphabetically: without the risk
+	// criterion this plan comes out in exactly the wrong order, which is what
+	// makes the assertion below worth making.
+	r.seedPolicy(t, "Aaa management", "ALLOW", "Internal", gateway, nil)
+	r.seedPolicy(t, "Zzz no internet", "ALLOW", "Internal", "External", nil)
+
+	res := applyFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Aaa management
+    action: block
+    source: Internal
+    destination: %s
+  - name: Zzz no internet
+    action: block
+    source: Internal
+    destination: External
+`, gateway), "--allow-risky")
+
+	stdout := string(res.Stdout)
+	risky := strings.Index(stdout, `"Aaa management"`)
+	safe := strings.Index(stdout, `"Zzz no internet"`)
+	if risky < 0 || safe < 0 {
+		t.Fatalf("apply did not report both changes:\n%s", stdout)
+	}
+	if risky < safe {
+		t.Errorf("the Risky change was applied before the safe one:\n%s", stdout)
+	}
+}
+
+// A Controller that answers about its zones and says nothing about a gateway is
+// one unifig cannot run this check against. Skipping quietly is the failure that
+// matters: an operator would read a plan with no `!` on it as a plan that risks
+// nothing (issue #23's lesson, one Resource along).
+func TestPlanSaysWhenItCouldNotTellWhetherAPolicyBlocksTheGateway(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.hideTheGateway(t)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Management
+    action: block
+    source: Internal
+    destination: %s
+`, gateway))
+
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{"firewall-policy:", "no firewall policy is marked", "could not read"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan should say it could not run the check, looking for %q:\n%s", fragment, stdout)
+		}
+	}
+	// A caveat and a risk line both lead with `!`, so the test has to say which
+	// one it wants: the change itself must not be marked, because unifig does
+	// not know that it blocks anything.
+	if strings.Contains(stdout, riskOfBlockingTheGateway) {
+		t.Errorf("the change was marked Risky though the gateway could not be read:\n%s", stdout)
+	}
+}
+
+// And it is only said when there was a question to answer. A firewall plan that
+// blocks nothing had nothing to check, and a caveat on every run is one an
+// operator reads past by the third.
+func TestAPlanThatBlocksNothingSaysNothingAboutTheGateway(t *testing.T) {
+	r := startReplay(t)
+	r.hideTheGateway(t)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Let them through
+    action: allow
+    source: Internal
+    destination: External
+`)
+
+	if strings.Contains(string(res.Stdout), "no firewall policy is marked") {
+		t.Errorf("a plan with nothing blocking in it carried the gateway caveat:\n%s", res.Stdout)
+	}
+}

@@ -36,6 +36,23 @@ import (
 // and the two are kept apart here rather than by uppercasing on the way through:
 // a verdict unifig has never heard of then reads as one it does not model,
 // rather than as one it invents a spelling for.
+// gatewayRisk is what an operator stands to lose by blocking traffic to the
+// Gateway zone, said in the words they need to see it coming.
+//
+// It names the consequence rather than the field, for wanRisk's reason: "action
+// is changing to block" is not something an operator can weigh at eleven at
+// night and "there may be no way back to this site" is. Like wanRisk it says
+// "can" rather than "will", and that hedge is load-bearing — unifig models
+// neither a policy's precedence (`index`) nor whether it is enabled, so it knows
+// that a rule closing the management path is being written and cannot know what
+// the rule set as a whole will do with it (ADR-0018).
+const gatewayRisk = "the Controller answers in the Gateway zone, and blocking traffic to it can cut the path this site is managed over"
+
+// blockingActions are the verdicts that close a path. A policy moving between
+// two of them closes nothing that was not closed already, which is why the risk
+// check asks what the verdict is changing *from* as well as to.
+var blockingActions = map[string]bool{"block": true, "reject": true}
+
 var storedActions = map[string]string{
 	"allow":  "ALLOW",
 	"block":  "BLOCK",
@@ -61,11 +78,12 @@ var statedActions = func() map[string]string {
 func planFirewallPolicies(
 	cfg config.Config,
 	live []unifi.FirewallZonePolicy,
+	facts zoneFacts,
 	bound bindings,
 	opts Options,
-) ([]Change, []unifi.FirewallZonePolicy, error) {
+) ([]Change, []unifi.FirewallZonePolicy, []Caveat, error) {
 	if err := uniquelyKeyed(live, bound); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// A policy without a key is left out of the collection rather than filed
 	// under an empty one: nothing in the file can match it, and prune must not
@@ -93,28 +111,81 @@ func planFirewallPolicies(
 
 	changes := make([]Change, 0, len(cfg.FirewallPolicies))
 	named := make(map[policyKey]bool, len(cfg.FirewallPolicies))
+	// Whether this plan holds a change the gateway check would have looked at,
+	// which is what decides if an unreadable gateway is worth a caveat.
+	blocking := false
 	for _, desired := range cfg.FirewallPolicies {
 		named[keyOfDesiredPolicy(desired)] = true
 		for _, zone := range []string{desired.Source, desired.Destination} {
 			if !slices.Contains(reachable, zone) {
-				return nil, nil, noSuchZone(zone, bound.zoneNames())
+				return nil, nil, nil, noSuchZone(zone, bound.zoneNames())
 			}
 		}
 
 		current, exists := byKey[keyOfDesiredPolicy(desired)]
 		if !exists {
-			changes = append(changes, createFirewallPolicy(desired, bound))
+			blocking = blocking || becomesBlocking(config.FirewallPolicy{}, desired)
+			changes = append(changes, createFirewallPolicy(desired, facts, bound))
 			continue
 		}
-		if change, differs := updateFirewallPolicy(desired, current, bound); differs {
+		if change, differs := updateFirewallPolicy(desired, current, facts, bound); differs {
+			stated, _ := fromLivePolicy(current, bound)
+			blocking = blocking || becomesBlocking(stated, desired)
 			changes = append(changes, change)
 		}
 	}
+	caveats := unreadableGateway(blocking, facts)
 	if !opts.Prune {
-		return changes, live, nil
+		return changes, live, caveats, nil
 	}
 	deletions, spared := pruneFirewallPolicies(live, named, bound)
-	return append(changes, deletions...), spared, nil
+	return append(changes, deletions...), spared, caveats, nil
+}
+
+// closesTheGateway is whether this change would newly block traffic to the zone
+// the Controller answers in — the whole of what makes a Firewall Policy change
+// Risky (ADR-0018).
+//
+// It asks three things, and each of them narrows a way of getting this wrong.
+// The destination must be the gateway, because a policy to any other zone leaves
+// the Controller reachable and the fix one field away (ADR-0012). The verdict
+// must be becoming blocking, because a policy already blocking that pair cannot
+// cut a path that is already cut — `block` to `reject` costs nothing and a
+// confirmation in front of it is one an operator learns to click through. And
+// the gateway must be known: a guess here is a name unifig invented.
+func closesTheGateway(from, to config.FirewallPolicy, facts zoneFacts) bool {
+	return facts.known && facts.gateway != "" && to.Destination == facts.gateway && becomesBlocking(from, to)
+}
+
+// becomesBlocking is whether this change turns a path that was open into one
+// that is closed. A create has no `from`, so its empty verdict is not a blocking
+// one and a create stating `block` qualifies.
+func becomesBlocking(from, to config.FirewallPolicy) bool {
+	return blockingActions[to.Action] && !blockingActions[from.Action]
+}
+
+// unreadableGateway is the plan's admission that it could not check for the one
+// firewall change it would have marked Risky.
+//
+// It is the counterpart of the caveat prune carries when ownership could not be
+// established (issue #23), and it exists for the same reason: an absence with a
+// reason is invisible unless something says it out loud. Reaching the Controller
+// and not being told which zone is the gateway is the same silence as reaching
+// it and not being told which zones are its own.
+//
+// It is only said when the plan holds a change the check would have looked at —
+// something turning a verdict to block or reject. A plan with nothing blocking
+// in it had no question to answer, and a caveat on every firewall plan is one an
+// operator reads past by the third run.
+func unreadableGateway(blocking bool, facts zoneFacts) []Caveat {
+	if !blocking || (facts.known && facts.gateway != "") {
+		return nil
+	}
+	return []Caveat{{
+		Kind: FirewallPolicy,
+		Reason: "no firewall policy is marked as a Risky change: unifig could not read which zone the Controller " +
+			"answers in, so it cannot tell whether a policy in this plan would block the path this site is managed over",
+	}}
 }
 
 // zonesInUse names the zones a policy this plan leaves in place still governs,
@@ -291,12 +362,22 @@ func fromLivePolicy(policy unifi.FirewallZonePolicy, bound bindings) (config.Fir
 }
 
 // createFirewallPolicy is the Change for a policy the Controller does not have.
-func createFirewallPolicy(desired config.FirewallPolicy, bound bindings) Change {
+//
+// A policy created blocking the gateway is Risky for the same reason an existing
+// one turned that way is, and more directly: the Controller's own predefined
+// allow sits at the lowest precedence there is, so a policy written over it is
+// one that takes effect.
+func createFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts, bound bindings) Change {
+	risk := ""
+	if closesTheGateway(config.FirewallPolicy{}, desired, facts) {
+		risk = gatewayRisk
+	}
 	return Change{
 		Action: Create,
 		Kind:   FirewallPolicy,
 		Name:   desired.Name,
 		Fields: setPolicyFields(desired),
+		Risk:   risk,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// Read at the moment of writing rather than the moment of planning:
 			// either zone may have been created by a change earlier in this very
@@ -313,7 +394,12 @@ func createFirewallPolicy(desired config.FirewallPolicy, bound bindings) Change 
 
 // updateFirewallPolicy is the Change that brings a live policy in line with the
 // config, and whether there is one to make at all.
-func updateFirewallPolicy(desired config.FirewallPolicy, live unifi.FirewallZonePolicy, bound bindings) (Change, bool) {
+func updateFirewallPolicy(
+	desired config.FirewallPolicy,
+	live unifi.FirewallZonePolicy,
+	facts zoneFacts,
+	bound bindings,
+) (Change, bool) {
 	current, _ := fromLivePolicy(live, bound)
 
 	fields := changedPolicyFields(current, desired)
@@ -321,11 +407,21 @@ func updateFirewallPolicy(desired config.FirewallPolicy, live unifi.FirewallZone
 		return Change{}, false
 	}
 
+	// The Controller's own policy on this pair is matchable and updatable like
+	// any other — only prune exempts it (ADR-0005) — so `Allow All Traffic` from
+	// Internal to Gateway is a one-line edit away from being the rule that locks
+	// the operator out. That is the change this mark exists for.
+	risk := ""
+	if closesTheGateway(current, desired, facts) {
+		risk = gatewayRisk
+	}
+
 	return Change{
 		Action: Update,
 		Kind:   FirewallPolicy,
 		Name:   desired.Name,
 		Fields: fields,
+		Risk:   risk,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// The live object goes back with only unifig's own fields changed, so
 			// the schedule, the port and address matching, the logging switch and

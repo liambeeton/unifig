@@ -545,32 +545,34 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 		// The policies are read on the same terms as the WLANs above, and for the
 		// same reason one step along: a zone with a policy on either end of it is
 		// a zone something still requires.
+		//
+		// What the Controller says about its own zones is read on exactly those
+		// terms too, and the shared condition is not a coincidence: prune needs
+		// to know which zones are built-in, and a policy needs to know which one
+		// is the gateway, so the answer is wanted in precisely the cases a policy
+		// is read at all. A plan that manages zones and cannot delete them has no
+		// use for either half and still does not pay a request for it.
 		var policies []unifi.FirewallZonePolicy
+		var facts zoneFacts
 		if cfg.FirewallPolicies != nil || (opts.Prune && cfg.Zones != nil) {
 			policies, err = listFirewallPolicies(ctx, client, site)
 			if err != nil {
 				return Plan{}, err
 			}
+			facts = readZoneFacts(ctx, client, site)
 		}
 		sparedPolicies := policies
 		if cfg.FirewallPolicies != nil {
-			policyChanges, left, err := planFirewallPolicies(cfg, policies, bound, opts)
+			policyChanges, left, policyCaveats, err := planFirewallPolicies(cfg, policies, facts, bound, opts)
 			if err != nil {
 				return Plan{}, err
 			}
 			changes = append(changes, policyChanges...)
+			caveats = append(caveats, policyCaveats...)
 			sparedPolicies = left
 		}
 		if cfg.Zones != nil {
-			// Who owns which zone is only asked when it could change what the
-			// plan does, which is under --prune. A plan that cannot delete
-			// anything has no use for the answer and should not pay a request
-			// for it.
-			var owned zoneOwnership
-			if opts.Prune {
-				owned = builtInZones(ctx, client, site)
-			}
-			zoneChanges, zoneCaveats := planZones(cfg, zones, owned, zonesInUse(sparedPolicies, bound), bound, opts)
+			zoneChanges, zoneCaveats := planZones(cfg, zones, facts, zonesInUse(sparedPolicies, bound), bound, opts)
 			changes = append(changes, zoneChanges...)
 			caveats = append(caveats, zoneCaveats...)
 		}
@@ -803,18 +805,36 @@ func andJoin(phrases []string) string {
 
 // sortChanges makes plan output depend on what is changing rather than on the
 // order the operator happened to list things in: creates first, then updates,
-// then deletions, each group in the order the kinds table gives and
-// alphabetical within a kind. Two runs against the same Controller and config
-// print byte-identical plans, which is what lets CI diff one against another.
+// then deletions; the Risky ones last within their group; then the order the
+// kinds table gives, and alphabetical within a kind. Two runs against the same
+// Controller and config print byte-identical plans, which is what lets CI diff
+// one against another.
 //
 // None of it is cosmetic. Apply walks this slice in order, so a network is
-// created before the WLAN that joins it, a WLAN is deleted before the network
-// it was on, and the WAN slot that can cut the site off the internet is left
-// until the safe work is done.
+// created before the WLAN that joins it, and a WLAN is deleted before the
+// network it was on.
+//
+// Risk sorting last is what leaves the changes that can cut the site off until
+// the safe work is done. That used to be a property of the kinds table — the WAN
+// slot is last in it — which worked while the WAN was the only Risky kind and
+// stopped working the moment a Firewall Policy could be one: a policy sits at
+// order 3 because it must follow the zones it names, so a policy that blocks the
+// management path would otherwise be applied before the reservations, the
+// forwards and the uplink, and an operator who approved it would find the rest
+// of their plan unreachable. Sorting on risk instead makes "left until last" a
+// property of being Risky, which is where ADR-0009 put every other part of this.
+//
+// It is dependency-safe because nothing references a Firewall Policy, and
+// because a create that must precede another change is in the earlier action
+// group either way. It changes nothing about a plan whose only Risky change is a
+// WAN slot, which is every plan unifig produced before this.
 func sortChanges(changes []Change) {
 	slices.SortStableFunc(changes, func(a, b Change) int {
 		if a.Action != b.Action {
 			return actions[a.Action].order - actions[b.Action].order
+		}
+		if risky(a) != risky(b) {
+			return risky(a) - risky(b)
 		}
 		if a.Kind != b.Kind {
 			distance := kinds[a.Kind].order - kinds[b.Kind].order
@@ -825,6 +845,17 @@ func sortChanges(changes []Change) {
 		}
 		return strings.Compare(a.Name, b.Name)
 	})
+}
+
+// risky orders a Risky change after an ordinary one. It reads the sentence
+// rather than the kind, because the sentence is the whole of what makes a change
+// Risky (ADR-0009) and two changes of one kind need not agree: a Firewall Policy
+// that opens a path carries none and one that closes the management path does.
+func risky(c Change) int {
+	if c.Risk != "" {
+		return 1
+	}
+	return 0
 }
 
 // sortCaveats does for the caveats what sortChanges does for the changes, and
