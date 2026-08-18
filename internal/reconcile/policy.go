@@ -529,10 +529,41 @@ func deleteFirewallPolicy(live unifi.FirewallZonePolicy, bound bindings) Change 
 // config states only part of.
 func setPolicyFields(desired config.FirewallPolicy) []Field {
 	return []Field{
-		{Name: "action", To: desired.Action},
+		{Name: "action", To: desired.Action, Notes: returnRuleNote(desired)},
 		{Name: "source", To: desired.Source},
 		{Name: "destination", To: desired.Destination},
 	}
+}
+
+// returnRuleNote is what a create does beyond the policy it names: on an allow,
+// the Controller generates a second policy for the reply traffic, and the plan
+// has to say so.
+//
+// Measured on the live migrated UDR on 18 August 2026 (ADR-0022). One allow
+// policy created with `create_allow_respond` took the site from 86 policies to
+// 88 — unifig's own, and a companion the Controller named `<name> (Return)`,
+// marked `predefined` and back-referenced to its parent — and deleting the
+// parent returned it to 86. Without the flag the same create made 87 and no
+// companion, which is what makes this the plan describing a consequence rather
+// than a coincidence.
+//
+// It is on the verdict because the verdict decides it. The Controller refuses
+// the request outright on a policy that blocks, so there is no second policy to
+// announce and a blocking create carries no note — the one case where saying
+// nothing is the true statement.
+//
+// A note rather than a Change of its own, on ADR-0010's distinction: unifig does
+// not create the companion, cannot name it in a config file, and will not be the
+// one to delete it. What an operator needs is to know it is coming, which is the
+// same thing a zone's membership note gives them about a network leaving another
+// zone (ADR-0020).
+func returnRuleNote(desired config.FirewallPolicy) []string {
+	if desired.Action != "allow" {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"the Controller will also create %q for the reply traffic, and delete it with this policy",
+		desired.Name+" (Return)")}
 }
 
 // changedPolicyFields lists the managed fields on which the Controller and the

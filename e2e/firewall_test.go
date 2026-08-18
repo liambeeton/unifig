@@ -829,6 +829,55 @@ func TestCreatingABlockingPolicyDoesNotAskForAReturnRule(t *testing.T) {
 	}
 }
 
+// The plan says what the apply will do, and creating one allow policy makes two
+// policies (ADR-0022).
+//
+// Asking the Controller for the return rule is a request it acts on: measured on
+// the live migrated UDR on 18 August 2026, one allow policy created with
+// `create_allow_respond` true took the site from 86 policies to 88, the second
+// named after the first and reclaimed with it. That is the shape ADR-0014 holds
+// a plan to — "a plan is a statement about what will happen" — and the shape
+// issue #32 fixed for a zone's membership, where one PUT moved two zones and the
+// plan named one.
+//
+// The note is on the verdict rather than on the policy, because the verdict is
+// what decides it: the Controller refuses the same request on a policy that
+// blocks, so a create that says `block` makes exactly one policy and says so by
+// carrying no note at all.
+func TestPlanSaysTheControllerWillMakeTheReturnRuleForAnAllowPolicy(t *testing.T) {
+	r := startReplay(t)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Let them answer
+    action: allow
+    source: Internal
+    destination: External
+`)
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{`+ firewall-policy "Let them answer"`, "Let them answer (Return)", "reply"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan does not say the Controller will make the return rule (%q missing):\n%s", fragment, stdout)
+		}
+	}
+}
+
+// The other half, and the reason the note is computed rather than printed on
+// every create: there is no second policy to announce when the Controller
+// refuses to make one.
+func TestPlanSaysNothingAboutAReturnRuleForAPolicyThatBlocks(t *testing.T) {
+	r := startReplay(t)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Shut it
+    action: block
+    source: Internal
+    destination: External
+`)
+	if stdout := string(res.Stdout); strings.Contains(stdout, "Return") {
+		t.Errorf("the plan promises a return rule for a policy that blocks, which the Controller refuses to make:\n%s", stdout)
+	}
+}
+
 func TestApplyCreatesAPolicyBetweenTwoZonesAndTheNextPlanIsEmpty(t *testing.T) {
 	r := startReplay(t)
 
