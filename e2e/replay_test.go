@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -125,7 +126,10 @@ type sentRequest struct {
 // 400 naming the first one it reaches, and these are the two a real UDR was
 // measured refusing (ADR-0019): `attr_no_edit`, which the Controller puts on
 // three of its own zones and go-unifi models, and `cloud_template`, which it
-// puts on all six and go-unifi does not.
+// puts on all six and go-unifi does not — so no payload can carry the second
+// today. It is here because what makes a field refusable is the Controller's
+// DTO rather than the library's struct, and the day go-unifi models one more of
+// them is the day that stops being true.
 //
 // Only what was measured is here, and the sibling markers are deliberately not
 // — ADR-0014's objection to a fixture that asserts a guess still stands. What
@@ -346,7 +350,10 @@ func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base str
 		if !r.decode(w, req, &sent, base) {
 			return
 		}
-		r.written = append(r.written, sentRequest{path: req.URL.Path, body: sent})
+		// Cloned, because the stand-in stamps `_id` and `site_id` into `sent`
+		// below: a record that aliased it would be the stored object wearing the
+		// request's name, and the fields it gained would be unfalsifiable.
+		r.written = append(r.written, sentRequest{path: req.URL.Path, body: maps.Clone(sent)})
 		if r.unrecognisedField(w, sent, refuses) {
 			return
 		}
@@ -361,7 +368,10 @@ func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base str
 		if !r.decode(w, req, &sent, base) {
 			return
 		}
-		r.written = append(r.written, sentRequest{path: req.URL.Path, body: sent})
+		// Cloned, because the stand-in stamps `_id` and `site_id` into `sent`
+		// below: a record that aliased it would be the stored object wearing the
+		// request's name, and the fields it gained would be unfalsifiable.
+		r.written = append(r.written, sentRequest{path: req.URL.Path, body: maps.Clone(sent)})
 		if r.unrecognisedField(w, sent, refuses) {
 			return
 		}

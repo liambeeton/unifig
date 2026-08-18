@@ -96,9 +96,11 @@ neither.
 `go-unifi` models the field as `attr_no_edit,omitempty`, so it goes back out in
 the payload exactly when it is true, and the Controller's write DTO answers a
 field it has never heard of with `400 JSON parse error: Unrecognized field
-"attr_no_edit" ... not marked as ignorable`. Every update to `External`, `Vpn`
-and `Gateway` failed and no other zone's did, which is a perfect correlation
-with the marker and none of it the marker's doing. A zone's read shape is not
+"attr_no_edit" ... not marked as ignorable`. `Vpn` and `External` were both
+refused where `Dmz` and `Hotspot`, unmarked, took the same request shape — a
+correlation with the marker that the marker causes none of. `Gateway`, the third
+one carrying it, was never written to, and is expected to refuse for the same
+reason rather than known to. A zone's read shape is not
 its write shape — `cloud_template`, which all six carry and `go-unifi` does not
 model, is refused the same way — and nothing in the type system says so. That is
 issue #27: the fix clears the read-only markers before the write, and the

@@ -156,6 +156,13 @@ sentence.
   and teaching it to refuse would be writing a fixture that asserts a guess
   (ADR-0013). What the firewall suite states is unifig's promise about its own
   plan, which is the part this ADR is about.
+
+  **Narrowed on 18 August 2026.** The objection was to asserting a guess, not to
+  refusing as such, and the zone write endpoint's refusal is now a measurement:
+  it answers `attr_no_edit` and `cloud_template` with a 400, which the stand-in
+  replays (ADR-0019, issue #27). Nothing else refuses anything, and a prune is
+  still not among the things that can — so this bullet stands for the deletion
+  it is about, and no longer for the whole of both collections.
 - **On a migrated router, `--prune` declines every custom zone.** Not "may": one
   custom zone made the Controller generate eighteen predefined policies for its
   pairs, and each of them holds the zone back. The zone is

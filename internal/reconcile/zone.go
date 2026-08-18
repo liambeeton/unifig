@@ -320,9 +320,10 @@ func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings) (C
 		Fields: fields,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// The live object goes back with only unifig's own fields changed,
-			// so everything the Controller holds about the zone that unifig does
-			// not model survives an apply — everything the write endpoint will
-			// accept being told, which is not all of what a read returns.
+			// so what the zone carries beside them survives an apply — as far
+			// as it can: a field go-unifi does not model was dropped at
+			// unmarshal, and a field the write endpoint refuses to be told
+			// about is cleared here rather than sent.
 			updated := writableZone(live)
 			if err := overwriteManagedZone(&updated, desired, bound); err != nil {
 				return err
@@ -471,11 +472,11 @@ func overwriteManagedZone(zone *unifi.FirewallZone, desired config.Zone, bound b
 // ignorable` — its write DTO has never heard of the field it has just been
 // sent — and `omitempty` did the rest: the field goes out exactly when it is
 // true, so unifig's payload was well-formed for the zones whose marker is false
-// and malformed for the three whose marker is true. Every membership change to
-// External, Vpn or Gateway failed, for a reason that correlated perfectly with
-// the marker and had nothing to do with it: a hand-built PUT carrying only
-// `_id`, `name` and `network_ids` was accepted on a marked zone by a real UDR
-// (ADR-0019, issue #27).
+// and malformed for the three whose marker is true. `Vpn` and `External` were
+// both refused where the unmarked controls were not — a correlation the marker
+// causes none of: a hand-built PUT carrying only `_id`, `name` and
+// `network_ids` was accepted on `Vpn`, marked, by a real UDR (ADR-0019,
+// issue #27).
 //
 // All four markers go rather than the one that has been seen to bite. They are
 // the same shape with the same `omitempty`, so a firmware that starts putting

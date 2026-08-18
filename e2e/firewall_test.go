@@ -247,8 +247,8 @@ zones:
 // a passing test (ADR-0014, ADR-0019).
 //
 // The rule is stated over the whole `attr_*` family rather than over the one
-// field that has been seen to bite, and the zone is seeded carrying the three
-// siblings so that stating it is not stating nothing. `attr_no_delete`,
+// field that has been seen to bite, and the zone is seeded carrying all
+// four markers so that stating it is not stating nothing. `attr_no_delete`,
 // `attr_hidden` and `attr_hidden_id` are the same shape with the same
 // `omitempty`, and the first firmware to put one of them on a zone reproduces
 // #27 exactly. Nothing here claims the Controller would refuse them — no one
@@ -262,6 +262,7 @@ func TestTheZoneUnifigWritesBackCarriesNoneOfTheControllersReadOnlyMarkers(t *te
 		"attr_hidden":    true,
 		"attr_hidden_id": "6613a1f0c4b2d90a5e1f7001",
 		"attr_no_delete": true,
+		"attr_no_edit":   true,
 	})
 
 	applyFirewall(t, r, fmt.Sprintf(`networks:
