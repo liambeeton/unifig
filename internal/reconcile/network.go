@@ -185,7 +185,7 @@ func pruneNetworks(live map[string]unifi.Network, named map[string]bool, inUse r
 			continue
 		}
 		if by := inUse[name]; len(by) > 0 {
-			caveats = append(caveats, heldBack(Network, name, by, "on it"))
+			caveats = append(caveats, heldBack(Network, name, by))
 			continue
 		}
 		changes = append(changes, deleteNetwork(network))

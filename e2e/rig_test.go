@@ -478,6 +478,105 @@ func (r *rig) portForwards(t *testing.T) []map[string]any {
 	return list.Data
 }
 
+// seedReservation puts a client record on the live Controller through its own
+// API, forgetting any record for the same MAC first so seeding is idempotent
+// across reused controllers. Its conf is raw Controller JSON for the same reason
+// seedNetwork's is: the rig describes the Controller, not unifig's model of it.
+//
+// It seeds a *client record*, which is the thing a reservation is half of. A
+// conf with no `use_fixedip` is how a test sets up a client the Controller knows
+// but holds no reservation for — the state unifig has to read as "there is no
+// reservation here" rather than as one with a blank address.
+func (r *rig) seedReservation(t *testing.T, conf map[string]any) {
+	t.Helper()
+	mac, _ := conf["mac"].(string)
+	r.forgetClients(t, mac)
+
+	body, err := json.Marshal(conf)
+	if err != nil {
+		t.Fatalf("marshaling client record: %v", err)
+	}
+	resp := r.controllerDo(t, http.MethodPost, "/api/s/default/rest/user", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("seeding client record %q: status %d: %s", mac, resp.StatusCode, b)
+	}
+}
+
+// forgetClients removes client records entirely — the Controller's own
+// forget-sta, which is the only way to make a site look as though it had never
+// seen a device.
+//
+// It is the rig's cleanup and deliberately not what unifig does. Giving up a
+// reservation leaves the record behind (ADR-0015), so a test that tidied up by
+// asking unifig to prune would leave the next test a client record it did not
+// seed. A MAC the Controller has no record of is not an error here.
+//
+// The MACs are lower-cased on the way out, and that is not tidiness. The
+// Controller stores every MAC in lower case, and this command matches on the
+// exact string it is given: handed `AA:BB:…` it forgets nothing and answers
+// `rc: ok` anyway. A test naming its client in upper case would then leave that
+// client behind for whatever ran next, which is the sort of contamination the
+// rest of this rig's seeding exists to rule out.
+func (r *rig) forgetClients(t *testing.T, macs ...string) {
+	t.Helper()
+	stored := make([]string, len(macs))
+	for i, mac := range macs {
+		stored[i] = strings.ToLower(mac)
+	}
+	body, err := json.Marshal(map[string]any{"cmd": "forget-sta", "macs": stored})
+	if err != nil {
+		t.Fatalf("marshaling forget-sta: %v", err)
+	}
+	resp := r.controllerDo(t, http.MethodPost, "/api/s/default/cmd/stamgr", bytes.NewReader(body))
+	resp.Body.Close()
+}
+
+// liveClient reads one client record back off the Controller as the raw JSON the
+// Controller stores — how a test checks what an apply actually did, including
+// the fields of the record unifig does not model and must not have touched.
+func (r *rig) liveClient(t *testing.T, mac string) map[string]any {
+	t.Helper()
+	found := r.clientsWithMAC(t, mac)
+	if len(found) != 1 {
+		t.Fatalf("the Controller has %d client records for %q, want exactly 1", len(found), mac)
+	}
+	return found[0]
+}
+
+// clientsWithMAC finds the records for one MAC, comparing case-insensitively
+// because the Controller stores every MAC in lower case whatever case it was
+// given — the same normalisation unifig matches on.
+func (r *rig) clientsWithMAC(t *testing.T, mac string) []map[string]any {
+	t.Helper()
+	var found []map[string]any
+	for _, client := range r.clients(t) {
+		if stored, ok := client["mac"].(string); ok && strings.EqualFold(stored, mac) {
+			found = append(found, client)
+		}
+	}
+	return found
+}
+
+// clients reads every client record the Controller holds, reservation or not.
+// Most of them are not reservations — the collection is the Controller's memory
+// of every device it has seen — which is exactly what a test proving unifig
+// leaves the others alone has to be able to look at.
+func (r *rig) clients(t *testing.T) []map[string]any {
+	t.Helper()
+	resp := r.controllerDo(t, http.MethodGet, "/api/s/default/rest/user", nil)
+	defer resp.Body.Close()
+
+	var list struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatalf("listing client records: %v", err)
+	}
+	return list.Data
+}
+
 // networkID is the Controller ID of a live network — what a seeded WLAN needs
 // in order to name the network its clients join. Tests never see this ID
 // themselves; it goes straight back into a seed.

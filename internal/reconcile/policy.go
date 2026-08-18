@@ -135,7 +135,7 @@ func zonesInUse(spared []unifi.FirewallZonePolicy, bound bindings) referenced {
 		if !keyed {
 			continue
 		}
-		governs := fmt.Sprintf("the %s %s", kinds[FirewallPolicy].one, key)
+		governs := fmt.Sprintf("the %s %s governing it", kinds[FirewallPolicy].one, key)
 		inUse[key.source] = append(inUse[key.source], governs)
 		if key.destination != key.source {
 			inUse[key.destination] = append(inUse[key.destination], governs)

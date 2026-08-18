@@ -47,6 +47,18 @@ import (
 // The firewall pair comes from the Controller's v2 tree and answers with a bare
 // JSON array rather than the {meta, data} envelope the rest of the Internal API
 // wraps everything in, which is why the recording holds two shapes of file.
+//
+// One file the stand-in serves is deliberately not here: `user.json`, the client
+// records. unifig reads them, so the stand-in has to answer — but a recording
+// keeps none of them, exactly as it keeps no WLANs and no port forwards
+// (ADR-0011), and unlike those two nothing else wants the response either. The
+// port forwards are fetched because the ownership count is read off them; there
+// is no such question about a client record. So fetching this one would pull the
+// household's whole device list — every device name, and a MAC address that
+// identifies a piece of hardware for as long as it exists — into a file on disk
+// in order to throw it away, and "not recording something is the only rule that
+// cannot be got wrong" is ADR-0011's own sentence. `user.json` is committed
+// empty and stays that way; re-recording does not rewrite it.
 var endpoints = []struct{ file, path string }{
 	{"sysinfo.json", "/proxy/network/api/s/default/stat/sysinfo"},
 	{"networkconf.json", "/proxy/network/api/s/default/rest/networkconf"},

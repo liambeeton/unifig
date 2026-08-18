@@ -102,13 +102,14 @@ var actions = map[Action]struct {
 type Kind string
 
 const (
-	Network        Kind = "network"
-	WLAN           Kind = "wlan"
-	Zone           Kind = "zone"
-	FirewallPolicy Kind = "firewall-policy"
-	PortForward    Kind = "port-forward"
-	EncryptedDNS   Kind = "encrypted-dns"
-	WANSlot        Kind = "wan"
+	Network         Kind = "network"
+	WLAN            Kind = "wlan"
+	Zone            Kind = "zone"
+	FirewallPolicy  Kind = "firewall-policy"
+	PortForward     Kind = "port-forward"
+	DHCPReservation Kind = "dhcp-reservation"
+	EncryptedDNS    Kind = "encrypted-dns"
+	WANSlot         Kind = "wan"
 )
 
 // kinds is what the rest of the package needs to know about a managed type:
@@ -124,7 +125,14 @@ const (
 // let go of something still referenced.
 //
 // WLANs and Zones both reference networks and neither references the other, so
-// which of them comes first is arbitrary; they are ordered as they were added.
+// which of them comes first is arbitrary; they are ordered as they were added,
+// and a DHCP Reservation joins them on the same terms. Its reference to a
+// network is the one the Controller infers rather than stores — an address is
+// reserved on whichever network's subnet contains it — but it constrains the
+// order exactly as a stated one would, in both directions: the network has to
+// exist before an address inside it can be reserved, and the Controller refuses
+// to delete a network with an address reserved inside it.
+//
 // A Port Forward references nothing at all — its target is an address rather
 // than a name — so nothing constrains where it goes and it sits after the
 // Resources that do reference something, which is where a reader looking for the
@@ -147,13 +155,14 @@ var kinds = map[Kind]struct {
 	order     int
 	one, many string
 }{
-	Network:        {order: 0, one: "network", many: "networks"},
-	WLAN:           {order: 1, one: "WLAN", many: "WLANs"},
-	Zone:           {order: 2, one: "zone", many: "zones"},
-	FirewallPolicy: {order: 3, one: "firewall policy", many: "firewall policies"},
-	PortForward:    {order: 4, one: "port forward", many: "port forwards"},
-	EncryptedDNS:   {order: 5, one: "Encrypted DNS setting", many: "Encrypted DNS settings"},
-	WANSlot:        {order: 6, one: "WAN slot", many: "WAN slots"},
+	Network:         {order: 0, one: "network", many: "networks"},
+	WLAN:            {order: 1, one: "WLAN", many: "WLANs"},
+	Zone:            {order: 2, one: "zone", many: "zones"},
+	FirewallPolicy:  {order: 3, one: "firewall policy", many: "firewall policies"},
+	DHCPReservation: {order: 4, one: "DHCP reservation", many: "DHCP reservations"},
+	PortForward:     {order: 5, one: "port forward", many: "port forwards"},
+	EncryptedDNS:    {order: 6, one: "Encrypted DNS setting", many: "Encrypted DNS settings"},
+	WANSlot:         {order: 7, one: "WAN slot", many: "WAN slots"},
 }
 
 // Options are the choices a verb makes on the operator's behalf for a whole
@@ -195,10 +204,17 @@ type Caveat struct {
 
 // referenced is what a plan leaves pointing at the Resources prune would
 // otherwise delete: a target's natural key against the phrases naming what will
-// still be pointing at it. There is one of these per reference — networks against
-// their WLANs, zones against their policies — so the keys are always the natural
-// keys of one kind, and the values are the sentence fragments a Caveat is built
-// from rather than objects.
+// still be pointing at it. The keys are always the natural keys of one kind, and
+// the values are the sentence fragments a Caveat is built from rather than
+// objects.
+//
+// Each phrase says what its referencer goes on doing to the target as well as
+// which referencer it is — `the WLAN "Home IoT" on it`, `the DHCP reservation
+// "aa:bb:…" reserving an address inside it` — rather than the kind supplying one
+// verb for all of them. That is because a target can be held by more than one
+// kind of thing at once: a network is held by the WLANs on it and by the
+// addresses reserved inside it, and an operator reads a plan in the terms of
+// each pair in front of them.
 //
 // It is prune's third exemption, after the Controller's own objects and the
 // sections the file leaves out, and it is there because a plan is a statement
@@ -217,18 +233,23 @@ type referenced map[string][]string
 // heldBack is the Caveat for a deletion prune declined because the plan leaves
 // something pointing at the Resource.
 //
-// `leaves` is the referencing side's own word for what it goes on doing to the
-// target — a WLAN is left "on it", a firewall policy "governing it" — because an
-// operator reads a plan in the terms of the pair in front of them, not in one
-// phrase abstract enough to cover both.
-//
 // Every referencer is named rather than counted, for the reason uniquelyNamed
 // names every duplicate: the list is the whole job, and an operator who wants
-// the deletion needs to know what all of it takes.
-func heldBack(kind Kind, name string, by []string, leaves string) Caveat {
+// the deletion needs to know what all of it takes. Each carries its own phrase
+// (see referenced), so a network held by both a WLAN and a reservation reads as
+// one sentence about both rather than as two caveats about one network.
+func heldBack(kind Kind, name string, by []string) Caveat {
 	return Caveat{Kind: kind, Reason: fmt.Sprintf(
-		"the %s %q will not be deleted: this plan leaves %s %s",
-		kinds[kind].one, name, andJoin(slices.Sorted(slices.Values(by))), leaves)}
+		"the %s %q will not be deleted: this plan leaves %s",
+		kinds[kind].one, name, andJoin(slices.Sorted(slices.Values(by))))}
+}
+
+// merge folds another collection of referencers into this one, so that a target
+// held by two kinds of thing produces one Caveat naming both.
+func (r referenced) merge(other referenced) {
+	for target, by := range other {
+		r[target] = append(r[target], by...)
+	}
 }
 
 // Change is one thing apply would create, update or delete, in the terms an
@@ -465,13 +486,41 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 		changes = append(changes, wlanChanges...)
 		sparedWLANs = left
 	}
+	// The client records are read on the same terms as the WLANs, and the second
+	// reason is the same one step sideways: the Controller will not delete a
+	// network with an address reserved inside it, so a prune of the networks has
+	// to know what is reserved whether or not the file manages reservations.
+	var clients []unifi.User
+	if cfg.DHCPReservations != nil || (opts.Prune && cfg.Networks != nil) {
+		clients, err = listClientRecords(ctx, client, site)
+		if err != nil {
+			return Plan{}, err
+		}
+	}
+	// A section the file leaves out is one nothing in this plan gives up, so
+	// every live reservation survives — and so does every network one of them
+	// reserves an address inside.
+	sparedReservations := reservationsAmong(clients)
+	if cfg.DHCPReservations != nil {
+		reservationChanges, left, err := planDHCPReservations(cfg, clients, opts)
+		if err != nil {
+			return Plan{}, err
+		}
+		changes = append(changes, reservationChanges...)
+		sparedReservations = left
+	}
 	if cfg.Networks != nil {
 		byName := make(map[string]unifi.Network, len(live))
 		for _, network := range live {
 			byName[network.Name] = network
 		}
-		networkChanges, networkCaveats := planNetworks(
-			cfg, byName, networksInUse(sparedWLANs, cfg.WLANs, bound), bound, opts)
+		// Two collections hold a network back rather than one, and they are
+		// merged rather than asked in turn, because what prune needs is one
+		// answer per network: an operator told their network stays needs the
+		// whole of what is keeping it, not the first thing found.
+		inUse := networksInUse(sparedWLANs, cfg.WLANs, bound)
+		inUse.merge(reservedWithin(sparedReservations, cfg.DHCPReservations, live))
+		networkChanges, networkCaveats := planNetworks(cfg, byName, inUse, bound, opts)
 		changes = append(changes, networkChanges...)
 		caveats = append(caveats, networkCaveats...)
 	}
@@ -618,6 +667,11 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 		return config.Config{}, Notices{}, err
 	}
 
+	reservations, err := projectDHCPReservations(ctx, client, site)
+	if err != nil {
+		return config.Config{}, Notices{}, err
+	}
+
 	slots, partial, err := projectWANSlots(all)
 	if err != nil {
 		return config.Config{}, Notices{}, err
@@ -634,6 +688,7 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 			Zones:            zones,
 			FirewallPolicies: policies,
 			PortForwards:     forwards,
+			DHCPReservations: reservations,
 			WAN:              slots,
 			EncryptedDNS:     dns,
 		},

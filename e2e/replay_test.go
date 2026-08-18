@@ -51,6 +51,7 @@ const (
 	networkconfPath = "/proxy/network/api/s/default/rest/networkconf"
 	wlanconfPath    = "/proxy/network/api/s/default/rest/wlanconf"
 	portforwardPath = "/proxy/network/api/s/default/rest/portforward"
+	userPath        = "/proxy/network/api/s/default/rest/user"
 	settingPath     = "/proxy/network/api/s/default/get/setting"
 	setDoHPath      = "/proxy/network/api/s/default/set/setting/doh"
 	zonePath        = "/proxy/network/v2/api/site/default/firewall/zone"
@@ -92,11 +93,13 @@ type replay struct {
 	// trusted to come back unchanged would be a poor witness for the one that
 	// does.
 	//
-	// The first two are recorded empty (ADR-0011): the dockerized Controller
-	// covers WLANs and port forwards, so a recording keeps neither and both
-	// endpoints answer here only because export asks them.
+	// The first three are recorded empty (ADR-0011): the dockerized Controller
+	// covers WLANs, port forwards and DHCP reservations, so a recording keeps
+	// none of them and those endpoints answer here only because export and prune
+	// ask them.
 	wlans    json.RawMessage
 	forwards json.RawMessage
+	clients  json.RawMessage
 	sysinfo  json.RawMessage
 }
 
@@ -112,6 +115,7 @@ func startReplay(t *testing.T) *replay {
 	r.settings = recordedEntries(t, "setting.json")
 	r.wlans = recordedBody(t, "wlanconf.json")
 	r.forwards = recordedBody(t, "portforward.json")
+	r.clients = recordedBody(t, "user.json")
 	r.sysinfo = recordedBody(t, "sysinfo.json")
 	r.zones = recordedList(t, "firewallzone.json")
 	r.policies = recordedList(t, "firewallpolicy.json")
@@ -150,6 +154,8 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 		r.write(w, r.wlans)
 	case req.Method == http.MethodGet && req.URL.Path == portforwardPath:
 		r.write(w, r.forwards)
+	case req.Method == http.MethodGet && req.URL.Path == userPath:
+		r.write(w, r.clients)
 	case req.Method == http.MethodGet && req.URL.Path == networkconfPath:
 		r.write(w, r.collection())
 	case req.Method == http.MethodPut && strings.HasPrefix(req.URL.Path, networkconfPath+"/"):

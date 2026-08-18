@@ -2,7 +2,7 @@
 
 Declarative configuration for a UniFi Network application (the Controller) on a UniFi Dream Router, from human-readable YAML. See `CONTEXT.md` for the domain glossary and [issue #1](https://github.com/liambeeton/unifig/issues/1) for the v1 spec.
 
-Current state: networks, WLANs and WAN slots reconcile end to end — `unifig plan` and `unifig apply`, with WLAN passphrases and PPPoE credentials supplied by `${ENV_VAR}` — alongside `unifig export` to adopt a configured Controller and `unifig validate` to check a config file offline.
+Current state: all seven config areas reconcile end to end — networks and VLANs, WLANs, firewall zones and policies, port forwards, DHCP reservations, WAN slots and Encrypted DNS — through `unifig plan` and `unifig apply`, with WLAN passphrases, PPPoE credentials and DNS stamps supplied by `${ENV_VAR}`, alongside `unifig export` to adopt a configured Controller and `unifig validate` to check a config file offline.
 
 ## Usage
 
@@ -29,7 +29,7 @@ On the UDR: UniFi OS → Control Plane → Admins & Users → your admin → Cre
 
 One `unifig.yaml` describes the Controller's configuration. `examples/unifig.yaml` is a working starting point; `schema/unifig.schema.json` is the contract.
 
-Sections reconcile as they land. `networks`, `wlans`, `zones`, `firewall-policies`, `port-forwards`, `wan` and `encrypted-dns` are the sections every verb handles today; the rest of the v1 catalogue — DHCP reservations — follows.
+`networks`, `wlans`, `zones`, `firewall-policies`, `port-forwards`, `dhcp-reservations`, `wan` and `encrypted-dns` are the sections every verb handles — the whole v1 catalogue.
 
 A WLAN names the network its clients join, and that reference is checked offline:
 
@@ -61,6 +61,10 @@ port-forwards:
     forward-port: 8123
     protocol: tcp                      # tcp, udp or tcp_udp
     source: 203.0.113.0/24             # omit to accept traffic from anywhere
+
+dhcp-reservations:
+  - mac: "00:1a:2b:3c:4d:5e"           # the client, and the whole of its identity
+    ip: 10.20.0.50                     # no network to name — see below
 
 wan:
   - slot: WAN                          # the router's own name for the uplink
@@ -161,6 +165,37 @@ Three things to know about it:
   A forward you *do* name in your file is managed whichever ports the Controller has it on, so narrowing `27015-27020` to `27015` is an ordinary update — the plan shows the range on the losing side.
 
 Everything else a forward carries — which uplink it listens on, whether it logs, whether it is switched on at all — is the Controller's and survives an apply untouched. Opening or closing a port is **not** a [Risky change](#risky-changes): it cannot take the site off the internet or put the Controller out of reach, and the way back is to put the forward where it was.
+
+### DHCP reservations
+
+`dhcp-reservations` pins a client to an address. It is keyed by MAC, and it is the one section that does not describe an object on your Controller at all — which is worth knowing before you point `--prune` at it.
+
+Your Controller keeps a record for **every client it has ever seen**, carrying whatever you put on it in the UI: a name, a note, a user group, whether it is blocked. A reservation is two fields of that record. So:
+
+- **unifig manages the address and nothing else.** Renaming a laptop in the UI and moving its address in YAML do not fight; an apply writes the address and hands the rest of the record straight back.
+- **A client with no reserved address is not in scope.** unifig sees the reservations, not your address book. `export` does not write those clients, `--prune` cannot touch them, and `dhcp-reservations: []` gives up every reserved address while leaving every client record alone.
+- **Removing a reservation gives the address up — it does not forget the device.** The client keeps its name and its note and takes a dynamic address at its next lease. The plan says so on the line, because `- dhcp-reservation` reads like more than it is:
+
+  ```
+  - dhcp-reservation "00:1a:2b:3c:4d:5e"
+      ip: 10.20.0.50
+           the Controller calls this client "Study NAS", and its record stays exactly
+           as it is — only the fixed address is given up, so it takes one from the
+           pool instead
+  ```
+
+  If you did mean to forget the device, that is a click in the Controller's UI. unifig will not do it from a deleted line of YAML (`docs/adr/0015-a-reservation-is-a-projection-of-a-client-record.md`).
+
+**There is no network to name**, and that is your Controller's design rather than a missing field. It works out which network an address belongs to from the address: one that falls inside no network's subnet is refused, whichever network the record happens to point at. The same rule runs the other way, so a network with an address reserved inside it is one `--prune` holds back:
+
+```
+! network: the network "IoT" will not be deleted: this plan leaves the DHCP reservation
+  "00:1a:2b:3c:4d:5e" reserving an address inside it.
+```
+
+**MAC addresses are matched case-insensitively**, and this is the only key in unifig that is. Your Controller stores every MAC in lower case, so `00:1A:2B:…` in your file matches `00:1a:2b:…` on the Controller, `export` writes lower case, and two entries in one file differing only in case are one reservation written twice — which `validate` reports rather than applying in file order.
+
+Losing a fixed address is **not** a [Risky change](#risky-changes): the client falls back to the DHCP pool, the Controller stays reachable, and the way back is to put the reservation back.
 
 Every verb that reads config takes an optional file argument, defaulting to `./unifig.yaml`:
 
@@ -314,7 +349,7 @@ Deletions appear in the plan like any other change, showing what was in the netw
 Plan: 1 to create, 1 to delete.
 ```
 
-Five things `--prune` will not do:
+Six things `--prune` will not do:
 
 - **Reach a section your file doesn't have.** A file with no `wlans:` key says nothing about WLANs, so prune deletes none of them — the same rule as an omitted field, one level up (see `docs/adr/0006-prune-reaches-only-the-sections-the-file-has.md`). Write `wlans: []` to say there should be none; that is a statement, and prune acts on it.
 - **Delete what the Controller says it owns.** The built-in Default network is marked undeletable on the Controller itself, and unifig reads that marker rather than keeping a list of names (see `docs/adr/0005-builtin-exemption-from-the-controller.md`). It is never pruned, whether or not your file names it. Each type has its own marker — a network's is `attr_no_delete`, a firewall zone's is `default_zone`, a policy's is `predefined` — and where unifig cannot read one, it deletes nothing of that type and says so rather than guessing:
@@ -327,7 +362,7 @@ Five things `--prune` will not do:
   ```
 
   That line survives an otherwise-empty plan, and `plan --json` carries the same thing as `"caveats"`, so a pipeline can tell "nothing to do" apart from "nothing I was willing to do".
-- **Propose a deletion something still needs.** The Controller will not delete a network a WLAN is still on, or a zone a firewall policy still governs — so if this run leaves that WLAN or that policy in place, the deletion is not in the plan at all, and the plan says which one kept it (see `docs/adr/0014-prune-skips-what-something-still-needs.md`):
+- **Propose a deletion something still needs.** The Controller will not delete a network a WLAN is still on, a network with a DHCP reservation's address inside its subnet, or a zone a firewall policy still governs — so if this run leaves that WLAN, that reservation or that policy in place, the deletion is not in the plan at all, and the plan says which one kept it (see `docs/adr/0014-prune-skips-what-something-still-needs.md`):
 
   ```
   Plan: 1 to delete.
@@ -338,6 +373,7 @@ Five things `--prune` will not do:
 
   The way to delete both is to put both at stake: a file with `networks:` and `wlans: []` deletes the WLAN and then the network under it, in that order. A policy the Controller owns can't be put at stake at all, so a zone it governs stays until you delete it in the Controller's UI.
 - **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, so unifig updates them and never deletes one, whether or not your file names them. Nor does prune see a WLAN attached to something that isn't one of your LANs, or a port forward whose ports are a range — unifig has no way to write either one in config, so neither can be exported — and the two halves go together on purpose: what an adoption couldn't describe is not something prune may delete.
+- **Delete more of a thing than the section names.** A DHCP reservation is two fields of the client record your Controller keeps, so pruning one gives the fixed address up and leaves that record — its name, its note, its group — exactly where it was. Forgetting the device is a bigger request than deleting a line of YAML, and unifig will not read the second as the first (see [DHCP reservations](#dhcp-reservations)).
 - **Persist.** The flag applies to the run you passed it to. There is no state file, so nothing remembers it.
 
 ## Export

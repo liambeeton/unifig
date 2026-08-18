@@ -182,6 +182,8 @@ var patternHints = map[string]string{
 	"wlans.passphrase":            "printable ASCII only — no accented letters, tabs or emoji",
 	"port-forwards.forward-ip":    "the address of the host the traffic is sent to, e.g. 10.20.0.10",
 	"port-forwards.source":        "`any`, or an address, range or CIDR block the traffic must come from, e.g. 203.0.113.4 or 203.0.113.0/24",
+	"dhcp-reservations.mac":       "the client's MAC address as the Controller writes it: six hex pairs separated by colons, e.g. 00:1a:2b:3c:4d:5e",
+	"dhcp-reservations.ip":        "the address to reserve for that client, e.g. 10.20.0.50",
 	"wan.slot":                    "the Controller's own name for an uplink, such as WAN, WAN2 or WAN_LTE_FAILOVER",
 	"wan.username":                "the username as the ISP issued it, with no quotes or spaces",
 	"wan.password":                "no quotes or spaces — the Controller refuses them",

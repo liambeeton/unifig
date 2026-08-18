@@ -65,6 +65,23 @@ port-forwards:
     # plan says so before it does.
     source: 203.0.113.0/24
 
+dhcp-reservations:
+  # A reservation pins one client to one address, and is keyed by MAC. It is the
+  # one section here that is not an object on the Controller: your Controller
+  # keeps a record for every client it has ever seen, and a reservation is the
+  # fixed-address half of that record.
+  - mac: "00:1a:2b:3c:4d:5e"
+    # There is no network to name. The Controller works out which network an
+    # address belongs to from the address itself, so this has to fall inside the
+    # subnet of a network the Controller has — `IoT` above, here.
+    ip: 10.20.0.50
+
+  # Case does not matter: the Controller stores every MAC in lower case and
+  # unifig matches the same way. Two entries differing only in case would be one
+  # reservation written twice, which `unifig validate` reports.
+  - mac: "00:1A:2B:3C:4D:5F"
+    ip: 10.20.0.51
+
 wan:
   # A WAN slot is a Setting, not a Resource: the router has the slots it has, so
   # unifig only ever updates one — it never creates, deletes or prunes a slot.

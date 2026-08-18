@@ -18,6 +18,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -32,13 +33,14 @@ import (
 // preserves that distinction, so nothing here may normalise a nil section into
 // an empty slice.
 type Config struct {
-	Networks         []Network        `yaml:"networks,omitempty"`
-	WLANs            []WLAN           `yaml:"wlans,omitempty"`
-	Zones            []Zone           `yaml:"zones,omitempty"`
-	FirewallPolicies []FirewallPolicy `yaml:"firewall-policies,omitempty"`
-	PortForwards     []PortForward    `yaml:"port-forwards,omitempty"`
-	WAN              []WANSlot        `yaml:"wan,omitempty"`
-	EncryptedDNS     *EncryptedDNS    `yaml:"encrypted-dns,omitempty"`
+	Networks         []Network         `yaml:"networks,omitempty"`
+	WLANs            []WLAN            `yaml:"wlans,omitempty"`
+	Zones            []Zone            `yaml:"zones,omitempty"`
+	FirewallPolicies []FirewallPolicy  `yaml:"firewall-policies,omitempty"`
+	PortForwards     []PortForward     `yaml:"port-forwards,omitempty"`
+	DHCPReservations []DHCPReservation `yaml:"dhcp-reservations,omitempty"`
+	WAN              []WANSlot         `yaml:"wan,omitempty"`
+	EncryptedDNS     *EncryptedDNS     `yaml:"encrypted-dns,omitempty"`
 }
 
 // Network is the operator-facing projection of a Controller network Resource,
@@ -135,6 +137,51 @@ type PortForward struct {
 	Protocol    string `yaml:"protocol"`
 	Source      string `yaml:"source,omitempty"`
 }
+
+// DHCPReservation is a fixed address for one client, keyed by its MAC.
+//
+// It is the only Resource here that is not a Controller object. The Controller
+// keeps one record per client it has ever seen — the thing its UI calls a
+// client, carrying a name, a note, a user group, whether it is blocked — and a
+// reservation is the fixed-IP half of that record and nothing else. So unifig
+// writes those two fields and leaves the rest of the record exactly as it is,
+// and a reservation removed from this file under `--prune` gives the address up
+// rather than forgetting the device (ADR-0015).
+//
+// Both fields are required, on the reasoning a port forward's are: a
+// reservation exists to pin one client to one address, so there is no such
+// thing as one unifig could state without knowing which client and which
+// address. The Controller agrees — it refuses a reservation with no address.
+//
+// There is no network to name, and that is the Controller's doing rather than
+// an omission. It decides which network a reservation belongs to by which
+// subnet the address falls in: an address inside no network's subnet is
+// refused, and deleting a network with an address reserved inside it is refused
+// too, both under that same reading. The per-client record does carry a
+// network of its own, and unifig does not write it, because it is not what the
+// Controller consults.
+//
+// MAC is the natural key, and the one natural key in this file that is not
+// case-sensitive: the Controller lower-cases every MAC it stores, so two
+// entries differing only in case are one reservation written twice, which
+// checkReferences reports as the duplicate it is.
+type DHCPReservation struct {
+	MAC string `yaml:"mac"`
+	IP  string `yaml:"ip"`
+}
+
+// NormalisedMAC is a MAC address as the Controller stores it, which is lower
+// case. It is exported because the rule has two customers and one of them is
+// outside this package: the reconcile matches a config entry to a client record
+// by folded MAC, and checkReferences calls two entries that fold together one
+// reservation written twice. Two spellings of that rule would be two answers to
+// "are these the same client", and the file that validated would be the file
+// that then applied in the wrong order.
+//
+// It lower-cases and nothing else. The schema has already refused anything that
+// is not six hex pairs with colons between them, so there is no other spelling
+// left to reconcile.
+func NormalisedMAC(mac string) string { return strings.ToLower(mac) }
 
 // WANSlot is one of the Controller's internet uplinks — a Setting rather than a
 // Resource, and the difference shows up in this struct's key. A network is

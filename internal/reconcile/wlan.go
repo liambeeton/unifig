@@ -102,7 +102,7 @@ func networksInUse(spared []unifi.WLAN, desired []config.WLAN, bound bindings) r
 			continue
 		}
 		inUse[network] = append(inUse[network],
-			fmt.Sprintf("the %s %q", kinds[WLAN].one, wlan.Name))
+			fmt.Sprintf("the %s %q on it", kinds[WLAN].one, wlan.Name))
 	}
 	return inUse
 }

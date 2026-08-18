@@ -17,9 +17,18 @@ scrubbed on the way in, and with the fields of each entry sorted (see
 | `networkconf.json`    | `/proxy/network/api/s/default/rest/networkconf`            |
 | `wlanconf.json`       | `/proxy/network/api/s/default/rest/wlanconf`               |
 | `portforward.json`    | `/proxy/network/api/s/default/rest/portforward`            |
+| `user.json`           | `/proxy/network/api/s/default/rest/user` (never fetched)   |
 | `setting.json`        | `/proxy/network/api/s/default/get/setting`                 |
 | `firewallzone.json`   | `/proxy/network/v2/api/site/default/firewall/zone`         |
 | `firewallpolicy.json` | `/proxy/network/v2/api/site/default/firewall-policies`     |
+
+`user.json` is the exception to "one file per endpoint unifig reaches": the
+stand-in serves it because `export` and `--prune` ask for the client records, but
+`make record-udr` never requests it and re-recording leaves it alone. A recording
+keeps no client records — a MAC address identifies a piece of hardware for as long
+as it exists — and unlike the WLANs and the port forwards, nothing else in the
+recorder wants the response either, so it is not fetched rather than fetched and
+emptied (ADR-0011). It is committed as an empty collection and stays one.
 
 The last two come from the Controller's **v2** tree and are bare JSON arrays with
 no `{"meta": …, "data": …}` envelope around them. That is the Controller's own

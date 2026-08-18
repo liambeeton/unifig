@@ -329,7 +329,7 @@ func pruneZones(
 			continue
 		}
 		if by := inUse[name]; len(by) > 0 {
-			caveats = append(caveats, heldBack(Zone, name, by, "governing it"))
+			caveats = append(caveats, heldBack(Zone, name, by))
 			continue
 		}
 		changes = append(changes, deleteZone(zone, bound))

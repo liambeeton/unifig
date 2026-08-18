@@ -19,7 +19,7 @@ A fixed-slot or singleton configuration area of the Controller that can only be 
 _Avoid_: resource (for these)
 
 **Kind**:
-The managed type a change is about — `network`, `wlan`, `zone`, `firewall-policy`, `port-forward`, `encrypted-dns`, `wan` — covering Resources and Settings alike, because an operator reads and approves a change to either the same way. It is the word a Plan line leads with and the field `plan --json` carries.
+The managed type a change is about — `network`, `wlan`, `zone`, `firewall-policy`, `dhcp-reservation`, `port-forward`, `encrypted-dns`, `wan` — covering Resources and Settings alike, because an operator reads and approves a change to either the same way. It is the word a Plan line leads with and the field `plan --json` carries.
 _Avoid_: resource (a Setting is not one), type (says nothing about what is being typed)
 
 **WAN slot**:
@@ -51,14 +51,15 @@ A rule sending traffic that arrives on a port of the internet side to an address
 _Avoid_: NAT rule, DNAT (those name the mechanism rather than the object), firewall rule
 
 **DHCP Reservation**:
-A fixed-IP assignment for a client, projected from the Controller's per-client record rather than existing as a standalone object. Its natural key is the MAC address.
+A fixed-IP assignment for a client, projected from the Controller's per-client record rather than existing as a standalone object. Its natural key is the MAC address, and it is the only key unifig folds case on, because the Controller lower-cases every MAC it stores. The record it is half of belongs to whoever set it in the UI — a name, a note, a user group — so unifig writes the address and nothing else, and giving a reservation up under Prune leaves that record exactly where it is rather than forgetting the device (ADR-0015). It names no network: the Controller decides which network an address belongs to by whose subnet contains it, which is also why a network with an address reserved inside it is one Prune holds back.
+_Avoid_: static lease, fixed IP (that names the address rather than the assignment), client (that names the record a reservation is half of)
 
 **Reconcile**:
 Computing and applying the difference between the YAML config and the live Controller directly; no intermediate state file exists.
 _Avoid_: sync (ambiguous about direction)
 
 **Prune**:
-Deleting live Resources of a managed type that are absent from the config. Never implicit — only on explicit request, and built-in undeletable objects are always exempt. So is a Resource that something the same plan leaves in place still requires — a network with a WLAN on it, a Zone a Firewall Policy governs — because the Controller refuses to delete one and a Plan is a statement about what will happen (ADR-0014).
+Deleting live Resources of a managed type that are absent from the config. Never implicit — only on explicit request, and built-in undeletable objects are always exempt. So is a Resource that something the same plan leaves in place still requires — a network with a WLAN on it, a Zone a Firewall Policy governs, a network with a DHCP Reservation's address inside its subnet — because the Controller refuses to delete one and a Plan is a statement about what will happen (ADR-0014). What it deletes is the Resource rather than whatever the Resource is part of: giving up a Reservation leaves the client record behind.
 
 **Risky change**:
 A change that can sever internet or management connectivity (e.g. any WAN/PPPoE mutation). Always individually confirmed, never silently applied — and never hard-blocked. The test is whether recovery could need physical access: an Encrypted DNS change can break name resolution for a whole site and is still not Risky, because the Controller stays reachable and the fix is one field away (ADR-0012).

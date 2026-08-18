@@ -26,6 +26,10 @@ import (
 // prove, and would cost the household's subnets, VLAN layout, every SSID, and
 // the list of what the house runs and where.
 //
+// The client records go one step further and are not fetched at all — see
+// `endpoints` in main.go. Emptying is for a response something else in this
+// program still wants; where nothing does, not asking is stronger.
+//
 // The settings response is the one place this program throws most of a response
 // away rather than replacing it. `get/setting` answers with the whole console's
 // configuration — mail servers, RADIUS, guest portals, remote access — and

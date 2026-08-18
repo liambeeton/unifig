@@ -19,6 +19,7 @@ type exportedConfig struct {
 	Zones            []exportedZone           `yaml:"zones"`
 	FirewallPolicies []exportedFirewallPolicy `yaml:"firewall-policies"`
 	PortForwards     []exportedPortForward    `yaml:"port-forwards"`
+	DHCPReservations []exportedReservation    `yaml:"dhcp-reservations"`
 	WAN              []exportedWANSlot        `yaml:"wan"`
 	EncryptedDNS     *exportedEncryptedDNS    `yaml:"encrypted-dns"`
 }
@@ -62,6 +63,14 @@ type exportedPortForward struct {
 	ForwardPort int    `yaml:"forward-port"`
 	Protocol    string `yaml:"protocol"`
 	Source      string `yaml:"source"`
+}
+
+// exportedReservation is one client's fixed address as export writes it. There
+// is no network on it, because a reservation does not name one: the Controller
+// decides which network an address belongs to from the address itself.
+type exportedReservation struct {
+	MAC string `yaml:"mac"`
+	IP  string `yaml:"ip"`
 }
 
 // exportedWANSlot is the Setting half of the same shape. Only the WAN suite

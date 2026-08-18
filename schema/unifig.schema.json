@@ -36,6 +36,12 @@
       "type": "array",
       "items": { "$ref": "#/$defs/portForward" }
     },
+    "dhcp-reservations": {
+      "title": "DHCP reservations",
+      "description": "Addresses reserved for particular clients, so the Controller hands the same one to the same device every time. Matched against the Controller by MAC address. A reservation is not a standalone object on the Controller — it is the fixed-IP half of the per-client record it keeps for every device it has seen — so unifig manages that half and nothing else about the client, and removing a reservation gives the address up rather than forgetting the device.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/dhcpReservation" }
+    },
     "wan": {
       "title": "WAN slots",
       "description": "The Controller's internet uplinks. These are Settings, not Resources: the Controller has a fixed set of WAN slots, so unifig only ever updates one — it never creates, deletes or prunes a slot, and a slot this file leaves out is one it does not manage.",
@@ -205,6 +211,27 @@
           "description": "Where traffic is allowed to come from — what the Controller's UI calls From: `any`, or an address, an address range (a-b), or a CIDR block, optionally prefixed with `!` to mean everything except it. Omit the key to leave the Controller's own choice alone; note that a forward unifig creates without one accepts traffic from anywhere on the internet, and the plan says so before it does.",
           "type": "string",
           "pattern": "^(any|!?((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(/([0-9]|[12][0-9]|3[0-2])|-((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))?)$"
+        }
+      }
+    },
+    "dhcpReservation": {
+      "title": "DHCP reservation",
+      "description": "One reservation: the MAC address that identifies the client, and the address the Controller always hands it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mac", "ip"],
+      "properties": {
+        "mac": {
+          "title": "MAC address",
+          "description": "The client's MAC address, in the Controller's own form: six hex pairs separated by colons. This is the reservation's natural key. Case does not matter — the Controller stores every MAC in lower case, and unifig matches the same way — but two entries differing only in case are the same reservation written twice.",
+          "type": "string",
+          "pattern": "^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$"
+        },
+        "ip": {
+          "title": "IP address",
+          "description": "The address to reserve for that client. It must fall inside the subnet of one of the networks the Controller has — that is the Controller's own rule, and it is the whole of how a reservation knows which network it belongs to, so there is no network to name here. An address inside no network is reported when unifig reads the Controller rather than offline, since the networks this file defines are not the only ones the site may have.",
+          "type": "string",
+          "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
         }
       }
     },

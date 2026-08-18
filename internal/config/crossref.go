@@ -140,6 +140,33 @@ func checkReferences(cfg Config, idx index) []Problem {
 		forwarded[forward.Name] = true
 	}
 
+	// A DHCP reservation is checked for duplicates, and its key is the one in
+	// this file that is not case-sensitive. The Controller lower-cases every MAC
+	// address it stores and refuses a second record for one whatever case it
+	// arrives in, so `AA:BB:…` and `aa:bb:…` are one client rather than two — and
+	// a file stating both is stating two addresses for it.
+	//
+	// Nothing else about a reservation is checked, for the reason a firewall
+	// policy's zones are not: the address it pins is resolved against the
+	// Controller rather than against this file. Which network an address belongs
+	// to is decided by whose subnet it falls in, and the networks this file
+	// defines are not the only ones the site has — so an address on a network
+	// unifig does not manage is valid config, and one on no network at all is
+	// something only the Controller can say (ADR-0010).
+	reserved := make(map[string]string, len(cfg.DHCPReservations))
+	for i, reservation := range cfg.DHCPReservations {
+		key := NormalisedMAC(reservation.MAC)
+		if first, taken := reserved[key]; taken {
+			at := idx.field("dhcp-reservations", i, "mac")
+			problems = append(problems, Problem{
+				Line: at.line, Path: at.path,
+				Message: duplicateReservation(reservation.MAC, first),
+			})
+			continue
+		}
+		reserved[key] = reservation.MAC
+	}
+
 	// A WAN slot is checked for the same ambiguity as a Resource name, and the
 	// reason it needs its own check is that its key is not a name the operator
 	// chose: the Controller has exactly one of each slot, so two entries for one
@@ -174,6 +201,24 @@ func checkReferences(cfg Config, idx index) []Problem {
 	}
 
 	return problems
+}
+
+// duplicateReservation says that two entries reserve an address for one client,
+// and says which two spellings of its MAC address did it.
+//
+// The case-only collision gets its own sentence, because the two lines do not
+// look alike on the page: an operator staring at "AA:BB:CC:DD:EE:FF" and
+// "aa:bb:cc:dd:ee:ff" needs to be told that the Controller reads them as one
+// client, which is a fact about the Controller rather than about their file.
+func duplicateReservation(mac, first string) string {
+	if mac != first {
+		return fmt.Sprintf(
+			"an address is already reserved for %q in this file, written there as %q; the Controller stores every MAC address in lower case, so these differ only in case and are one client rather than two",
+			mac, first)
+	}
+	return fmt.Sprintf(
+		"an address is already reserved for %q in this file; unifig matches reservations on the Controller by MAC address, so two cannot share one",
+		mac)
 }
 
 func alreadyDefined(kind, kinds, name string) string {

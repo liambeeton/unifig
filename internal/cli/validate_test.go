@@ -605,6 +605,86 @@ port-forwards:
 `, nil).mustPass(t)
 }
 
+// A DHCP Reservation is keyed by MAC address rather than by a name, because it
+// is not a standalone object at all: it is the fixed-IP half of the Controller's
+// per-client record, and the MAC is what identifies the client.
+func TestValidateAcceptsADHCPReservation(t *testing.T) {
+	runValidate(t, `dhcp-reservations:
+  - mac: "00:11:22:33:44:55"
+    ip: 10.20.0.50
+`, nil).mustPass(t)
+}
+
+// The reservation is the fixed address, so both halves of it are required: the
+// client it is for, and the address it pins them to.
+func TestValidateRejectsAReservationWithNoAddress(t *testing.T) {
+	runValidate(t, `dhcp-reservations:
+  - mac: "00:11:22:33:44:55"
+`, nil).mustFailWith(t, "dhcp-reservations[0]", "ip")
+}
+
+func TestValidateRejectsAReservationWithNoMAC(t *testing.T) {
+	runValidate(t, `dhcp-reservations:
+  - ip: 10.20.0.50
+`, nil).mustFailWith(t, "dhcp-reservations[0]", "mac")
+}
+
+// The Controller's own form for a MAC, which is what it stores and what it
+// refuses anything else as: six hex pairs with colons between them.
+func TestValidateRejectsAMACTheControllerWouldRefuse(t *testing.T) {
+	runValidate(t, `dhcp-reservations:
+  - mac: "001122334455"
+    ip: 10.20.0.50
+`, nil).mustFailWith(t, "dhcp-reservations[0].mac", "001122334455", "00:1a:2b")
+}
+
+func TestValidateRejectsAReservedAddressThatIsNotAnAddress(t *testing.T) {
+	runValidate(t, `dhcp-reservations:
+  - mac: "00:11:22:33:44:55"
+    ip: 10.20.0.500
+`, nil).mustFailWith(t, "dhcp-reservations[0].ip", "10.20.0.500")
+}
+
+// A MAC is the reservation's natural key, so two entries carrying one are two
+// answers to a question with one answer — the same ambiguity as two networks
+// sharing a name.
+func TestValidateCatchesDuplicateReservedMACs(t *testing.T) {
+	runValidate(t, `dhcp-reservations:
+  - mac: "00:11:22:33:44:55"
+    ip: 10.20.0.50
+  - mac: "00:11:22:33:44:55"
+    ip: 10.20.0.51
+`, nil).mustFailWith(t, "dhcp-reservations[1].mac", "00:11:22:33:44:55", "already")
+}
+
+// The one natural key in the file that is not case-sensitive. The Controller
+// lower-cases every MAC it stores and refuses a second record for one whatever
+// case it arrives in, so these two entries are one reservation written twice
+// and unifig has to say so rather than apply them in file order.
+func TestValidateCatchesTwoReservationsForOneMACInDifferentCases(t *testing.T) {
+	runValidate(t, `dhcp-reservations:
+  - mac: "AA:BB:CC:DD:EE:FF"
+    ip: 10.20.0.50
+  - mac: "aa:bb:cc:dd:ee:ff"
+    ip: 10.20.0.51
+`, nil).mustFailWith(t, "dhcp-reservations[1].mac", "case")
+}
+
+// The address is checked against the Controller rather than against this file,
+// on the same reasoning as a firewall policy's zone (ADR-0010): the networks
+// this file defines are not the only ones the site has, so a reservation on a
+// network unifig does not manage is perfectly valid config.
+func TestValidateAcceptsAReservationOnANetworkTheFileSaysNothingAbout(t *testing.T) {
+	runValidate(t, `networks:
+  - name: IoT
+    subnet: 10.20.0.1/24
+
+dhcp-reservations:
+  - mac: "00:11:22:33:44:55"
+    ip: 10.99.0.50
+`, nil).mustPass(t)
+}
+
 // A WAN slot is a Setting, and its key is the Controller's own name for a
 // physical uplink rather than a name the operator chose — so the file names the
 // slot it means, and unifig only ever updates it.
