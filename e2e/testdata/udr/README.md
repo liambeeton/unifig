@@ -78,8 +78,20 @@ stable `zone_key` (`internal`, `external`, `gateway`, `vpn`, `hotspot`, `dmz`).
 carries it — and the convention does not carry across. unifig read the network's
 marker on a zone, so `--prune` proposed deleting every built-in zone including
 the one that stands for the internet; that was issue #23. There is also an
-`attr_no_edit`, which is on only three of the six and means editability rather
-than ownership, so it is not the marker either.
+`attr_no_edit`, on `External`, `Gateway` and `Vpn` but not the other three, and
+it is not the ownership marker — every zone here is the Controller's own and
+only half of them carry it.
+
+**What `attr_no_edit` does mean is unread and unanswered.** This section used to
+finish that sentence with "it means editability, not ownership", which settled
+the question it was asking and dismissed the one it was not. Ownership is what
+prune needs; **editability is what an update needs**, and no code path consults
+this field — `updateZone` builds its change from the changed fields alone, so
+unifig will plan and PUT a membership change to all three. Whether the
+Controller accepts one is unknown, and the stand-in cannot answer it: it stores
+whatever unifig sends, so the built-in-zone update test passes because nothing
+can refuse, not because a Controller said yes (ADR-0014). Issue #27, answered by
+the write probe in #30.
 
 **Which zones does a UDR ship? Six, not the five that were guessed:** `Internal`,
 `External`, `Gateway`, `Vpn`, `Hotspot`, `Dmz`. The guess had no `Dmz` and
@@ -88,8 +100,10 @@ expected. Nothing in the suite lists those names any more — the prune test rea
 the built-ins out of the recording, because which zones exist is Ubiquiti's to
 change.
 
-**Does a created policy come back holding what unifig sent?** Unanswered, and
-now separated from a bigger thing the recording did settle. The Controller ships
+**Does a created policy come back holding what unifig sent?** Unanswered — it
+needs a write rather than a read, and these files hold only the Controller's own
+policies. Issue #31, answered by the same write probe in #30. It is separated
+here from a bigger thing the recording did settle. The Controller ships
 **83 predefined policies, one per ordered pair of zones, reusing names across
 pairs**: nineteen called "Allow All Traffic", sixteen "Block All Traffic",
 twelve "Allow Return Traffic". A policy's identity is therefore its name *and*
