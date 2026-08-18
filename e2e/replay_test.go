@@ -140,6 +140,40 @@ type sentRequest struct {
 // asserted here as the Controller's.
 var refusedByZoneWrite = []string{"attr_no_edit", "cloud_template"}
 
+// refusedByPolicyCreate is the one refusal the policy write endpoint has been
+// measured making, and it is not shaped like the zone's. The zone endpoint
+// refuses a field it has never heard of, so naming the field is enough; this one
+// refuses a *combination* it understands perfectly well — asking it to generate
+// the companion return rule for a policy that blocks, which there would be no
+// traffic to return.
+//
+// Measured on the live migrated UDR on 18 August 2026 (issue #36, ADR-0022). An
+// apply creating a `block` policy with `create_allow_respond: true` came back
+//
+//	400: Firewall policy create respond traffic not allowed
+//
+// and applied none of its two changes. unifig had just started sending the field
+// true on every create, so this refused every block and reject policy it could
+// have made — which the stand-in of the day could not notice, because it stores
+// whatever it is handed. That is the whole reason this is here: ADR-0019 said
+// the cover for a payload the Controller would not take has to be the request
+// rather than the round-trip, and a stand-in that accepts what hardware refuses
+// is a fixture asserting the wrong guess.
+//
+// Only the measured half is encoded. `block` is what was sent and refused;
+// `reject` was never reached, because the apply stopped at the first failure.
+// The predicate therefore turns on the Controller's own spelling of the verdict
+// being anything but `ALLOW`, which is the shape of the rule the message states
+// rather than the list of verdicts anybody watched it apply.
+func refusedByPolicyCreate(sent map[string]any) string {
+	respond, _ := sent["create_allow_respond"].(bool)
+	action, _ := sent["action"].(string)
+	if respond && action != "ALLOW" {
+		return "Firewall policy create respond traffic not allowed"
+	}
+	return ""
+}
+
 // startReplay serves the recording at its own base URL for the duration of one
 // test. Each test gets its own, so one test's apply cannot become another's
 // starting state — the isolation the shared dockerized Controller has to buy
@@ -204,13 +238,13 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 	case req.Method == http.MethodPut && req.URL.Path == setDoHPath:
 		r.setDoH(w, req)
 	case req.URL.Path == zonePath || strings.HasPrefix(req.URL.Path, zonePath+"/"):
-		r.collectionV2(w, req, zonePath, &r.zones, refusedByZoneWrite)
+		r.collectionV2(w, req, zonePath, &r.zones, refusedByZoneWrite, nil)
 	case req.URL.Path == policyPath || strings.HasPrefix(req.URL.Path, policyPath+"/"):
 		// Nothing is refused here: no policy in the recording carries a marker
 		// of this kind, and no write to one has been seen refused. A list
 		// invented for symmetry would be this stand-in asserting a guess about
 		// a DTO nobody has read.
-		r.collectionV2(w, req, policyPath, &r.policies, nil)
+		r.collectionV2(w, req, policyPath, &r.policies, nil, refusedByPolicyCreate)
 	default:
 		r.t.Errorf("unifig asked the Controller for something the recording does not have: %s %s",
 			req.Method, req.URL.Path)
@@ -335,7 +369,17 @@ func (r *replay) setDoH(w http.ResponseWriter, req *http.Request) {
 // quietly stores (see refusedByZoneWrite). Every write is kept whether it was
 // refused or not, because what a test about the request needs is what unifig
 // sent rather than what survived.
-func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base string, held *[]map[string]any, refuses []string) {
+func (r *replay) collectionV2(
+	w http.ResponseWriter,
+	req *http.Request,
+	base string,
+	held *[]map[string]any,
+	refuses []string,
+	refuseCreate func(map[string]any) string,
+) {
+	if refuseCreate == nil {
+		refuseCreate = func(map[string]any) string { return "" }
+	}
 	id := strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, base), "/")
 
 	r.mu.Lock()
@@ -355,6 +399,10 @@ func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base str
 		// request's name, and the fields it gained would be unfalsifiable.
 		r.written = append(r.written, sentRequest{path: req.URL.Path, body: maps.Clone(sent)})
 		if r.unrecognisedField(w, sent, refuses) {
+			return
+		}
+		if refusal := refuseCreate(sent); refusal != "" {
+			r.refuse(w, refusal)
 			return
 		}
 		r.issued++
@@ -450,6 +498,21 @@ func (r *replay) unrecognisedField(w http.ResponseWriter, sent map[string]any, r
 		return true
 	}
 	return false
+}
+
+// refuse answers a write the way the Controller answers one it will not make: a
+// 400 carrying the Controller's own message, which is what an operator sees.
+func (r *replay) refuse(w http.ResponseWriter, message string) {
+	body, err := json.Marshal(map[string]any{"message": message})
+	if err != nil {
+		r.t.Errorf("encoding the Controller's refusal: %v", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	if _, err := w.Write(body); err != nil {
+		r.t.Errorf("writing the Controller's refusal: %v", err)
+	}
 }
 
 func (r *replay) decode(w http.ResponseWriter, req *http.Request, into any, base string) bool {

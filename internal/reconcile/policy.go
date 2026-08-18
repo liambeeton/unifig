@@ -399,7 +399,7 @@ func createFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts, bound 
 			// Read at the moment of writing rather than the moment of planning:
 			// either zone may have been created by a change earlier in this very
 			// apply.
-			policy := newFirewallPolicy()
+			policy := newFirewallPolicy(desired)
 			if err := overwriteManagedPolicy(&policy, desired, bound); err != nil {
 				return err
 			}
@@ -816,34 +816,40 @@ func (p storedPolicy) dropMarkers() {
 // anyway — `logging`, `match_ip_sec` and `match_opposite_protocol` are false on
 // all eighty-three. `predefined: false` differs from all eighty-three and should:
 // a policy unifig made is not one the Controller ships. `create_allow_respond`
-// was neither, which is the whole of issue #36.
+// was neither, which is the whole of issue #36 — and it is the one value here
+// that is not fixed, because the Controller refuses it on any verdict but
+// `allow`. That is why this takes the policy it is building rather than nothing.
 //
 // They apply on create only. An operator who afterwards narrows the policy to a
 // port, a client or an evening keeps that forever, because an update merges into
 // the object the Controller sent and writes only the same four values
 // (mergeIntoStoredPolicy, ADR-0021).
-func newFirewallPolicy() unifi.FirewallZonePolicy {
+func newFirewallPolicy(desired config.FirewallPolicy) unifi.FirewallZonePolicy {
 	return unifi.FirewallZonePolicy{
 		Enabled:             true,
 		Protocol:            "all",
 		IPVersion:           "BOTH",
 		ConnectionStateType: "ALL",
-		// Every policy the Controller ships sets this and unifig set the
-		// opposite on everything it made: measured on the live migrated UDR on
-		// 18 August 2026, all eighty-six of the Controller's own carried true
-		// and the one unifig had created carried false, its return-traffic
-		// toggle showing off in the UI beside their on (issue #36). The
-		// recording holds eighty-three of those eighty-six, which is why the
-		// count differs between here and the test that pins this.
+		// This asks the Controller to generate the companion return rule, and
+		// it is a request rather than a property: measured on the live migrated
+		// UDR on 18 August 2026, creating one allow policy with it true made the
+		// site go from 86 policies to 88 — unifig's own, and a second the
+		// Controller named `<name> (Return)`, `RESPOND_ONLY`, `predefined: true`,
+		// carrying `origin_type: custom_firewall_rule` and an `origin_id` back
+		// to its parent. The same create with it false made 87 and no companion,
+		// which is what makes this the cause rather than a correlation. Deleting
+		// the parent took the companion with it (issue #36, ADR-0022).
 		//
-		// What the field does to traffic is not measured, here or anywhere in
-		// this repository — nobody has sent a conversation through a
-		// unifig-created allow policy and watched what came back. So the reason
-		// for the value is not a claim about return traffic; it is that
-		// disagreeing with the Controller on every policy unifig creates is a
-		// thing to do on purpose or not at all, and false was never on purpose.
-		// The half that needs hardware is the open half of issue #36.
-		CreateAllowRespond: true,
+		// It is asked for on an allow and not otherwise, because the Controller
+		// refuses the pair. A create of a `block` policy carrying it true is a
+		// 400, `Firewall policy create respond traffic not allowed`, which fails
+		// the whole apply — measured in the same session, and the reason
+		// `newFirewallPolicy` had to learn what verdict it is building for. A
+		// `reject` was never sent, since the apply stopped at the block; it goes
+		// out false with every other non-allow verdict, which is what unifig sent
+		// on everything it created before any of this and what the Controller has
+		// always taken.
+		CreateAllowRespond: desired.Action == "allow",
 		// The Controller rejects a policy with no schedule outright, so this is
 		// less a default than a field with one permitted value at creation. It
 		// is not parity either: all eighty-three policies the recording holds

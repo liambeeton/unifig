@@ -739,7 +739,7 @@ func TestUpdatingAPolicySendsBackEveryFieldTheControllerSent(t *testing.T) {
 // marker tests are: the stand-in stores whatever it is handed, so reading the
 // policy back afterwards would pass just as well if unifig had sent nothing at
 // all (ADR-0014, ADR-0019).
-func TestThePolicyUnifigCreatesAgreesWithTheControllerAboutReturnTraffic(t *testing.T) {
+func TestCreatingAnAllowPolicyAsksTheControllerForTheReturnRule(t *testing.T) {
 	r := startReplay(t)
 
 	// Read before the apply, so what is being compared against is the
@@ -781,6 +781,51 @@ func TestThePolicyUnifigCreatesAgreesWithTheControllerAboutReturnTraffic(t *test
 	if got != want {
 		t.Errorf("unifig creates a policy with %q = %v, and all %d of the Controller's own carry %v",
 			field, got, len(own), want)
+	}
+}
+
+// The other half of the same rule, and the half that cost an apply on hardware.
+//
+// `create_allow_respond` asks the Controller to generate the companion return
+// rule. On a policy that blocks there is no traffic to return, and the
+// Controller does not treat the request as meaningless — it refuses it:
+//
+//	400: Firewall policy create respond traffic not allowed
+//
+// Measured on the live migrated UDR on 18 August 2026, on an apply that had two
+// policies to create and made neither (issue #36, ADR-0022). unifig had been
+// sending the field true on every create for exactly as long as it took to run
+// this probe, which is to say it could not create a `block` or a `reject` policy
+// at all in that window.
+//
+// This asserts the request rather than the refusal, for ADR-0019's reason, and
+// the stand-in asserts the refusal separately in refusedByPolicyCreate — so a
+// unifig that sent the pair again would fail here on the body it built and there
+// on the answer it got, which is the pairing the marker tests use.
+func TestCreatingABlockingPolicyDoesNotAskForAReturnRule(t *testing.T) {
+	// Both verdicts that close a path, because the config models three and the
+	// one measured refused is only the first of them.
+	for _, verdict := range []string{"block", "reject"} {
+		t.Run(verdict, func(t *testing.T) {
+			r := startReplay(t)
+			applyFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Shut %s
+    action: %s
+    source: Internal
+    destination: External
+`, verdict, verdict))
+
+			sent := r.onlyPolicyWrite(t)
+			respond, carried := sent["create_allow_respond"]
+			if !carried {
+				t.Fatalf("the create carries no %q at all, and go-unifi sends it without omitempty: %v",
+					"create_allow_respond", sent)
+			}
+			if respond != false {
+				t.Errorf("unifig asked the Controller to make a return rule for a policy that %ss, and the Controller refuses that pair 400: %v",
+					verdict, sent)
+			}
+		})
 	}
 }
 
