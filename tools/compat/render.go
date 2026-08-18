@@ -98,8 +98,8 @@ func renderWarning(b *strings.Builder, m compat.Matrix) {
 		" fault in, and unifig refusing to manage a router on that basis would be a worse answer than a" +
 		" warning. The versions it checks against are the columns of the **first** table — the ones a whole" +
 		" suite ran against — and deliberately not the recording's version below it: a recording is evidence" +
-		" about four areas, so going quiet for a Controller where the other five were never run would be the" +
-		" warning claiming more than anybody tested. They are compiled into the binary from" +
+		" about the areas below, so going quiet for a Controller the areas above were never run against would" +
+		" be the warning claiming more than anybody tested. They are compiled into the binary from" +
 		" `internal/compat/matrix.json`, which is generated from these same runs.\n\n")
 }
 

@@ -74,6 +74,10 @@ _Avoid_: diff, preview
 Executing a plan against the Controller.
 _Avoid_: push, sync
 
+**Backup**:
+A copy of the Controller's own configuration, written by the Controller onto itself on request and left there. Apply can ask for one before it changes anything, and checks the Controller serves it back before the first change; unifig never downloads one and never restores one, because rollback is out of scope. There is one slot per Controller version rather than a file per backup, so a new one replaces the last — the automatic backups a console keeps of its own accord are a separate collection unifig does not touch (ADR-0017).
+_Avoid_: snapshot (nothing is copied to where unifig runs), restore point (unifig cannot restore one), state (there is no state file, ADR-0001)
+
 **Validate**:
 Offline schema and cross-reference checking of the config files; touches no API.
 

@@ -129,6 +129,42 @@ func TestAllowRiskyIsApplysFlagAlone(t *testing.T) {
 	}
 }
 
+// --backup-first asks the Controller to back itself up before an apply mutates
+// anything, so it belongs to the one verb that mutates. Plan changes nothing,
+// export reads, validate never connects; accepting it on any of them would
+// promise a safety net for a run with nothing to be safe from.
+func TestBackupFirstIsApplysFlagAlone(t *testing.T) {
+	for _, args := range [][]string{{"plan", "--backup-first"}, {"export", "--backup-first"}, {"validate", "--backup-first"}} {
+		res := run(t, args...)
+		if res.exitCode != 1 {
+			t.Errorf("%v exited %d, want 1", args, res.exitCode)
+		}
+		if !strings.Contains(res.stderr, "usage:") {
+			t.Errorf("%v should print the usage text, got: %s", args, res.stderr)
+		}
+	}
+
+	// That apply does accept it is proved by what happens next: the config error
+	// is a thing only a verb that got past its own flags can report.
+	res := run(t, "apply", "--backup-first", writeConfig(t, brokenConfig))
+	if !strings.Contains(res.stderr, "networks[0].subnet") {
+		t.Errorf("apply --backup-first never got as far as reading the config, got: %s", res.stderr)
+	}
+}
+
+// A backup is a write, so a config unifig cannot read must not produce one:
+// the flag says back up before applying, and there is nothing to apply.
+func TestBackupFirstOnAnUnreadableConfigNeverReachesTheController(t *testing.T) {
+	res := run(t, "apply", "--backup-first", "--auto-approve", writeConfig(t, brokenConfig))
+
+	if res.exitCode != 1 {
+		t.Fatalf("apply exited %d, want 1\nstderr: %s", res.exitCode, res.stderr)
+	}
+	if strings.Contains(res.stdout, "Backed up") {
+		t.Errorf("apply backed up a Controller it never had a plan for, got:\n%s", res.stdout)
+	}
+}
+
 func TestPlanWithTooManyFilesPrintsUsage(t *testing.T) {
 	res := run(t, "plan", "one.yaml", "two.yaml")
 
@@ -145,7 +181,7 @@ func TestUsageListsEveryVerbAndExitCode(t *testing.T) {
 
 	for _, fragment := range []string{
 		"plan", "apply", "export", "validate",
-		"--json", "--auto-approve", "--allow-risky", "--prune", "2",
+		"--json", "--auto-approve", "--allow-risky", "--prune", "--backup-first", "2",
 	} {
 		if !strings.Contains(res.stderr, fragment) {
 			t.Errorf("usage should mention %q, got:\n%s", fragment, res.stderr)

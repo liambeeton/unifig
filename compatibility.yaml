@@ -48,6 +48,8 @@ areas:
     tests: reservation_test.go
   - name: Export
     tests: export_test.go
+  - name: Controller backup
+    tests: backup_test.go
   # The areas below are tested against a recording rather than a container, so
   # the table has to say why it cannot put them in a version column. The
   # generator requires a `why` from exactly the areas whose tests replay a

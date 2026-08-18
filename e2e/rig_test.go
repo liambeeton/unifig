@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,6 +64,9 @@ type rig struct {
 	session string // unifises session cookie for rig plumbing
 	client  *http.Client
 	proxy   *httptest.Server
+	// watch is what the proxy noticed unifig asking the Controller to do, and
+	// the one answer it can be told to give instead of forwarding.
+	watch controllerWatch
 	// container is the Network application, database the MongoDB it needs, and
 	// net the private network the two of them talk over. The Controller image
 	// ships no database (see ADR-0016), so the rig starts one; unifig never
@@ -264,7 +268,18 @@ func (r *rig) login(ctx context.Context) error {
 //   - /proxy/network/* -> forwarded to the Controller with the rig's admin
 //     session, but only when X-Api-Key matches; 401 otherwise, mirroring
 //     the UDR's OS-level API-key gate
+//   - /dl/*            -> 200 and a page of HTML, which is what a console
+//     answers for anything under its root it does not recognise — the backup
+//     tree included, measured on the UDR (ADR-0017). It is here so that a test
+//     can prove unifig does not read that page as a backup
 //   - anything else    -> 404
+//
+// It also notes what it was asked for (controllerWatch), and can be told to
+// answer the backup command or the backup download badly. That is a widening of
+// ADR-0003's "make-believe only for auth" and is deliberate: what it fabricates
+// is a Controller that cannot back itself up, which no healthy Controller will
+// produce on request, and every config-plane response still comes from the real
+// Network application behind it.
 func (r *rig) startProxy() error {
 	backend, err := url.Parse(r.controllerURL)
 	if err != nil {
@@ -293,13 +308,145 @@ func (r *rig) startProxy() error {
 			return
 		}
 		if !strings.HasPrefix(req.URL.Path, "/proxy/network/") {
+			if strings.HasPrefix(req.URL.Path, consoleDownloadTree) {
+				// The console answering its own web page, exactly as a UDR does
+				// for a backup path at its root. A 404 here would let unifig
+				// pass a test it should not: reading this as a confirmed backup
+				// is the mistake worth having a Controller that makes it.
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("<!doctype html><title>UniFi OS</title>"))
+				return
+			}
 			http.NotFound(w, req)
+			return
+		}
+		if status, body := r.watch.record(req); status != 0 {
+			// A Controller in one of the two states the --backup-first tests
+			// need and no healthy Controller will produce on request. Emulating
+			// it here is the same network-level substitution this proxy already
+			// is for the API-key gate, pointed at one endpoint.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
 			return
 		}
 		forward.ServeHTTP(w, req)
 	}))
 	r.proxyURL = r.proxy.URL
 	return nil
+}
+
+// The Controller's backup command as unifig reaches it, and the two places a
+// backup could be asked for: the Network application's own download tree, and
+// the console root a Controller of the other style would use — which this rig
+// is not, and answers a web page for (see startProxy).
+//
+// The command is matched by its ending rather than in full, so that a watch
+// cannot quietly stop noticing backups because a path picked up a site name or
+// a version segment: an absence assertion that matches nothing passes for the
+// wrong reason, and passing for the wrong reason is what these tests exist to
+// rule out.
+const (
+	backupCommandSuffix = "/cmd/backup"
+	backupDownloadTree  = "/proxy/network/dl/"
+	consoleDownloadTree = "/dl/"
+)
+
+// refusal is the Controller misbehaving on purpose, and the two ways it can:
+// failing to write a backup at all, and writing one it will not then serve
+// back. They are different answers to "is there a backup?" — the first is the
+// command failing, the second is the confirmation failing — and unifig has to
+// stop for both, so the suite has to be able to produce both.
+type refusal string
+
+const (
+	refuseNothing  refusal = ""
+	refuseCommand  refusal = "command"
+	refuseDownload refusal = "download"
+)
+
+// controllerWatch is what unifig asked the Controller to do, in the order it
+// asked, plus the one answer the proxy can give instead of forwarding.
+//
+// Everywhere else this suite asserts on what the Controller holds afterwards,
+// because that is the right question to ask about a change. A backup is not a
+// change — the site is identical either way — so the only place its promise is
+// visible is in the asking: a backup, and only then the first mutation. That
+// ordering is the whole of what --backup-first offers, and nothing readable
+// off the Controller states it.
+type controllerWatch struct {
+	mu     sync.Mutex
+	asked  []asked
+	refuse refusal
+}
+
+// asked is one thing unifig was seen asking the Controller for. The two things
+// a watch tells apart are a backup and a change to the site; everything else it
+// asks for is a read, which is neither.
+type asked string
+
+const (
+	askedBackup   asked = "backup"
+	askedMutation asked = "mutation"
+)
+
+// record notes what one request is, and answers with the status and body the
+// proxy should send instead of forwarding it — status 0 meaning forward.
+func (w *controllerWatch) record(req *http.Request) (int, string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	switch {
+	case strings.HasSuffix(req.URL.Path, backupCommandSuffix):
+		w.asked = append(w.asked, askedBackup)
+		if w.refuse == refuseCommand {
+			// The Internal API reports a failure in the envelope rather than
+			// only in the status, so this does both.
+			return http.StatusInternalServerError, `{"meta":{"rc":"error","msg":"api.err.BackupFailed"},"data":[]}`
+		}
+	case strings.HasPrefix(req.URL.Path, backupDownloadTree):
+		if w.refuse == refuseDownload {
+			return http.StatusNotFound, `{"meta":{"rc":"error","msg":"api.err.NoSuchFile"},"data":[]}`
+		}
+	// Anything that is not a read is a change to the site: unifig writes
+	// through several trees (rest, set/setting, the v2 firewall), and naming
+	// the method rather than the paths is what keeps this true of the ones it
+	// has not written yet.
+	case req.Method != http.MethodGet && req.Method != http.MethodHead:
+		w.asked = append(w.asked, askedMutation)
+	}
+	return 0, ""
+}
+
+func (w *controllerWatch) events() []asked {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.asked)
+}
+
+// watchController starts a fresh record for one test and hands it back. The
+// rig is shared, so it clears what earlier tests did rather than adding to it.
+func (r *rig) watchController(t *testing.T) *controllerWatch {
+	t.Helper()
+	r.watch.mu.Lock()
+	defer r.watch.mu.Unlock()
+	r.watch.asked = nil
+	return &r.watch
+}
+
+// refuseBackups makes the Controller misbehave about backups for the rest of
+// this test, in one of the two ways there are to.
+func (r *rig) refuseBackups(t *testing.T, how refusal) {
+	t.Helper()
+	r.watch.mu.Lock()
+	r.watch.refuse = how
+	r.watch.mu.Unlock()
+	t.Cleanup(func() {
+		r.watch.mu.Lock()
+		r.watch.refuse = refuseNothing
+		r.watch.mu.Unlock()
+	})
 }
 
 // seedNetwork creates a networkconf entry on the live Controller through its

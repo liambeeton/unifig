@@ -68,6 +68,17 @@
       ]
     },
     {
+      "name": "Controller backup",
+      "tests": "backup_test.go",
+      "evidence": "container",
+      "versions": [
+        "10.5.67",
+        "10.4.57",
+        "10.1.84",
+        "10.0.162"
+      ]
+    },
+    {
       "name": "WAN slots",
       "tests": "wan_test.go",
       "evidence": "recording",

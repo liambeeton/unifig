@@ -46,6 +46,10 @@ flags:
                     Off by default; only sections the config file has are at
                     stake, and objects the Controller marks undeletable, such
                     as the built-in Default network, are never pruned
+  --backup-first    apply only: have the Controller back its own configuration
+                    up before the first change is made, and apply nothing at all
+                    if that backup cannot be confirmed. The file stays on the
+                    Controller; restoring it is a thing you do in its UI
   -o <file>         export only: write the config to a file instead of stdout
   --with-secrets    export only: write passphrases in plaintext instead of as
                     the ${ENV_VAR} references export redacts them to
@@ -178,7 +182,7 @@ func runPlan(ctx context.Context, args []string, stdout, stderr io.Writer) error
 // flag.
 func runApply(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	flags, positional, err := splitFlags(args,
-		boolean("auto-approve"), boolean("allow-risky"), boolean("prune"))
+		boolean("auto-approve"), boolean("allow-risky"), boolean("prune"), boolean("backup-first"))
 	if err != nil {
 		return err
 	}
@@ -216,6 +220,21 @@ func runApply(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if plan.Empty() {
 		_, _ = fmt.Fprint(stdout, "\nNothing left to apply; the Controller was not changed.\n")
 		return nil
+	}
+
+	// Last of all, and only now: the backup is taken after every approval and
+	// after the refusals have been taken out, because a plan nobody agreed to
+	// is a plan with nothing to be safe from. It goes before the first change
+	// for the reason the flag exists, and a backup that cannot be confirmed
+	// stops the apply rather than becoming a warning above the changes it was
+	// supposed to protect.
+	if flags.has("backup-first") {
+		where, err := reconcile.Backup(ctx, client, site)
+		if err != nil {
+			_, _ = fmt.Fprint(stdout, "\nNo backup was taken, so nothing was applied and the Controller is unchanged.\n")
+			return fmt.Errorf("backing up the Controller before applying: %w", err)
+		}
+		_, _ = fmt.Fprintf(stdout, "\nBacked up the Controller first: %s\n", where)
 	}
 	return plan.Apply(ctx, client, site, stdout)
 }

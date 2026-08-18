@@ -38,6 +38,12 @@
 // One thing sits above both: a Change that can cut the site off the internet
 // carries the sentence that says so (Change.Risk), which is what makes the
 // command layer stop and ask about that change on its own (ADR-0009).
+//
+// And one thing here is neither a Plan nor an Apply. Backup (backup.go) asks
+// the Controller to write a copy of its own configuration before an apply
+// touches anything, which changes nothing about the site and so is not a
+// Change. It lives here because it is one more thing said to the Controller,
+// through the same client, and because what it protects is the apply below it.
 package reconcile
 
 import (

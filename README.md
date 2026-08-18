@@ -341,6 +341,35 @@ Nothing was rolled back; apply is safe to run again once this is fixed.
 
 The error itself goes to stderr, and the exit code is 1. Re-running *is* the recovery: the next plan is computed from the Controller as it now stands, including the part that succeeded, so a fixed-and-re-run apply picks up exactly where this one stopped without being told anything about it.
 
+### Backing up first
+
+`apply --backup-first` has the Controller write a backup of its own configuration before the first change, and applies nothing at all if it cannot get one:
+
+```
+  ~ network "IoT"
+      subnet: 10.20.0.1/24 -> 192.168.20.1/24
+
+Plan: 1 to update.
+
+Backed up the Controller first: https://192.168.1.1/proxy/network/dl/backup/10.5.67.unf
+
+  ~ network "IoT" updated
+
+Applied 1 change.
+```
+
+It is off unless you ask for it — a backup writes a file on your router — and it is worth asking for on the runs that touch a WAN slot, which is where "run it again" is not much of a recovery.
+
+What the flag does and does not buy you:
+
+- **The Controller takes the backup, and keeps it.** unifig asks, waits for the file to be written — the command answers only once it is — and checks the Controller is serving it back before the first change goes out. It never downloads it: the file stays where the Controller's own UI looks for it.
+- **unifig does not restore it.** There is no rollback here and this does not add one. Restoring is a thing you do deliberately, in the Controller's UI, on the day you need it — what this buys is that there is something to restore.
+- **A backup it cannot confirm stops the apply.** Nothing is applied, the exit code is 1, and the Controller is exactly as it was.
+- **It is one slot per Controller version.** The Controller names the file after its own version and overwrites it each time, so what you have is the site as it was before your most recent `--backup-first` apply, and nothing older. The automatic backups your console keeps are a separate collection and are left alone.
+- **Nothing to apply means nothing to back up.** An empty plan, or one whose changes you all refused, leaves the Controller untouched — no backup either.
+
+For an unattended run: `./unifig apply --auto-approve --backup-first`. What a real UDR answered when this was worked out, down to the request and the response, is in `docs/adr/0017-a-backup-can-be-triggered-through-the-internal-api.md`.
+
 ### Pruning
 
 By default your file is a list of what unifig manages, not a list of everything that may exist. `--prune` makes it the second thing: every Resource of a managed type that the file does not name becomes a deletion.

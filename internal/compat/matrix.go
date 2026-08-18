@@ -120,9 +120,9 @@ func Shipped() Matrix { return shipped }
 //
 // It asks the container matrix and nothing else. The recording's own version is
 // deliberately not in that set even though the replayed rows are attributed to
-// it: a recording is evidence about four areas, and staying quiet for a version
-// where the other five were never run would be the warning claiming more than
-// anybody tested. The two versions coincide today, which is exactly why the
+// it: a recording is evidence about the areas it answers for, and staying quiet
+// for a version the container areas were never run against would be the warning
+// claiming more than anybody tested. The two versions coincide today, which is exactly why the
 // distinction has to be made here rather than left to be noticed when
 // `make record-udr` is next run against newer firmware.
 func (m Matrix) Warning(version string) string {
