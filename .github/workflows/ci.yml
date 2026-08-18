@@ -83,11 +83,15 @@ jobs:
       # What the run did, for the compatibility job to generate the table from.
       # It is the whole `go test -json` stream rather than a summary, so the
       # table is generated from the run itself and a disagreement is readable.
+      # include-hidden-files because $(MATRIX) is `.matrix`, and this action
+      # skips dotted paths by default — without it the upload finds nothing and
+      # fails a job whose suite passed.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: matrix-${{ matrix.network }}
           path: .matrix/*.json
+          include-hidden-files: true
           if-no-files-found: error
 
   compatibility:
