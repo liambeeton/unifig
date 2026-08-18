@@ -440,8 +440,17 @@ func updateFirewallPolicy(
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// The live object goes back with only unifig's own fields changed, so
 			// the schedule, the port and address matching, the logging switch and
-			// everything else an operator set in the Controller's UI survive.
-			updated := live
+			// everything else an operator set in the Controller's UI survive — as
+			// far as they can: a field go-unifi does not model was dropped at
+			// unmarshal, and a marker the Controller sends is cleared here rather
+			// than sent.
+			//
+			// The two halves do not cost the same. Clearing keeps a payload
+			// well-formed and loses nothing anybody has seen; dropping takes
+			// `origin_id` and the ICMP matching off every policy a migrated router
+			// ships, and whether that costs anything rests on something nobody has
+			// measured (issue #35).
+			updated := writablePolicy(live)
 			if err := overwriteManagedPolicy(&updated, desired, bound); err != nil {
 				return err
 			}
@@ -570,6 +579,32 @@ func overwriteManagedPolicy(policy *unifi.FirewallZonePolicy, desired config.Fir
 	policy.Source.ZoneID = source
 	policy.Destination.ZoneID = destination
 	return nil
+}
+
+// writablePolicy is a live policy as unifig sends it back: the Controller's
+// read-only markers cleared.
+//
+// The rule is writableZone's and the reasoning is there — a marker the
+// Controller sends is not a field unifig sends back (ADR-0019). What differs
+// here is the evidence, and it is worth being plain about rather than letting
+// the symmetry imply otherwise: a real UDR was measured refusing `attr_no_edit`
+// on a zone, and nobody has ever sent one to the policy endpoint. Nor has a
+// policy been seen carrying a marker — none of the eighty-three a migrated
+// router ships has an `attr_*` field at all — so this fixes no failure anyone
+// has met.
+//
+// It is still unifig's rule to keep, because a policy is the other object
+// unifig writes whole and `omitempty` puts each of these on the wire exactly
+// when it is true. The first firmware to mark a policy reproduces #27 here, on
+// the one endpoint whose refusal has never been read, and the correlation would
+// look like a rule about which policies may be edited for the same reason it did
+// the first time (issue #34).
+func writablePolicy(live unifi.FirewallZonePolicy) unifi.FirewallZonePolicy {
+	live.Hidden = false
+	live.HiddenID = ""
+	live.NoDelete = false
+	live.NoEdit = false
+	return live
 }
 
 // newFirewallPolicy builds the Controller object for a policy unifig is

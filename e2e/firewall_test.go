@@ -573,6 +573,66 @@ zones:
 	}
 }
 
+// The same assertion for a policy, made the same way and for the same reason:
+// the stand-in stores whatever it is handed, so an apply that reads back
+// correctly says nothing about what the request carried (ADR-0014, ADR-0019).
+//
+// What differs is the evidence behind it, and the test should not be read as
+// claiming otherwise. A real UDR was measured refusing `attr_no_edit` on a zone;
+// nobody has ever sent one to the policy endpoint, and no policy has been seen
+// carrying a marker at all — none of the eighty-three a migrated router ships
+// has an `attr_*` field. What is stated here is unifig's own rule rather than
+// the Controller's: a marker the Controller sends is not a field unifig sends
+// back, on every object unifig writes whole (issue #34).
+//
+// The positive half is taken from the domain rather than from a measured
+// minimal shape, which exists for the zone and not for this endpoint. A policy's
+// key is its name together with the pair of zones it governs, and the config
+// states one field beyond that key — so the key and the verdict are what an
+// update has to carry for "no markers" to be worth asserting.
+func TestThePolicyUnifigWritesBackCarriesNoneOfTheControllersReadOnlyMarkers(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Marked", "ALLOW", "Internal", "External", map[string]any{
+		"attr_hidden":    true,
+		"attr_hidden_id": "6613a1f0c4b2d90a5e1f7002",
+		"attr_no_delete": true,
+		"attr_no_edit":   true,
+	})
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: Marked
+    action: block
+    source: Internal
+    destination: External
+`)
+
+	writes := r.policyWrites(t)
+	if len(writes) != 1 {
+		t.Fatalf("unifig made %d writes to the policy collection, want the one update this config asks for: %v",
+			len(writes), writes)
+	}
+	sent := writes[0]
+
+	for field := range sent {
+		if strings.HasPrefix(field, "attr_") {
+			t.Errorf("unifig sent the read-only marker %q back to the Controller: %v", field, sent)
+		}
+	}
+	for _, needed := range []string{"_id", "name", "action"} {
+		if _, carried := sent[needed]; !carried {
+			t.Errorf("the update carries no %q: %v", needed, sent)
+		}
+	}
+	// Both ends, because a policy's key is the pair as much as the name: an
+	// update that lost one would be a write to a different policy.
+	for _, end := range []string{"source", "destination"} {
+		zone, _ := sent[end].(map[string]any)
+		if id, _ := zone["zone_id"].(string); id == "" {
+			t.Errorf("the update carries no zone at its %s end: %v", end, sent)
+		}
+	}
+}
+
 func TestApplyCreatesAPolicyBetweenTwoZonesAndTheNextPlanIsEmpty(t *testing.T) {
 	r := startReplay(t)
 

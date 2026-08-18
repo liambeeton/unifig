@@ -874,17 +874,27 @@ func (r *replay) zoneMembers(t *testing.T, name string) []string {
 	return names
 }
 
-// zoneWrites is every body unifig has sent to the zone collection — the
-// requests themselves rather than what the stand-in stored, which is the only
-// way to state anything about a field the Controller would have refused.
+// zoneWrites is every body unifig has sent to the zone collection, and
+// policyWrites the same for the policies — the requests themselves rather than
+// what the stand-in stored, which is the only way to state anything about a
+// field the Controller would have refused.
 func (r *replay) zoneWrites(t *testing.T) []map[string]any {
 	t.Helper()
+	return r.writesTo(zonePath)
+}
+
+func (r *replay) policyWrites(t *testing.T) []map[string]any {
+	t.Helper()
+	return r.writesTo(policyPath)
+}
+
+func (r *replay) writesTo(base string) []map[string]any {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	var bodies []map[string]any
 	for _, write := range r.written {
-		if strings.HasPrefix(write.path, zonePath) {
+		if strings.HasPrefix(write.path, base) {
 			bodies = append(bodies, write.body)
 		}
 	}

@@ -123,11 +123,26 @@ It round-trips. Every field `newFirewallPolicy` sends came back unaltered —
 `enabled`, `protocol: all`, `ip_version: BOTH`, `connection_state_type: ALL`, the
 `{ALWAYS, all-day}` schedule the Controller rejects a policy without, and both
 `ANY`/`ANY` endpoints — with `action` mapped to `ALLOW` and both `zone_id`s
-resolved to the pair named in the config. The Controller added ten fields unifig
-does not model, all of them defaults it chose rather than corrections of anything
-sent: `index: 10000`, `logging: false`, `predefined: false`, `icmp_typename` and
+resolved to the pair named in the config. Ten fields came back that unifig's
+config does not model, none of them a correction of anything sent: `index:
+10000`, `logging: false`, `predefined: false`, `icmp_typename` and
 `icmp_v6_typename` of `ANY`, an empty `connection_states`, and four booleans
 false. Nothing unifig sent was rejected, defaulted over, or silently rewritten.
+
+**Not all ten were the Controller's to add, and the distinction turned out to
+matter.** This paragraph first said the Controller added ten fields "unifig does
+not model", which is true of unifig's config and false of the wire: go-unifi
+models `predefined`, `logging`, `create_allow_respond`, `match_ip_sec` and
+`match_opposite_protocol` *without* `omitempty`, so each of them went out in the
+create body as `false` and came back echoed rather than added. The Controller
+assigned `index`, and `icmp_typename`, `icmp_v6_typename` and
+`connection_states` are genuinely fields no request carried.
+
+So this session measured more than it claimed: the policy write endpoint accepts
+a body carrying read-shape fields. It is not the minimal DTO the zone endpoint
+turned out to be, which refuses anything it has not heard of. That narrows what
+is unread about a policy write to exactly the four `attr_*` markers and `index`
+— and it is why issue #34's question was smaller than it looked (issue #34).
 
 While the policy existed, `plan --prune` proposed deleting it and left all 86
 predefined policies alone — ADR-0005's rule that the exemption is read off the
@@ -167,6 +182,22 @@ policies as #21 confirmed it for zones.
 - ADR-0013's closing paragraph and `README.md:563` no longer describe an open
   question, and `e2e/testdata/udr/README.md:71` can say what `attr_no_edit` does
   on evidence.
+- A policy is the other object unifig writes whole, so the rule reaches it too.
+  **Taken in issue #34**: `writablePolicy` clears the same four markers before
+  the update PUT, and a request-shape test asserts it. The two halves are not
+  equally evidenced and the code says so — the zone's refusal was measured here,
+  while no one has sent a marker to the policy endpoint and no policy has been
+  seen carrying one. What transfers is not the refusal but unifig's own rule: a
+  marker the Controller sends is not a field unifig sends back. The stand-in's
+  refusal list stays zone-only, because only the zone's refusal was measured.
+- The rule has a second half this ADR did not look at, and it is the live one.
+  `updated := live` starts from a struct, so every field the Controller sent that
+  go-unifi does not model — `origin_id` on all 83 policies a migrated router
+  ships, `icmp_typename`, `icmp_v6_typename`, `hits`, `last_hit` — is already
+  gone before the write. Whether that costs anything depends on whether a v2 PUT
+  replaces the object or merges into it, which nothing here measured and the
+  replay stand-in nonetheless assumes. Filed as **issue #35**, with the probe
+  that would settle it.
 - `TestStatingAZonesNetworksLeavesAMemberUnifigCannotNameAlone` now has hardware
   behind it and carries a comment saying so, which was an acceptance criterion of
   #30 whatever the outcome turned out to be.
