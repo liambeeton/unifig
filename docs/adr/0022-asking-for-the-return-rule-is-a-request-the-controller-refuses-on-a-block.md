@@ -121,7 +121,8 @@ same standard ADR-0014 set: only what was measured. `block` was sent and refused
   depending on what their policy used to be. Whether unifig should own the flag
   on the update path — re-deriving it when the verdict changes, so the companion
   follows the config rather than the history — is a real design question this ADR
-  does not settle. It is filed rather than buried here.
+  does not settle. Filed as **issue #40**, with the two readings that would
+  settle it and the options it would choose between.
 - `origin_type` has a second value. ADR-0021 recorded `network_config` on the
   policies a migrated router ships; a companion carries `custom_firewall_rule`.
   Both are back-references to whatever made the policy, and neither is
