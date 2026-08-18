@@ -172,7 +172,12 @@ policies as #21 confirmed it for zones.
   #30 whatever the outcome turned out to be.
 - Exclusive zone membership needs modelling before a plan can honestly claim what
   a membership change will do. Nothing here fixes it; it is filed rather than
-  buried in an ADR nobody would search for it in.
+  buried in an ADR nobody would search for it in. **Taken in issue #32**
+  (`docs/adr/0020-a-network-lives-in-exactly-one-zone.md`): the plan names both
+  sides of a move and says where a network taken out of a zone ends up, computed
+  from the network's side of the model rather than the zone's. The section above
+  is still where the measurement lives; the decision about what to do with it is
+  there.
 - The one thing this session could not answer is what any of it does on firmware
   other than 10.5.67. That is the standing limitation of a single household's
   router, and it is the reason `docs/COMPATIBILITY.md` exists.

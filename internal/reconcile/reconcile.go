@@ -306,12 +306,20 @@ type Field struct {
 	Name string `json:"name"`
 	From any    `json:"from"`
 	To   any    `json:"to"`
-	// Note is a consequence of the change that the config does not state, in
-	// the plain words an operator needs to see it coming: a DHCP pool that
+	// Notes are the consequences of the change that the config does not state,
+	// in the plain words an operator needs to see them coming: a DHCP pool that
 	// has to move because the subnet under it did, a WLAN that will be open
-	// because no passphrase was given. Always shown — a plan that quietly did
-	// more than it printed would not be a plan.
-	Note string `json:"note,omitempty"`
+	// because no passphrase was given, a network that leaves another zone
+	// because this one claimed it. Always shown — a plan that quietly did more
+	// than it printed would not be a plan.
+	//
+	// There is more than one because one field can carry more than one, and a
+	// zone's membership is where that stopped being hypothetical: a single
+	// `networks:` list can displace a network out of another zone, hand a second
+	// back to the Controller, and hold a third that unifig cannot name, all at
+	// once (ADR-0020). A single note would have had to pick one of them or run
+	// them into one sentence, and each is about a different network.
+	Notes []string `json:"notes,omitempty"`
 	// Secret marks a field whose value must not be printed. Both ends stay
 	// null for one, so the plan says that the field is changing without saying
 	// what to: a plan is read aloud, pasted into tickets and captured by CI
@@ -542,24 +550,27 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 		}
 		bound.bindZones(zones)
 
+		// What the Controller says about its own zones is read whenever the
+		// zones are, which used to be narrower: the answer was wanted for prune,
+		// which needs to know which zones are built-in, and for a policy, which
+		// needs to know which one is the gateway — so it was read on exactly the
+		// terms the policies are. It is read unconditionally now because a third
+		// question needs it and is asked by every plan that touches a
+		// membership: which zone the Controller moves a network to when nothing
+		// else holds it (ADR-0020). A plan that manages zones and can neither
+		// delete one nor govern one still changes what is in them, and that is
+		// the case the old condition left unable to say where a network went.
+		facts := readZoneFacts(ctx, client, site)
+
 		// The policies are read on the same terms as the WLANs above, and for the
 		// same reason one step along: a zone with a policy on either end of it is
 		// a zone something still requires.
-		//
-		// What the Controller says about its own zones is read on exactly those
-		// terms too, and the shared condition is not a coincidence: prune needs
-		// to know which zones are built-in, and a policy needs to know which one
-		// is the gateway, so the answer is wanted in precisely the cases a policy
-		// is read at all. A plan that manages zones and cannot delete them has no
-		// use for either half and still does not pay a request for it.
 		var policies []unifi.FirewallZonePolicy
-		var facts zoneFacts
 		if cfg.FirewallPolicies != nil || (opts.Prune && cfg.Zones != nil) {
 			policies, err = listFirewallPolicies(ctx, client, site)
 			if err != nil {
 				return Plan{}, err
 			}
-			facts = readZoneFacts(ctx, client, site)
 		}
 		sparedPolicies := policies
 		if cfg.FirewallPolicies != nil {
@@ -876,10 +887,17 @@ func sortCaveats(caveats []Caveat) {
 // does not include it. A consequence with nothing to hang it off is a
 // consequence of something that is not happening, which is not a case worth
 // distinguishing from having nothing to say.
-func annotate(fields []Field, name, note string) {
+//
+// Notes accumulate in the order they are attached rather than replacing each
+// other, so a caller with several things to say about one field says them all
+// and decides the order it wants them read in.
+func annotate(fields []Field, name string, notes ...string) {
+	if len(notes) == 0 {
+		return
+	}
 	for i := range fields {
 		if fields[i].Name == name {
-			fields[i].Note = note
+			fields[i].Notes = append(fields[i].Notes, notes...)
 			return
 		}
 	}
@@ -902,12 +920,12 @@ func annotateFirst(fields []Field, note string, names ...string) {
 	for _, name := range names {
 		for i := range fields {
 			if fields[i].Name == name {
-				fields[i].Note = note
+				fields[i].Notes = append(fields[i].Notes, note)
 				return
 			}
 		}
 	}
-	fields[0].Note = note
+	fields[0].Notes = append(fields[0].Notes, note)
 }
 
 // number and text render a field the Controller does not have yet as nothing

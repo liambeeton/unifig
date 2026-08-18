@@ -373,7 +373,7 @@ func deleteDHCPReservation(live unifi.User) Change {
 		// The address goes in unwrapped rather than through text(), because a
 		// reservation with no address is not one reservationsAmong would have
 		// kept: there is no absence to render here.
-		Fields: []Field{{Name: "ip", From: live.FixedIP, Note: givesUpAddress(live)}},
+		Fields: []Field{{Name: "ip", From: live.FixedIP, Notes: []string{givesUpAddress(live)}}},
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			updated := live
 			updated.UseFixedIP = false

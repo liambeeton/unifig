@@ -73,6 +73,10 @@ func checkReferences(cfg Config, idx index) []Problem {
 	// reference is resolved when unifig reads the Controller, against the Zones
 	// the site really has, exactly as a WAN slot's is (ADR-0010).
 	zoned := make(map[string]bool, len(cfg.Zones))
+	// claimedBy is the zone each network has already been placed in, held as the
+	// entry's index rather than its name so that two zones sharing a name — which
+	// is a problem of its own, reported above — cannot be mistaken for one.
+	claimedBy := make(map[string]int, len(cfg.Networks))
 	for i, zone := range cfg.Zones {
 		if zoned[zone.Name] {
 			at := idx.field("zones", i, "name")
@@ -89,14 +93,35 @@ func checkReferences(cfg Config, idx index) []Problem {
 		// cannot be checked offline, because a built-in zone is not in the file
 		// — the two halves of a zone are not alike, and only one of them is
 		// resolvable here.
+		//
+		// Where it names a network twice, the second naming is the problem, and
+		// it is a problem this file can see on its own: a network belongs to
+		// exactly one firewall zone, and the Controller keeps it that way itself
+		// by taking a network out of one zone when another claims it (ADR-0020).
+		// So a file placing one network in two zones states two answers to a
+		// question that has one, and which of them survived would come down to
+		// the order the writes happened to run in. A zone with no `networks:`
+		// key claims nothing and takes no part in this, which is what keeps
+		// naming a built-in zone in order to write policies about it free of the
+		// rule (ADR-0004).
 		for j, network := range zone.Networks {
-			if defined[network] {
+			if !defined[network] {
+				at := idx.nestedEntry("zones", i, "networks", j)
+				problems = append(problems, Problem{Line: at.line, Path: at.path, Message: fmt.Sprintf(
+					"no network named %q is defined in this file; %s",
+					network, availableNetworks(networkNames))})
+				continue
+			}
+			first, claimed := claimedBy[network]
+			if !claimed {
+				claimedBy[network] = i
 				continue
 			}
 			at := idx.nestedEntry("zones", i, "networks", j)
-			problems = append(problems, Problem{Line: at.line, Path: at.path, Message: fmt.Sprintf(
-				"no network named %q is defined in this file; %s",
-				network, availableNetworks(networkNames))})
+			problems = append(problems, Problem{
+				Line: at.line, Path: at.path,
+				Message: alreadyZoned(network, cfg.Zones[first].Name, first == i),
+			})
 		}
 	}
 
@@ -219,6 +244,22 @@ func duplicateReservation(mac, first string) string {
 	return fmt.Sprintf(
 		"an address is already reserved for %q in this file; unifig matches reservations on the Controller by MAC address, so two cannot share one",
 		mac)
+}
+
+// alreadyZoned says that a network has been put in a zone twice, and reads
+// differently depending on whether the two placements are in one zone's list or
+// in two zones. They are not the same mistake: a list naming a network twice is
+// a typo with one obvious fix, and two zones naming it is a choice the operator
+// has to make, so the message says which zone already has it.
+func alreadyZoned(network, zone string, sameZone bool) string {
+	if sameZone {
+		return fmt.Sprintf(
+			"the network %q is already in this zone's networks; a network is in a zone once or not at all",
+			network)
+	}
+	return fmt.Sprintf(
+		"the network %q is already in the zone %q in this file; a network belongs to exactly one firewall zone, so unifig would not know which of these to put it in",
+		network, zone)
 }
 
 func alreadyDefined(kind, kinds, name string) string {

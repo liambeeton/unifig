@@ -912,6 +912,18 @@ func (r *replay) markedZone(t *testing.T) string {
 
 // seedZone puts a zone on the Controller without going through unifig — the
 // stand-in's version of the rig seeding through the Controller's own API.
+//
+// The networks it names are taken out of whichever zone held them, because a
+// network belongs to exactly one zone and the Controller keeps it that way
+// itself (ADR-0020). A seed that skipped that would start its test from a site
+// no Controller could be in, which is the state this recording used to ship
+// (issue #32).
+//
+// That is not the stand-in reproducing the eviction, and the difference matters:
+// a write arriving here is still stored exactly as unifig sent it, so a test
+// that applies a membership change and reads it back still learns nothing about
+// what the Controller would have done to the other zone. What a plan *says*
+// about that is asserted on the plan.
 func (r *replay) seedZone(t *testing.T, name string, networks []string, fields map[string]any) {
 	t.Helper()
 	r.mu.Lock()
@@ -925,6 +937,17 @@ func (r *replay) seedZone(t *testing.T, name string, networks []string, fields m
 				ids = append(ids, id)
 			}
 		}
+	}
+	for _, zone := range r.zones {
+		held, _ := zone["network_ids"].([]any)
+		kept := make([]any, 0, len(held))
+		for _, raw := range held {
+			id, _ := raw.(string)
+			if !slices.Contains(ids, id) {
+				kept = append(kept, raw)
+			}
+		}
+		zone["network_ids"] = kept
 	}
 
 	r.issued++
@@ -940,28 +963,45 @@ func (r *replay) seedZone(t *testing.T, name string, networks []string, fields m
 	r.zones = append(r.zones, zone)
 }
 
-// gatewayZone is the name the recording gives the zone the Controller answers
-// in, found the way unifig finds it: by the Controller's own `zone_key` rather
-// than by the name. A test that hard-coded "Gateway" would be asserting a guess
-// about someone else's product, which is the mistake ADR-0013 was written about.
-func (r *replay) gatewayZone(t *testing.T) string {
+// zoneKeyed is the name the recording gives the zone carrying one of the
+// Controller's own stable keys, found the way unifig finds it: by the key rather
+// than by the name. A test that hard-coded "Gateway" or "Internal" would be
+// asserting a guess about someone else's product, which is the mistake ADR-0013
+// was written about.
+func (r *replay) zoneKeyed(t *testing.T, key string) string {
 	t.Helper()
 	for _, zone := range r.liveZones(t) {
-		if zone["zone_key"] == "gateway" {
+		if zone["zone_key"] == key {
 			name, _ := zone["name"].(string)
 			return name
 		}
 	}
-	t.Fatalf("the recording holds no zone the Controller marks as its gateway")
+	t.Fatalf("the recording holds no zone the Controller keys %q", key)
 	return ""
 }
 
-// renameGateway gives the gateway zone a different name, leaving the key that
-// says what it is untouched. It is how a test asks whether unifig found the zone
-// by the key or by the name, and there is no other way to tell the two apart.
-func (r *replay) renameGateway(t *testing.T, name string) {
+// gatewayZone is the zone the Controller answers in — where a policy blocking
+// traffic can cut the path the site is managed over (ADR-0018).
+func (r *replay) gatewayZone(t *testing.T) string {
 	t.Helper()
-	was := r.gatewayZone(t)
+	return r.zoneKeyed(t, "gateway")
+}
+
+// internalZone is the zone the Controller puts a network in when nothing else
+// holds it. A network belongs to exactly one zone, so taking one out of a zone
+// does not leave it in none — and which zone it lands in is the Controller's
+// answer rather than a name unifig keeps (ADR-0020).
+func (r *replay) internalZone(t *testing.T) string {
+	t.Helper()
+	return r.zoneKeyed(t, "internal")
+}
+
+// renameZoneKeyed gives a keyed zone a different name, leaving the key that says
+// what it is untouched. It is how a test asks whether unifig found the zone by
+// the key or by the name, and there is no other way to tell the two apart.
+func (r *replay) renameZoneKeyed(t *testing.T, key, name string) {
+	t.Helper()
+	was := r.zoneKeyed(t, key)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, zone := range r.zones {
@@ -970,6 +1010,11 @@ func (r *replay) renameGateway(t *testing.T, name string) {
 			return
 		}
 	}
+}
+
+func (r *replay) renameGateway(t *testing.T, name string) {
+	t.Helper()
+	r.renameZoneKeyed(t, "gateway", name)
 }
 
 // hideTheGateway drops the key that says which zone the Controller answers in,

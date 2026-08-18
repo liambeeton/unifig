@@ -40,9 +40,7 @@
     "default_zone": true,
     "external_id": "00000000-0000-4000-8000-000000000007",
     "name": "Vpn",
-    "network_ids": [
-      "6613a1f0c4b2d90a5e1f0001"
-    ],
+    "network_ids": [],
     "zone_key": "vpn"
   },
   {
@@ -52,9 +50,7 @@
     "default_zone": true,
     "external_id": "00000000-0000-4000-8000-000000000008",
     "name": "Hotspot",
-    "network_ids": [
-      "6613a1f0c4b2d90a5e1f0001"
-    ],
+    "network_ids": [],
     "zone_key": "hotspot"
   },
   {

@@ -138,6 +138,285 @@ func TestStatingAZonesNetworksSaysWhichOneLeavesIt(t *testing.T) {
 	}
 }
 
+// unzonedNetwork creates a network through unifig and answers with its name and
+// the `networks:` stanza every later config in the test has to carry — a zone may
+// only name a network the same file defines. A network the Controller has just
+// created is in no zone, which is where these tests start.
+//
+// The recording's own LAN cannot stand in for it. `Default` sits in the built-in
+// `Internal` zone (`e2e/testdata/udr/README.md`), which is the zone the
+// Controller falls back to — so a test moving it out of somewhere could not tell
+// "the zone it came from" and "the zone the Controller sends it to" apart, and
+// would pass on either.
+func unzonedNetwork(t *testing.T, r *replay) (name, networks string) {
+	t.Helper()
+	name = "Probe"
+	networks = fmt.Sprintf(`networks:
+  - name: %s
+    vlan: %d
+    subnet: 10.77.0.1/24
+`, name, r.unusedVLAN(t))
+	applyFirewall(t, r, networks)
+	return name, networks
+}
+
+// placedNetwork is the same network, put in one zone on the way.
+func placedNetwork(t *testing.T, r *replay, zone string) (name, networks string) {
+	t.Helper()
+	name, networks = unzonedNetwork(t, r)
+	applyFirewall(t, r, networks+fmt.Sprintf(`zones:
+  - name: %s
+    networks:
+      - %s
+`, zone, name))
+	return name, networks
+}
+
+// A network belongs to exactly one firewall zone, and the Controller keeps it
+// that way itself: putting a network in a second zone takes it out of the first,
+// in the same request, without unifig asking for it. unifig sends one PUT to one
+// zone and two zones change — so a plan naming only the zone that gains the
+// network is not a statement about what will happen, which is the standard
+// ADR-0014 sets and ADR-0020 applies here.
+//
+// These tests assert what the plan *says*, and they have to. The stand-in stores
+// whatever it is handed, so it will not evict the network from the other zone on
+// its own; a test reading the membership back afterwards would be reading
+// unifig's own model rather than the Controller's behaviour (#32, #30).
+func TestPlanNamesTheZoneANetworkLeavesToJoinAnother(t *testing.T) {
+	r := startReplay(t)
+	probe, networks := placedNetwork(t, r, "Alpha")
+	r.seedZone(t, "Beta", nil, nil)
+
+	res := planFirewall(t, r, networks+fmt.Sprintf(`zones:
+  - name: Beta
+    networks:
+      - %s
+`, probe))
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d\nplan:\n%s", res.ExitCode, exitChangesPending, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `~ zone "Beta"`) {
+		t.Fatalf("plan does not update the zone gaining the network:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, `"Alpha"`) {
+		t.Errorf("the plan puts %q in Beta without naming Alpha, the zone it leaves:\n%s", probe, stdout)
+	}
+}
+
+// The same on a zone being created. A zone born holding a network empties
+// whichever zone held it, and the operator reading `+ zone` has even less reason
+// to expect that than the one reading `~ zone`.
+func TestPlanNamesTheZoneANetworkLeavesWhenTheZoneItJoinsIsCreated(t *testing.T) {
+	r := startReplay(t)
+	probe, networks := placedNetwork(t, r, "Alpha")
+
+	res := planFirewall(t, r, networks+fmt.Sprintf(`zones:
+  - name: Gamma
+    networks:
+      - %s
+`, probe))
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d\nplan:\n%s", res.ExitCode, exitChangesPending, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `+ zone "Gamma"`) {
+		t.Fatalf("plan does not create the zone gaining the network:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, `"Alpha"`) {
+		t.Errorf("the plan creates Gamma holding %q without naming Alpha, the zone it leaves:\n%s", probe, stdout)
+	}
+}
+
+// Taking a network out of a zone does not leave it unzoned: the Controller
+// reassigns it to the zone it keys `internal`. A plan that showed the membership
+// going to nothing would be telling the operator their network ends up outside
+// every zone, which is the one thing that cannot happen.
+func TestPlanSaysWhereTheControllerPutsANetworkTakenOutOfAZone(t *testing.T) {
+	r := startReplay(t)
+	internal := r.internalZone(t)
+	probe, networks := placedNetwork(t, r, "Alpha")
+
+	res := planFirewall(t, r, networks+`zones:
+  - name: Alpha
+    networks: []
+`)
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d\nplan:\n%s", res.ExitCode, exitChangesPending, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, probe) {
+		t.Fatalf("plan does not name the network leaving the zone:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, internal) {
+		t.Errorf("the plan empties Alpha without saying the Controller will put %q in %q:\n%s",
+			probe, internal, stdout)
+	}
+}
+
+// Which zone that is comes from the Controller's own key rather than from the
+// name "Internal", for the reason the gateway's does (ADR-0005, ADR-0018): a
+// firmware presenting it under another name would have unifig telling operators
+// their network lands somewhere it does not.
+func TestTheZoneANetworkIsReassignedToIsFoundByTheControllersKey(t *testing.T) {
+	r := startReplay(t)
+	r.renameZoneKeyed(t, "internal", "Hausnetz")
+	_, networks := placedNetwork(t, r, "Alpha")
+
+	res := planFirewall(t, r, networks+`zones:
+  - name: Alpha
+    networks: []
+`)
+
+	if !strings.Contains(string(res.Stdout), "Hausnetz") {
+		t.Errorf("plan does not name the renamed zone the Controller keys `internal`, so unifig found it by its name:\n%s",
+			res.Stdout)
+	}
+}
+
+// The reassignment only happens when nothing else takes the network, so a plan
+// that moves it must not claim it. Saying both would be a plan contradicting
+// itself two lines apart, which is the shape ADR-0014 already refused once.
+func TestAPlanThatRehomesANetworkItselfDoesNotSayTheControllerWill(t *testing.T) {
+	r := startReplay(t)
+	internal := r.internalZone(t)
+	probe, networks := placedNetwork(t, r, "Alpha")
+	r.seedZone(t, "Beta", nil, nil)
+
+	res := planFirewall(t, r, networks+fmt.Sprintf(`zones:
+  - name: Alpha
+    networks: []
+  - name: Beta
+    networks:
+      - %s
+`, probe))
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d\nplan:\n%s", res.ExitCode, exitChangesPending, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	if strings.Contains(stdout, internal) {
+		t.Errorf("the plan says the Controller will put %q in %q, and this same plan puts it in Beta:\n%s",
+			probe, internal, stdout)
+	}
+	if !strings.Contains(stdout, `"Beta"`) {
+		t.Errorf("the plan empties Alpha without saying where %q goes:\n%s", probe, stdout)
+	}
+}
+
+// A network in no zone displaces nothing, and the plan must not invent a zone
+// for it to have come from. Every zone the site has is checked rather than a
+// guess at which one would have been named wrongly.
+func TestPlanNamesNoZoneWhenTheNetworkItPlacesWasInNone(t *testing.T) {
+	r := startReplay(t)
+	probe, networks := unzonedNetwork(t, r)
+
+	res := planFirewall(t, r, networks+fmt.Sprintf(`zones:
+  - name: Alpha
+    networks:
+      - %s
+`, probe))
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `+ zone "Alpha"`) {
+		t.Fatalf("plan does not create the zone:\n%s", stdout)
+	}
+	for _, zone := range r.liveZones(t) {
+		name, _ := zone["name"].(string)
+		if strings.Contains(stdout, name) {
+			t.Errorf("the plan names the zone %q, and the network it places was in no zone at all:\n%s", name, stdout)
+		}
+	}
+}
+
+// A zone that is deleted lets go of its networks as surely as one that is
+// emptied, and the plan owes the operator the same sentence. What it does not owe
+// them is a zone name: where the Controller puts a network whose zone was deleted
+// has never been measured, and the write probe deleted only zones that held
+// nothing (ADR-0020). So the plan says what the invariant entails — the networks
+// survive and end up somewhere — and stops there rather than guessing `Internal`.
+func TestPlanSaysADeletedZonesNetworksAreNotDeletedWithIt(t *testing.T) {
+	r := startReplay(t)
+	probe, networks := placedNetwork(t, r, "Doomed")
+
+	res := planFirewall(t, r, networks+`zones:
+  - name: Keeper
+`, "--prune")
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `- zone "Doomed"`) {
+		t.Fatalf("the prune under test is not in the plan:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "not deleted with") {
+		t.Errorf("the plan deletes a zone holding %q without saying the network survives it:\n%s", probe, stdout)
+	}
+	// Naming a zone as the destination would be asserting a guess, and the
+	// recording's own built-ins are what such a guess would reach for. The zone
+	// being deleted is not one of them: it is the change's own subject.
+	for _, zone := range r.liveZones(t) {
+		name, _ := zone["name"].(string)
+		if name == "Doomed" {
+			continue
+		}
+		if strings.Contains(stdout, fmt.Sprintf("%q", name)) {
+			t.Errorf("the plan names the zone %q as where %q ends up, and no one has measured that:\n%s", name, probe, stdout)
+		}
+	}
+}
+
+// The prose plan's notes reach `plan --json` too, as a list rather than a single
+// string: one membership change can displace a network, rehome another and hold
+// a member unifig cannot name, and a pipeline reading one of those three would
+// be reading less than the operator does.
+func TestPlanJSONCarriesEveryNoteOnAField(t *testing.T) {
+	r := startReplay(t)
+	internal := r.internalZone(t)
+	probe, networks := placedNetwork(t, r, "Alpha")
+
+	res := planFirewall(t, r, networks+`zones:
+  - name: Alpha
+    networks: []
+`, "--json")
+
+	var out struct {
+		Changes []struct {
+			Kind   string `json:"kind"`
+			Name   string `json:"name"`
+			Fields []struct {
+				Name  string   `json:"name"`
+				Notes []string `json:"notes"`
+			} `json:"fields"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(res.Stdout, &out); err != nil {
+		t.Fatalf("plan --json is not valid JSON: %v\nstdout: %s", err, res.Stdout)
+	}
+
+	var notes []string
+	for _, change := range out.Changes {
+		if change.Kind != "zone" || change.Name != "Alpha" {
+			continue
+		}
+		for _, field := range change.Fields {
+			if field.Name == "networks" {
+				notes = append(notes, field.Notes...)
+			}
+		}
+	}
+	if len(notes) == 0 {
+		t.Fatalf("the zone's networks field carries no notes:\n%s", res.Stdout)
+	}
+	if !slices.ContainsFunc(notes, func(note string) bool {
+		return strings.Contains(note, probe) && strings.Contains(note, internal)
+	}) {
+		t.Errorf("no note says the Controller will put %q in %q; notes are %q", probe, internal, notes)
+	}
+}
+
 // The built-in External zone holds the WAN, which is not a network unifig
 // manages and has no name the config can use. Stating the LANs in such a zone
 // must therefore not detach the uplink from it — the membership is owned per
@@ -558,7 +837,7 @@ func TestPruneLeavesAZoneAPolicyStillGovernsAlone(t *testing.T) {
 	// so the prune under test really runs and really deletes something: the
 	// held-back zone is then spared on purpose rather than because nothing
 	// happened.
-	r.seedZone(t, "Zone Bystander", []string{lan}, nil)
+	r.seedZone(t, "Zone Bystander", nil, nil)
 
 	body := `zones:
   - name: Keeper

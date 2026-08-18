@@ -308,9 +308,9 @@ func setPortForwardFields(desired config.PortForward) []Field {
 		return append(fields, Field{Name: "source", To: desired.Source})
 	}
 	return append(fields, Field{
-		Name: "source",
-		To:   anySource,
-		Note: "the config states no source, so this forward accepts traffic from anywhere on the internet",
+		Name:  "source",
+		To:    anySource,
+		Notes: []string{"the config states no source, so this forward accepts traffic from anywhere on the internet"},
 	})
 }
 

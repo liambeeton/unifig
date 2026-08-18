@@ -448,6 +448,16 @@ func (s *scrubber) uplinks(entries []map[string]any) ([]map[string]any, error) {
 // External zone still holds the uplink. Without that the zones would come back
 // referring to networks that are not in the recording, and every test about what
 // a zone holds would be testing a dangling reference.
+//
+// **One zone gets it, not each.** A network belongs to exactly one firewall zone
+// — the Controller keeps it that way itself (ADR-0020) — so folding every zone's
+// LANs onto the one committed LAN independently produces a recording of a site
+// that cannot exist, with one network in three zones at once. This scrub did
+// exactly that until issue #32, and what found it was `export` writing a file
+// that `validate` then refused. The first zone the router listed holding a LAN
+// keeps it and the rest come back without one, which is arbitrary between them
+// and is the most a recording carrying a single LAN can say: it is a real
+// membership for one zone rather than an impossible one for several.
 func (s *scrubber) firewall(raw recording, lan, uplinks []map[string]any) (zones, policies list) {
 	// The committed LAN is this repository's own and is never scrubbed, so its
 	// id has to survive being mentioned by a zone. Recorded as its own
@@ -455,6 +465,10 @@ func (s *scrubber) firewall(raw recording, lan, uplinks []map[string]any) (zones
 	// a reference that points nowhere.
 	committed := idOf(lan[0])
 	s.placeholders[seen{shapeObjectID, committed}] = committed
+	// unclaimed is the committed LAN until a zone takes it, and empty after —
+	// which is how the fold stays exclusive across the zones rather than within
+	// each one.
+	unclaimed := committed
 
 	uplinkIDs := map[string]bool{}
 	for _, entry := range uplinks {
@@ -479,7 +493,11 @@ func (s *scrubber) firewall(raw recording, lan, uplinks []map[string]any) (zones
 		// survive are substituted consistently with everything else that
 		// mentions them.
 		rewritten := maps.Clone(zone)
-		rewritten["network_ids"] = membership(zone, uplinkIDs, committed)
+		members, tookLAN := membership(zone, uplinkIDs, unclaimed)
+		if tookLAN {
+			unclaimed = ""
+		}
+		rewritten["network_ids"] = members
 		zones = append(zones, s.object(fmt.Sprintf("firewallzone[%v]", zone["name"]), rewritten))
 	}
 
@@ -502,23 +520,31 @@ func (s *scrubber) firewall(raw recording, lan, uplinks []map[string]any) (zones
 // LAN this recording keeps, and its uplinks left as they are. Duplicates
 // collapse, because a zone that held two of the router's LANs holds one network
 // here rather than the same network twice.
-func membership(zone map[string]any, uplinkIDs map[string]bool, committed string) []any {
-	held, _ := zone["network_ids"].([]any)
+//
+// unclaimed is that LAN while no zone has taken it and empty once one has, so a
+// later zone that held LANs comes back holding none of them rather than a second
+// copy of a network that can only be in one zone. It says so, because the caller
+// is where the exclusivity is kept.
+func membership(zone map[string]any, uplinkIDs map[string]bool, unclaimed string) (held []any, tookLAN bool) {
+	members, _ := zone["network_ids"].([]any)
 
-	out := make([]any, 0, len(held))
-	for _, raw := range held {
+	out := make([]any, 0, len(members))
+	for _, raw := range members {
 		id, ok := raw.(string)
 		if !ok {
 			continue
 		}
 		if !uplinkIDs[id] {
-			id = committed
+			if unclaimed == "" {
+				continue
+			}
+			id, tookLAN = unclaimed, true
 		}
 		if !slices.Contains(out, any(id)) {
 			out = append(out, id)
 		}
 	}
-	return out
+	return out, tookLAN
 }
 
 // zoneEnd is the zone a policy names on one side of itself.

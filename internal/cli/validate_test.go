@@ -392,6 +392,54 @@ func TestValidateAcceptsAZoneStatedAsHoldingNothing(t *testing.T) {
 `, nil).mustPass(t)
 }
 
+// A network belongs to exactly one firewall zone. The Controller enforces that
+// itself — putting a network in a second zone takes it out of the first — so a
+// file naming one network in two zones is a file stating two answers to a
+// question with one, and which of them survived would be decided by whichever
+// write happened to run last (ADR-0020).
+func TestValidateCatchesANetworkClaimedByTwoZones(t *testing.T) {
+	runValidate(t, `networks:
+  - name: IoT
+    vlan: 20
+zones:
+  - name: Untrusted
+    networks:
+      - IoT
+  - name: Quarantine
+    networks:
+      - IoT
+`, nil).mustFailWith(t, "line 10", "zones[1].networks[0]", `"IoT"`, `"Untrusted"`)
+}
+
+// The same rule inside one zone. A list naming a network twice would have unifig
+// send the Controller the same ID twice, which is a membership no operator wrote.
+func TestValidateCatchesAZoneListingOneNetworkTwice(t *testing.T) {
+	runValidate(t, `networks:
+  - name: IoT
+    vlan: 20
+zones:
+  - name: Untrusted
+    networks:
+      - IoT
+      - IoT
+`, nil).mustFailWith(t, "line 8", "zones[0].networks[1]", `"IoT"`)
+}
+
+// A zone that manages no membership claims nothing, so it cannot collide with
+// one that does — which is what keeps naming a built-in zone in order to write
+// policies about it free of any interaction with this rule.
+func TestValidateAcceptsAZoneWithNoMembershipBesideOneHoldingTheNetwork(t *testing.T) {
+	runValidate(t, `networks:
+  - name: IoT
+    vlan: 20
+zones:
+  - name: Untrusted
+    networks:
+      - IoT
+  - name: External
+`, nil).mustPass(t)
+}
+
 func TestValidateCatchesDuplicateZoneNames(t *testing.T) {
 	runValidate(t, `zones:
   - name: Untrusted

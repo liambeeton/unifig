@@ -32,6 +32,12 @@ zones:
     # Stating `networks` states the whole membership: a network you stop naming
     # here is one the next apply takes out of the zone. Omit the key to leave
     # the Controller's own membership alone.
+    #
+    # A network is in exactly one zone, and the Controller enforces that: naming
+    # one here takes it out of whichever zone has it, and dropping one from this
+    # list moves it to `Internal` rather than leaving it outside every zone. The
+    # plan names both sides before it does either, and two zones in this file
+    # may not name the same network.
     networks:
       - IoT
 

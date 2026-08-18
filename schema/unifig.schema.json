@@ -127,7 +127,7 @@
         },
         "networks": {
           "title": "Networks",
-          "description": "The names of the networks this zone holds, each of which must be a network defined in this file. Stating the key makes this list the zone's membership, so a network you stop naming here is one the next apply takes out of the zone — and the plan says so before it does. Omit the key entirely to leave the Controller's own membership alone; write `networks: []` to say the zone holds none.",
+          "description": "The names of the networks this zone holds, each of which must be a network defined in this file. Stating the key makes this list the zone's membership, so a network you stop naming here is one the next apply takes out of the zone — and the plan says so before it does. A network is in exactly one zone and the Controller enforces that, so naming one here also takes it out of whichever zone holds it now, dropping one from this list moves it to `Internal` rather than leaving it outside every zone, and no two zones in this file may name the same network. Omit the key entirely to leave the Controller's own membership alone; write `networks: []` to say the zone holds none.",
           "type": "array",
           "items": {
             "type": "string",

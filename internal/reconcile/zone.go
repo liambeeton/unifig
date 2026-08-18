@@ -37,6 +37,12 @@ import (
 // about zones leaves every one of them alone. inUse is what the policy half is
 // leaving on each zone, which is what decides whether prune may propose deleting
 // one (ADR-0014).
+//
+// The placement is worked out once, before any zone is planned, and that is not
+// only an economy. A membership change is about two zones rather than one, so
+// every change here needs to know something about a zone it is not about — and
+// answering that from inside a zone's own plan would be answering it from inside
+// the model that cannot see the other side (placement).
 func planZones(
 	cfg config.Config,
 	live []unifi.FirewallZone,
@@ -49,6 +55,7 @@ func planZones(
 	for _, zone := range live {
 		byName[zone.Name] = zone
 	}
+	placed := placeNetworks(cfg, live, facts, bound)
 
 	changes := make([]Change, 0, len(cfg.Zones))
 	named := make(map[string]bool, len(cfg.Zones))
@@ -57,10 +64,10 @@ func planZones(
 
 		current, exists := byName[desired.Name]
 		if !exists {
-			changes = append(changes, createZone(desired, bound))
+			changes = append(changes, createZone(desired, bound, placed))
 			continue
 		}
-		if change, differs := updateZone(desired, current, bound); differs {
+		if change, differs := updateZone(desired, current, bound, placed); differs {
 			changes = append(changes, change)
 		}
 	}
@@ -130,14 +137,19 @@ type zoneMarker struct {
 	ZoneKey string `json:"zone_key"`
 }
 
-// gatewayZoneKey is the Controller's own key for the zone it answers in.
+// gatewayZoneKey is the Controller's own key for the zone it answers in, and
+// internalZoneKey for the zone it puts a network in when nothing else holds one.
 //
 // The key is matched and the name beside it is read, rather than the name being
 // matched: an operator cannot rename a built-in today, but a firmware that
-// presented this zone under another name would silently stop every Risky mark
-// that depends on it, and silence is the one failure mode this rule cannot
-// afford.
-const gatewayZoneKey = "gateway"
+// presented either zone under another name would silently stop the rule that
+// depends on it — a Risky mark that never fires, or a plan telling an operator
+// their network lands somewhere it does not — and silence is the one failure
+// mode neither rule can afford.
+const (
+	gatewayZoneKey  = "gateway"
+	internalZoneKey = "internal"
+)
 
 // zoneFacts is what the Controller says about its own zones, and whether it
 // could be asked at all.
@@ -147,9 +159,9 @@ const gatewayZoneKey = "gateway"
 // out, and the two must not lead to the same behaviour, because one of them ends
 // in a plan proposing to delete the zone that stands for the internet.
 //
-// Both fields share the one `known` flag because they come from one response:
-// there is no state in which the Controller answered about its zones and unifig
-// learned one of these and not the other.
+// All three fields share the one `known` flag because they come from one
+// response: there is no state in which the Controller answered about its zones
+// and unifig learned one of these and not the others.
 type zoneFacts struct {
 	known   bool
 	builtIn map[string]bool
@@ -158,12 +170,19 @@ type zoneFacts struct {
 	// states its ends as names and is matched by them (policyKey), so a name is
 	// what the risk check has to compare.
 	gateway string
+	// internal is the name of the zone the Controller moves a network to when
+	// nothing else holds it, and empty when the site has none — or when unifig
+	// could not read the keys at all, which is why a plan that cannot name it
+	// says the Controller will choose rather than naming the wrong zone
+	// (ADR-0020).
+	internal string
 }
 
 func (f zoneFacts) owns(zone unifi.FirewallZone) bool { return f.builtIn[zone.ID] }
 
 // readZoneFacts reads what the Controller says about its own zones: which are
-// built-in, and which of those is the one it answers in.
+// built-in, which of those is the one it answers in, and which is the one it
+// falls back to for a network no other zone holds.
 //
 // It reads `default_zone`, which is the marker a zone carries. That is not the
 // marker a network carries: a network says the same thing with
@@ -208,8 +227,11 @@ func readZoneFacts(ctx context.Context, client unifi.Client, site string) zoneFa
 			if zone.Default {
 				facts.builtIn[zone.ID] = true
 			}
-			if zone.ZoneKey == gatewayZoneKey {
+			switch zone.ZoneKey {
+			case gatewayZoneKey:
 				facts.gateway = zone.Name
+			case internalZoneKey:
+				facts.internal = zone.Name
 			}
 		}
 		return facts
@@ -268,12 +290,12 @@ func fromLiveZone(zone unifi.FirewallZone, bound bindings) (described config.Zon
 }
 
 // createZone is the Change for a zone the Controller does not have.
-func createZone(desired config.Zone, bound bindings) Change {
+func createZone(desired config.Zone, bound bindings, placed placement) Change {
 	return Change{
 		Action: Create,
 		Kind:   Zone,
 		Name:   desired.Name,
-		Fields: setZoneFields(desired),
+		Fields: setZoneFields(desired, placed),
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			zone := unifi.FirewallZone{NetworkIDs: []string{}}
 			// Read at the moment of writing rather than the moment of planning:
@@ -296,7 +318,7 @@ func createZone(desired config.Zone, bound bindings) Change {
 
 // updateZone is the Change that brings a live zone in line with the config, and
 // whether there is one to make at all.
-func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings) (Change, bool) {
+func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings, placed placement) (Change, bool) {
 	current, whole := fromLiveZone(live, bound)
 	fields := changedZoneFields(current, desired)
 	if len(fields) == 0 {
@@ -308,10 +330,15 @@ func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings) (C
 	// deserves to know that the WAN sitting in it is neither shown nor at stake.
 	// Saying so is the difference between a plan that looks like it empties a
 	// zone and one that says what it does.
+	//
+	// It goes first because it is about how to read the line above it, where the
+	// notes after it are about what this change does to zones the plan does not
+	// otherwise mention.
 	if !whole && desired.Networks != nil {
 		annotate(fields, "networks",
 			"this zone also holds something that is not one of this site's LANs, which unifig does not name or change")
 	}
+	annotate(fields, "networks", placed.notes(desired.Name, current.Networks, desired.Networks)...)
 
 	return Change{
 		Action: Update,
@@ -384,13 +411,25 @@ func pruneZones(
 }
 
 // deleteZone is the Change that removes a live zone.
+//
+// A zone that goes lets go of its networks as surely as one that is emptied, so
+// the line listing them owes the operator the same sentence an emptying does —
+// otherwise `networks: "Lab"` under a `-` reads as a network going with the
+// zone. What it does not owe them is a zone name. Where the Controller puts a
+// network whose zone was deleted has never been measured: the write probe
+// deleted an empty custom zone and one whose member another zone had already
+// claimed (ADR-0019), so `Internal` here would be an inference from a different
+// operation, which is the shape of guess this project has paid for three times.
+// What the measurement does entail is that the network survives and is in some
+// zone afterwards, because a network is in exactly one zone always — and that is
+// the whole of what this says (ADR-0020).
 func deleteZone(live unifi.FirewallZone, bound bindings) Change {
 	current, _ := fromLiveZone(live, bound)
 	return Change{
 		Action: Delete,
 		Kind:   Zone,
 		Name:   live.Name,
-		Fields: []Field{{Name: "networks", From: nameList(current.Networks)}},
+		Fields: []Field{{Name: "networks", From: nameList(current.Networks), Notes: survives(current.Networks)}},
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			return client.DeleteFirewallZone(ctx, site, live.ID)
 		},
@@ -401,14 +440,23 @@ func deleteZone(live unifi.FirewallZone, bound bindings) Change {
 // rather than left out, for the same reason a WLAN with no passphrase is: a
 // create has to produce a zone, and one with nothing in it is a zone no traffic
 // is ever in — which is a consequence the config does not state.
-func setZoneFields(desired config.Zone) []Field {
+//
+// A zone born holding a network empties whichever zone held it, exactly as an
+// update does, and the operator reading `+ zone` has even less reason to expect
+// that than the one reading `~ zone`. There is no losing side to describe: a
+// zone that did not exist a moment ago had nothing to let go of.
+func setZoneFields(desired config.Zone, placed placement) []Field {
 	if len(desired.Networks) == 0 {
 		return []Field{{
-			Name: "networks",
-			Note: "no network is listed, so this zone will hold none and no traffic will be in it",
+			Name:  "networks",
+			Notes: []string{"no network is listed, so this zone will hold none and no traffic will be in it"},
 		}}
 	}
-	return []Field{{Name: "networks", To: nameList(desired.Networks)}}
+	return []Field{{
+		Name:  "networks",
+		To:    nameList(desired.Networks),
+		Notes: placed.notes(desired.Name, nil, desired.Networks),
+	}}
 }
 
 // changedZoneFields lists the managed fields on which the Controller and the
@@ -502,4 +550,181 @@ func noSuchZone(name string, present []string) error {
 	return fmt.Errorf(
 		"the Controller has no zone named %q, and this file does not define one: a firewall policy governs the traffic between two zones, so both ends have to exist — %s",
 		name, has)
+}
+
+// A network belongs to exactly one firewall zone, and the Controller is the one
+// keeping it that way. Putting a network in a second zone takes it out of the
+// first, in the same request unifig sent about the second, and taking it out of
+// a zone does not leave it in none — the Controller moves it to the zone it
+// keys `internal`. Neither move is anything unifig asked for, and neither used
+// to appear anywhere in a plan: one PUT went to one zone, the plan said `1 to
+// update`, and two zones changed (ADR-0020, measured in ADR-0019).
+//
+// placement is what lets a plan say so. It holds three things that only make
+// sense beside each other — where each network is now, where this file puts it,
+// and where the Controller puts one that nothing claims — because every sentence
+// about a membership change needs at least two of them. It is built once per
+// plan, from reads the plan already does.
+//
+// The model underneath is the correction. unifig holds membership as a property
+// of the zone (`config.Zone.Networks`, `zone.NetworkIDs`) and the Controller
+// holds it as a property of the network. Both models describe the same site, and
+// only the second one can say what a single write does — so the writes stay as
+// they are and the plan is generated with the network's side in hand.
+type placement struct {
+	// holders names the zones the Controller has each network in now.
+	//
+	// It is a list rather than a single zone even though a network is in exactly
+	// one, because that is the Controller's rule rather than a shape unifig can
+	// enforce on what it reads. A response saying otherwise is a response to
+	// report faithfully rather than one to pick a winner from — the plan names
+	// every zone the network is leaving, and the sentence reads in the plural.
+	// This repository's own recording was such a response until issue #32, and
+	// the fix was to the recording (`tools/record-udr/scrub.go`) rather than to
+	// a reader that had quietly decided which zone to believe.
+	holders map[string][]string
+	// claimed names the zone this file states each network into, and is what
+	// keeps two sentences about one network from contradicting each other: a
+	// network the plan itself rehomes is not one the Controller has to find a
+	// zone for.
+	claimed map[string]string
+	// reassigned is the zone the Controller moves an unclaimed network to, and
+	// is empty when unifig could not tell which zone that is. Empty is not
+	// "none": it is "unifig cannot say which", and the sentence changes shape
+	// rather than naming a guess.
+	reassigned string
+}
+
+// placeNetworks reads where every network the site's zones hold is now, and
+// where this config would put it.
+//
+// Only members unifig can name are in it. A zone can hold something the config
+// has no word for — the built-in External zone holds the WAN — and such a member
+// is neither displaced nor rehomed by anything here, because nothing here can
+// state it (ADR-0004, overwriteManagedZone).
+func placeNetworks(cfg config.Config, live []unifi.FirewallZone, facts zoneFacts, bound bindings) placement {
+	placed := placement{
+		holders:    make(map[string][]string, len(bound.networkNames)),
+		claimed:    make(map[string]string, len(cfg.Zones)),
+		reassigned: facts.internal,
+	}
+	for _, zone := range live {
+		for _, id := range zone.NetworkIDs {
+			if name := bound.networkName(id); name != "" {
+				placed.holders[name] = append(placed.holders[name], zone.Name)
+			}
+		}
+	}
+	for _, zones := range placed.holders {
+		slices.Sort(zones)
+	}
+	// A zone stating no membership claims nothing — ADR-0004, and the reason an
+	// operator can name a built-in zone to write policies about it without
+	// taking over what is in it. Two zones claiming one network is refused
+	// offline (config.checkReferences), so the first one wins here only as the
+	// answer to a question that cannot be asked.
+	for _, zone := range cfg.Zones {
+		if zone.Networks == nil {
+			continue
+		}
+		for _, name := range zone.Networks {
+			if _, taken := placed.claimed[name]; !taken {
+				placed.claimed[name] = zone.Name
+			}
+		}
+	}
+	return placed
+}
+
+// notes is what a zone's membership change does beyond the list it prints:
+// which networks it takes out of another zone, and where the ones it lets go
+// end up. Both sides in one call, because both are read off the same before and
+// after and an operator reads them under the same field.
+//
+// before is the membership unifig can name, so a create passes none.
+func (p placement) notes(zone string, before, after []string) []string {
+	var notes []string
+	for _, network := range after {
+		if slices.Contains(before, network) {
+			continue
+		}
+		if from := p.elsewhere(network, zone); len(from) > 0 {
+			notes = append(notes, displaces(network, from))
+		}
+	}
+	for _, network := range before {
+		if slices.Contains(after, network) {
+			continue
+		}
+		notes = append(notes, p.rehomes(network, zone))
+	}
+	return notes
+}
+
+// elsewhere is the zones holding this network that are not the one gaining it.
+func (p placement) elsewhere(network, zone string) []string {
+	from := make([]string, 0, len(p.holders[network]))
+	for _, holder := range p.holders[network] {
+		if holder != zone {
+			from = append(from, holder)
+		}
+	}
+	return from
+}
+
+// survives says that the networks a deleted zone holds are not deleted with it,
+// and is nothing at all for a zone holding none unifig can name.
+//
+// One sentence for the whole membership rather than one per network, because
+// unlike a displacement it says the same thing about each of them and names no
+// second zone to tell them apart by.
+func survives(networks []string) []string {
+	if len(networks) == 0 {
+		return nil
+	}
+	noun, is, them := kinds[Network].one, "is", "it"
+	if len(networks) > 1 {
+		noun, is, them = kinds[Network].many, "are", "each of them"
+	}
+	return []string{fmt.Sprintf(
+		"the %s %s %s not deleted with the zone: a network belongs to exactly one zone, so the Controller will put %s in another one — unifig cannot say which, having never watched it happen",
+		noun, andJoin(quoted(networks)), is, them)}
+}
+
+// displaces says that joining this zone is also leaving another one — the
+// sentence issue #32 exists for. It names the zone being emptied, because the
+// operator moving a network into a zone is the one person who cannot see it
+// happening: nothing in the plan and nothing in the apply's report used to
+// mention that zone at all, and on a site using zones for isolation the one
+// silently emptied is the one that was containing something.
+func displaces(network string, from []string) string {
+	one := kinds[Zone].one
+	if len(from) > 1 {
+		one = kinds[Zone].many
+	}
+	return fmt.Sprintf(
+		"the network %q is in the %s %s now, and a network belongs to exactly one zone: applying this takes it out",
+		network, one, andJoin(quoted(from)))
+}
+
+// rehomes says where a network this zone lets go ends up, which is never
+// nowhere. A membership rendered as `"Guest" -> (none)` reads as a network
+// left outside every zone, and that is the one outcome the Controller will not
+// produce.
+//
+// Three sentences rather than one, because there are three different answers.
+// The plan may be putting the network somewhere itself, in which case saying
+// the Controller will choose would be a plan contradicting itself two lines
+// apart. Otherwise the Controller chooses, and unifig either knows which zone
+// that is or does not — and a plan that could not read the keys says so rather
+// than naming the zone that usually wins.
+func (p placement) rehomes(network, zone string) string {
+	outside := fmt.Sprintf("the network %q does not end up outside every zone: ", network)
+	if to := p.claimed[network]; to != "" && to != zone {
+		return outside + fmt.Sprintf("this plan puts it in the zone %q", to)
+	}
+	if p.reassigned == "" {
+		return outside + "a network belongs to exactly one, and the Controller will move this one to a zone of its own choosing"
+	}
+	return outside + fmt.Sprintf("a network belongs to exactly one, so the Controller will move this one to %q", p.reassigned)
 }

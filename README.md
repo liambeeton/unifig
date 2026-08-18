@@ -149,6 +149,22 @@ A Zone's `networks` follows the same rule as `servers` above — stating it stat
 
 The built-in `External` Zone holds your WAN, and your config has no name for a WAN network. unifig therefore manages the members it *can* name and leaves the rest exactly where they are: stating the LANs in `External` does not detach your uplink from it. The plan says so, because a membership showing only part of the truth would otherwise read as one that empties the Zone.
 
+**A network is in exactly one Zone, and the Controller is the one enforcing that.** Putting a network in a second Zone takes it out of the first — one request, two Zones changed, and neither unifig nor you asked for the second. Taking a network out of a Zone does not leave it outside every Zone either: the Controller moves it to `Internal`. So a plan that changes a membership names both sides of it (`docs/adr/0020-a-network-lives-in-exactly-one-zone.md`):
+
+```
+  ~ zone "Hotspot"
+      networks: "Guest" -> "Guest", "Cameras"
+                the network "Cameras" is in the zone "Dmz" now, and a network belongs to exactly one zone: applying this takes it out
+
+  ~ zone "Dmz"
+      networks: "Cameras" -> (none)
+                the network "Cameras" does not end up outside every zone: this plan puts it in the zone "Hotspot"
+```
+
+Where nothing in your file claims the network, the second note names `Internal` instead — the Zone the Controller falls back to, found by the Controller's own key for it rather than by that name. And because a network can only be in one Zone, your file may not put one in two: `validate` catches that offline, naming the Zone that already has it.
+
+A `--prune` that deletes a Zone says the same thing one step short: the networks it held are not deleted with it and end up in some other Zone, but *which* one has never been measured for a deletion, so unifig says so rather than naming `Internal` on a hunch.
+
 A Policy states its verdict and both ends, always — `action`, `source` and `destination` are required, because a policy that allowed or blocked nothing in particular is not a policy. Everything else about it (ports, addresses, schedules, logging) is the Controller's, and survives an apply untouched.
 
 ### Port forwards
@@ -535,7 +551,7 @@ A firmware whose encrypted DNS is in a mode unifig doesn't model gets the same t
 }
 ```
 
-`kind` is the managed type — `network`, `wlan`, `zone`, `firewall-policy`, `encrypted-dns`, `wan` — covering both the Resources unifig creates and deletes and the Settings it only updates. `name` is how unifig matched the change, and is `""` for a singleton Setting, which has nothing to match on. `risk` is present only on a change that needs individual confirmation.
+`kind` is the managed type — `network`, `wlan`, `zone`, `firewall-policy`, `dhcp-reservation`, `port-forward`, `encrypted-dns`, `wan` — covering both the Resources unifig creates and deletes and the Settings it only updates. `name` is how unifig matched the change, and is `""` for a singleton Setting, which has nothing to match on. `risk` is present only on a change that needs individual confirmation. A field carries `notes` when the change has consequences your config does not state — the same sentences the prose plan prints under it, as a list, because one field can have several.
 
 Changes are listed in the order apply will run them, so a consumer reading the array is reading the sequence.
 

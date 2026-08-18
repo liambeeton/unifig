@@ -327,8 +327,8 @@ func setWLANFields(desired config.WLAN) []Field {
 		return append(fields, Field{Name: "passphrase", Secret: true})
 	}
 	return append(fields, Field{
-		Name: "passphrase",
-		Note: "no passphrase is set, so this WLAN will be open — anyone in range can join it",
+		Name:  "passphrase",
+		Notes: []string{"no passphrase is set, so this WLAN will be open — anyone in range can join it"},
 	})
 }
 

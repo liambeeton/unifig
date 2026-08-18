@@ -26,10 +26,12 @@ func (p Plan) Write(out io.Writer) error {
 		width := change.fieldWidth()
 		for _, field := range change.Fields {
 			fmt.Fprintf(&b, "      %-*s %s\n", width, field.Name+":", change.render(field))
-			if field.Note != "" {
+			for _, note := range field.Notes {
 				// Indented to the value column, so a note reads as belonging
-				// to the field above it rather than as another field.
-				fmt.Fprintf(&b, "      %-*s %s\n", width, "", field.Note)
+				// to the field above it rather than as another field. Several
+				// get a line each: running them together would put two
+				// unrelated consequences in one sentence.
+				fmt.Fprintf(&b, "      %-*s %s\n", width, "", note)
 			}
 		}
 		// A Risky change says what it risks, under its fields and marked with

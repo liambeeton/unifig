@@ -115,6 +115,20 @@ expected. Nothing in the suite lists those names any more — the prune test rea
 the built-ins out of the recording, because which zones exist is Ubiquiti's to
 change.
 
+What the other four hold here is the scrub's answer rather than the router's, and
+that is worth knowing before writing a test against it. The router had a LAN in
+more zones than this recording has LANs, and a network belongs to exactly one
+zone — so `Vpn`, `Hotspot`, `Gateway` and `Dmz` come back empty and only
+`Internal` keeps the committed LAN.
+
+Which makes `Default` a poor subject for a test about membership moving, for a
+reason that survives the emptying: it is in `Internal`, and `Internal` is the
+zone the Controller falls back to for a network nothing else holds (ADR-0020).
+A test moving it out of somewhere could not tell "the zone it came from" from
+"the zone the Controller sends it to", and would pass on either. Such a test
+makes its own network instead — `unzonedNetwork` and `placedNetwork` in
+`e2e/firewall_test.go`.
+
 **Does a created policy come back holding what unifig sent?** Unanswered — it
 needs a write rather than a read, and these files hold only the Controller's own
 policies. Issue #31, answered by the same write probe in #30. It is separated
@@ -189,7 +203,14 @@ VLAN layout and every SSID you broadcast. So the scrub:
 - points each kept zone's membership at the networks this recording still holds,
   since your LANs are dropped in favour of the committed one. Otherwise the
   zones would come back referring to networks that are not here, and every test
-  about what a zone holds would be testing a dangling reference;
+  about what a zone holds would be testing a dangling reference. **One zone gets
+  the committed LAN, not each**: a network belongs to exactly one firewall zone
+  (ADR-0020), so the first zone your router listed holding a LAN keeps it and the
+  rest come back holding none. Folding them independently is what this scrub used
+  to do, and it shipped a recording of a site that cannot exist — `Internal`,
+  `Vpn` and `Hotspot` all holding the same network. Nothing in the firewall suite
+  noticed; what did was `export` writing that membership into a file and
+  `validate` refusing it (issue #32);
 - takes the LAN from the recording already committed here;
 - empties `wlanconf` and `portforward`. Both endpoints still answer, because a
   recording is a statement of what unifig talks to and `export` asks them both —

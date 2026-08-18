@@ -687,6 +687,11 @@ func parseList(t *testing.T, body string) list {
 // zones and the default policy between two of them, alongside a zone and a
 // policy the operator made and named after their household.
 //
+// Two of the built-ins hold a LAN, which is what a migrated router really looks
+// like and is the case the fold has to get right: there is one LAN left after the
+// scrub and a network belongs to exactly one zone, so both of them holding it
+// would be a recording of a site that cannot exist (issue #32).
+//
 // The zone shape here is the one a migrated UDR actually sends, which is not the
 // one this fixture used to guess. A built-in zone is marked `default_zone` and
 // carries a stable `zone_key`; **there is no `attr_no_delete` on a zone at all**,
@@ -712,6 +717,16 @@ const rawFirewallZones = `[
     "cloud_template": null,
     "external_id": "7c9e6679-7425-40de-944b-e07fc1f90ae9",
     "network_ids": ["65f1c0a1d4e2b30af1c00a03"]
+  },
+  {
+    "_id": "65f1c0a1d4e2b30af1c00b04",
+    "name": "Hotspot",
+    "default_zone": true,
+    "zone_key": "hotspot",
+    "attr_no_edit": false,
+    "cloud_template": null,
+    "external_id": "7c9e6679-7425-40de-944b-e07fc1f90aeb",
+    "network_ids": ["65f1c0a1d4e2b30af1c00a02"]
   },
   {
     "_id": "65f1c0a1d4e2b30af1c00b03",
@@ -762,7 +777,7 @@ func TestScrubKeepsTheControllersOwnZonesAndDropsTheOperatorsOwn(t *testing.T) {
 		kept = append(kept, name)
 	}
 	slices.Sort(kept)
-	if !slices.Equal(kept, []string{"External", "Internal"}) {
+	if !slices.Equal(kept, []string{"External", "Hotspot", "Internal"}) {
 		t.Errorf("the recording holds zones %v, want just the Controller's own", kept)
 	}
 
@@ -849,6 +864,14 @@ func TestScrubKeepsTheControllersOwnPoliciesAndDropsTheOperatorsOwn(t *testing.T
 // LANs are dropped in favour of the committed one, so a member that named one of
 // them is pointed at the LAN this recording does hold — otherwise every test
 // about what a zone holds would be testing a dangling id.
+//
+// How many each comes back holding is stated per zone rather than as a total,
+// which is the shape issue #32 needed and the shape that keeps this test worth
+// running. A zone whose only members were LANs another zone has already been
+// given comes back holding nothing — `Hotspot` here — and that is the honest
+// answer rather than a lost one; a scrub that emptied `Internal` too would be
+// losing something, and a count over the whole recording could not tell the two
+// apart.
 func TestScrubPointsAZonesMembershipAtTheNetworksTheRecordingKeeps(t *testing.T) {
 	out := scrubbed(t)
 
@@ -857,16 +880,45 @@ func TestScrubPointsAZonesMembershipAtTheNetworksTheRecordingKeeps(t *testing.T)
 		held[idOf(entry)] = true
 	}
 
+	// Internal held two of the router's LANs and keeps the one this recording
+	// has; External held the uplink, which is never folded away; Hotspot held a
+	// LAN that Internal has already been given.
+	want := map[string]int{"Internal": 1, "External": 1, "Hotspot": 0}
 	for _, zone := range out.zones {
+		name, _ := zone["name"].(string)
 		ids, _ := zone["network_ids"].([]any)
-		if len(ids) == 0 {
-			t.Errorf("the %v zone came back holding nothing, so it says less than the router did", zone["name"])
+		if len(ids) != want[name] {
+			t.Errorf("the %s zone came back holding %d networks, want %d", name, len(ids), want[name])
 		}
 		for _, raw := range ids {
 			id, _ := raw.(string)
 			if !held[id] {
-				t.Errorf("the %v zone holds %q, which is not a network in this recording", zone["name"], id)
+				t.Errorf("the %s zone holds %q, which is not a network in this recording", name, id)
 			}
+		}
+	}
+}
+
+// A network belongs to exactly one firewall zone, and the Controller keeps it
+// that way itself (ADR-0020). A scrub that folded each zone's LANs onto the one
+// committed LAN independently produced a recording of a site that cannot exist —
+// one network in three zones — and nothing here caught it: what did was `export`
+// writing a file `validate` then refused, two suites away (issue #32).
+func TestScrubLeavesEachNetworkInOneZone(t *testing.T) {
+	out := scrubbed(t)
+
+	in := map[string][]string{}
+	for _, zone := range out.zones {
+		name, _ := zone["name"].(string)
+		ids, _ := zone["network_ids"].([]any)
+		for _, raw := range ids {
+			id, _ := raw.(string)
+			in[id] = append(in[id], name)
+		}
+	}
+	for id, zones := range in {
+		if len(zones) > 1 {
+			t.Errorf("the network %q is in the zones %v, and a network belongs to exactly one", id, zones)
 		}
 	}
 }
@@ -886,20 +938,17 @@ func TestScrubKeepsTheUplinkInTheExternalZoneAndTheLANInTheInternalOne(t *testin
 	}
 
 	for _, zone := range out.zones {
+		name, _ := zone["name"].(string)
+		if name != "External" && name != "Internal" {
+			continue
+		}
 		ids, _ := zone["network_ids"].([]any)
 		if len(ids) != 1 {
-			t.Fatalf("the %v zone holds %d networks, want 1", zone["name"], len(ids))
+			t.Fatalf("the %v zone holds %d networks, want 1", name, len(ids))
 		}
 		id, _ := ids[0].(string)
-		switch zone["name"] {
-		case "External":
-			if !uplinks[id] {
-				t.Errorf("the External zone holds %q, which is not this recording's uplink", id)
-			}
-		case "Internal":
-			if uplinks[id] {
-				t.Errorf("the Internal zone holds the uplink, which is not what the router said")
-			}
+		if uplinks[id] != (name == "External") {
+			t.Errorf("the %s zone holds %q, which is the wrong side of the uplink/LAN split the router sent", name, id)
 		}
 	}
 }
