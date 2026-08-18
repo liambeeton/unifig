@@ -82,16 +82,29 @@ the one that stands for the internet; that was issue #23. There is also an
 it is not the ownership marker — every zone here is the Controller's own and
 only half of them carry it.
 
-**What `attr_no_edit` does mean is unread and unanswered.** This section used to
-finish that sentence with "it means editability, not ownership", which settled
-the question it was asking and dismissed the one it was not. Ownership is what
-prune needs; **editability is what an update needs**, and no code path consults
-this field — `updateZone` builds its change from the changed fields alone, so
-unifig will plan and PUT a membership change to all three. Whether the
-Controller accepts one is unknown, and the stand-in cannot answer it: it stores
-whatever unifig sends, so the built-in-zone update test passes because nothing
-can refuse, not because a Controller said yes (ADR-0014). Issue #27, answered by
-the write probe in #30.
+**What `attr_no_edit` means is the UI, and nothing at the API.** A membership
+PUT to `Vpn`, marked, returned 200, and an independent GET found the new member
+really in the zone beside the one no config can name. The Controller reserves
+nothing: the marker governs what its own interface offers, not what its API
+accepts (ADR-0019, from the write session in #30). This section used to finish
+that sentence with "it means editability, not ownership", which reached the
+right shelf by dismissing the question rather than asking it — ownership is what
+prune needs, editability is what an update needs, and this field turns out to be
+neither.
+
+**What the marker did do was correlate with a refusal unifig built itself.**
+`go-unifi` models the field as `attr_no_edit,omitempty`, so it goes back out in
+the payload exactly when it is true, and the Controller's write DTO answers a
+field it has never heard of with `400 JSON parse error: Unrecognized field
+"attr_no_edit" ... not marked as ignorable`. Every update to `External`, `Vpn`
+and `Gateway` failed and no other zone's did, which is a perfect correlation
+with the marker and none of it the marker's doing. A zone's read shape is not
+its write shape — `cloud_template`, which all six carry and `go-unifi` does not
+model, is refused the same way — and nothing in the type system says so. That is
+issue #27: the fix clears the read-only markers before the write, and the
+stand-in now answers both measured fields with the 400 a UDR answered, so a
+payload the Controller would not parse is no longer one the suite stores and
+reads back (ADR-0014).
 
 **Which zones does a UDR ship? Six, not the five that were guessed:** `Internal`,
 `External`, `Gateway`, `Vpn`, `Hotspot`, `Dmz`. The guess had no `Dmz` and

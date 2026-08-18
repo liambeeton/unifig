@@ -88,6 +88,16 @@ type replay struct {
 	// issued counts the IDs this stand-in has handed out, so that two objects
 	// created in one apply cannot collide.
 	issued int
+	// written is every body unifig has sent to one of the v2 collections, in
+	// the order it sent them and whatever the stand-in then did with it.
+	//
+	// It is here because the stored object cannot answer for the request: this
+	// stand-in keeps whatever it is handed, so a test that applies and reads
+	// back passes whatever the payload contained. That is how a zone unifig
+	// could not actually write shipped with a passing test — the payload
+	// carried a field the Controller refuses, and nothing here could refuse it
+	// (ADR-0014, ADR-0019).
+	written []sentRequest
 	// wlans, forwards and sysinfo are served exactly as recorded. Nothing in the
 	// Settings tests writes to any of them, and a recording that could not be
 	// trusted to come back unchanged would be a poor witness for the one that
@@ -102,6 +112,29 @@ type replay struct {
 	clients  json.RawMessage
 	sysinfo  json.RawMessage
 }
+
+// sentRequest is one write unifig made to a v2 collection: where it went and
+// the body it carried.
+type sentRequest struct {
+	path string
+	body map[string]any
+}
+
+// refusedByZoneWrite names the fields the Controller's zone write endpoint has
+// been seen to refuse. Its DTO rejects any field it has not heard of, with a
+// 400 naming the first one it reaches, and these are the two a real UDR was
+// measured refusing (ADR-0019): `attr_no_edit`, which the Controller puts on
+// three of its own zones and go-unifi models, and `cloud_template`, which it
+// puts on all six and go-unifi does not.
+//
+// Only what was measured is here, and the sibling markers are deliberately not
+// — ADR-0014's objection to a fixture that asserts a guess still stands. What
+// dissolved is only that this refusal is no longer one: it was reproduced on
+// hardware, and it belongs to the request unifig builds rather than to any rule
+// about which zones may be edited. That a payload carries no sibling marker
+// either is unifig's own rule, and is asserted against the request rather than
+// asserted here as the Controller's.
+var refusedByZoneWrite = []string{"attr_no_edit", "cloud_template"}
 
 // startReplay serves the recording at its own base URL for the duration of one
 // test. Each test gets its own, so one test's apply cannot become another's
@@ -167,9 +200,13 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 	case req.Method == http.MethodPut && req.URL.Path == setDoHPath:
 		r.setDoH(w, req)
 	case req.URL.Path == zonePath || strings.HasPrefix(req.URL.Path, zonePath+"/"):
-		r.collectionV2(w, req, zonePath, &r.zones)
+		r.collectionV2(w, req, zonePath, &r.zones, refusedByZoneWrite)
 	case req.URL.Path == policyPath || strings.HasPrefix(req.URL.Path, policyPath+"/"):
-		r.collectionV2(w, req, policyPath, &r.policies)
+		// Nothing is refused here: no policy in the recording carries a marker
+		// of this kind, and no write to one has been seen refused. A list
+		// invented for symmetry would be this stand-in asserting a guess about
+		// a DTO nobody has read.
+		r.collectionV2(w, req, policyPath, &r.policies, nil)
 	default:
 		r.t.Errorf("unifig asked the Controller for something the recording does not have: %s %s",
 			req.Method, req.URL.Path)
@@ -288,7 +325,13 @@ func (r *replay) setDoH(w http.ResponseWriter, req *http.Request) {
 //
 // Responses are bare, with no {meta, data} envelope, because that is what the
 // Controller's v2 API answers with.
-func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base string, held *[]map[string]any) {
+//
+// refuses names the fields this collection's write endpoint answers 400 to, so
+// that a payload the Controller would not parse is not one this stand-in
+// quietly stores (see refusedByZoneWrite). Every write is kept whether it was
+// refused or not, because what a test about the request needs is what unifig
+// sent rather than what survived.
+func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base string, held *[]map[string]any, refuses []string) {
 	id := strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, base), "/")
 
 	r.mu.Lock()
@@ -303,6 +346,10 @@ func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base str
 		if !r.decode(w, req, &sent, base) {
 			return
 		}
+		r.written = append(r.written, sentRequest{path: req.URL.Path, body: sent})
+		if r.unrecognisedField(w, sent, refuses) {
+			return
+		}
 		r.issued++
 		sent["_id"] = fmt.Sprintf("6613a1f0c4b2d90a5e1f9%03d", r.issued)
 		sent["site_id"] = "6613a1f0c4b2d90a5e1f0000"
@@ -312,6 +359,10 @@ func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base str
 	case req.Method == http.MethodPut && id != "":
 		var sent map[string]any
 		if !r.decode(w, req, &sent, base) {
+			return
+		}
+		r.written = append(r.written, sentRequest{path: req.URL.Path, body: sent})
+		if r.unrecognisedField(w, sent, refuses) {
 			return
 		}
 		for i, entry := range *held {
@@ -345,6 +396,37 @@ func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base str
 		r.t.Errorf("unifig made a request the recording does not have: %s %s", req.Method, req.URL.Path)
 		http.NotFound(w, req)
 	}
+}
+
+// unrecognisedField answers the way the Controller does when a body carries a
+// field its write DTO has never heard of: a 400 whose message names the field,
+// which is what unifig then puts in front of the operator. It reports whether
+// it answered.
+//
+// The message is the one a real UDR returned, obfuscated class name and all
+// (ADR-0019). Nothing asserts on the text — what it is here for is that a
+// refused write fails an apply exactly as it fails one in the field, rather
+// than being stored and read back as a success.
+func (r *replay) unrecognisedField(w http.ResponseWriter, sent map[string]any, refuses []string) bool {
+	for _, field := range refuses {
+		if _, carried := sent[field]; !carried {
+			continue
+		}
+		body, err := json.Marshal(map[string]any{"message": fmt.Sprintf(
+			"JSON parse error: Unrecognized field %q (class com.ubnt.g.c.t.AWSXjrFfvsFZsv), not marked as ignorable",
+			field)})
+		if err != nil {
+			r.t.Errorf("encoding the Controller's refusal: %v", err)
+			return true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		if _, err := w.Write(body); err != nil {
+			r.t.Errorf("writing the Controller's refusal: %v", err)
+		}
+		return true
+	}
+	return false
 }
 
 func (r *replay) decode(w http.ResponseWriter, req *http.Request, into any, base string) bool {
@@ -780,6 +862,42 @@ func (r *replay) zoneMembers(t *testing.T, name string) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+// zoneWrites is every body unifig has sent to the zone collection — the
+// requests themselves rather than what the stand-in stored, which is the only
+// way to state anything about a field the Controller would have refused.
+func (r *replay) zoneWrites(t *testing.T) []map[string]any {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var bodies []map[string]any
+	for _, write := range r.written {
+		if strings.HasPrefix(write.path, zonePath) {
+			bodies = append(bodies, write.body)
+		}
+	}
+	return bodies
+}
+
+// markedZone names a zone the Controller marks `attr_no_edit` — the marker it
+// puts on some of its own zones and refuses to be told about (ADR-0019).
+//
+// Which zone it turns out to be does not matter, and is asked rather than named
+// for the reason gatewayZone is: a test naming `Vpn` would fail on a recording
+// from a router that marks a different three, for a reason that has nothing to
+// do with unifig.
+func (r *replay) markedZone(t *testing.T) string {
+	t.Helper()
+	for _, zone := range r.liveZones(t) {
+		if marked, _ := zone["attr_no_edit"].(bool); marked {
+			name, _ := zone["name"].(string)
+			return name
+		}
+	}
+	t.Fatalf("the recording marks no zone attr_no_edit, so there is no marked zone here to write to")
+	return ""
 }
 
 // seedZone puts a zone on the Controller without going through unifig — the

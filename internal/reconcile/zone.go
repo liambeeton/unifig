@@ -105,7 +105,8 @@ func listZones(ctx context.Context, client unifi.Client, site string) ([]unifi.F
 
 // zoneMarker is the part of a zone that go-unifi's FirewallZone does not carry:
 // the library models `attr_no_delete` and `attr_no_edit`, and a real zone has
-// neither of the first and uses the second for something else.
+// neither of the first and uses the second for what its own UI offers rather
+// than for anything the API enforces (ADR-0019).
 //
 // It answers two questions off one response, and they are different questions.
 // `default_zone` is the Controller saying a zone is its own, which is what
@@ -320,8 +321,9 @@ func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings) (C
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// The live object goes back with only unifig's own fields changed,
 			// so everything the Controller holds about the zone that unifig does
-			// not model survives an apply.
-			updated := live
+			// not model survives an apply — everything the write endpoint will
+			// accept being told, which is not all of what a read returns.
+			updated := writableZone(live)
 			if err := overwriteManagedZone(&updated, desired, bound); err != nil {
 				return err
 			}
@@ -458,6 +460,33 @@ func overwriteManagedZone(zone *unifi.FirewallZone, desired config.Zone, bound b
 	}
 	zone.NetworkIDs = ids
 	return nil
+}
+
+// writableZone is a live zone as the Controller's write endpoint will take it:
+// the read-only markers it sends on a GET and refuses on a PUT, cleared.
+//
+// A zone's read shape is not its write shape, and nothing in the type says so.
+// The Controller answers a body carrying `attr_no_edit` with
+// `400 JSON parse error: Unrecognized field "attr_no_edit" ... not marked as
+// ignorable` — its write DTO has never heard of the field it has just been
+// sent — and `omitempty` did the rest: the field goes out exactly when it is
+// true, so unifig's payload was well-formed for the zones whose marker is false
+// and malformed for the three whose marker is true. Every membership change to
+// External, Vpn or Gateway failed, for a reason that correlated perfectly with
+// the marker and had nothing to do with it: a hand-built PUT carrying only
+// `_id`, `name` and `network_ids` was accepted on a marked zone by a real UDR
+// (ADR-0019, issue #27).
+//
+// All four markers go rather than the one that has been seen to bite. They are
+// the same shape with the same `omitempty`, so a firmware that starts putting
+// `attr_hidden` on a zone reproduces this exactly — and would take a second
+// hardware session to find out why, on a different zone.
+func writableZone(live unifi.FirewallZone) unifi.FirewallZone {
+	live.Hidden = false
+	live.HiddenID = ""
+	live.NoDelete = false
+	live.NoEdit = false
+	return live
 }
 
 // noSuchZone is the error for a config naming a zone that is neither on the

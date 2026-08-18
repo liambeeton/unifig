@@ -135,7 +135,7 @@ A Zone groups networks; a Firewall Policy governs the traffic between a pair of 
 
 The Controller ships its **own** Zones (`External`, `Internal`, `Gateway`, …), and this is the first place that matters:
 
-- **You can name a built-in Zone and manage what is in it.** `- name: External` with a `networks:` list is an ordinary update.
+- **You can name a built-in Zone and manage what is in it.** `- name: External` with a `networks:` list is an ordinary update — including the Zones the Controller's own UI marks uneditable, which take a membership change over the API like any other (`docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md`).
 - **unifig never creates or deletes one**, `--prune` included. That exemption is read off the marker the Controller puts on the object, not from a list of names unifig keeps — so it stays correct on firmware this project has never seen (`docs/adr/0005-builtin-exemption-from-the-controller.md`).
 - **A Policy may name a Zone that is not in your file**, which is the common case: `destination: External` needs no `zones:` entry. The name is resolved against the Controller when unifig reads it, and a Zone that exists nowhere is reported with the Zones your site actually has.
 

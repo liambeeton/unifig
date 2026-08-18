@@ -101,7 +101,7 @@ _Avoid_: supported versions (the table says what was tested, which is a narrower
 ### APIs
 
 **Internal API**:
-The undocumented Controller HTTP API that manages the config plane; the only API that can do Unifig's job.
+The undocumented Controller HTTP API that manages the config plane; the only API that can do Unifig's job. What it answers a read with is not always what it will accept back on a write: a Zone comes back carrying markers its write endpoint refuses to be told about, so writing an object whole means writing it without them (ADR-0019).
 _Avoid_: legacy API, private API, classic API
 
 **Integration API**:

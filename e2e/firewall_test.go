@@ -148,11 +148,12 @@ func TestStatingAZonesNetworksSaysWhichOneLeavesIt(t *testing.T) {
 // cannot name returned 200, and an independent read-back found the stated member
 // present and the unnameable one still beside it. See
 // docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md.
-// The same session found that the PUT unifig itself builds is refused for the
+// The same session found that the PUT unifig itself built was refused for the
 // three zones marked attr_no_edit — not by this rule, but because go-unifi
-// serialises that read-only field back into the request (issue #27). This test
-// passes here because the stand-in stores whatever it is handed; it is the
-// behaviour that is confirmed, not unifig's ability to perform it today.
+// serialises that read-only field back into the request (issue #27). External
+// is one of the three, so this test used to pass on a payload no Controller
+// would have taken, the stand-in storing whatever it was handed. The stand-in
+// refuses that payload now, and unifig no longer builds one.
 func TestStatingAZonesNetworksLeavesAMemberUnifigCannotNameAlone(t *testing.T) {
 	r := startReplay(t)
 	lan := r.aNetwork(t)
@@ -192,6 +193,102 @@ zones:
 		}
 		if !slices.Contains(after, was) {
 			t.Fatalf("apply took %q out of the External zone; the config could not name it and did not ask", was)
+		}
+	}
+}
+
+// A zone the Controller marks `attr_no_edit` takes a membership change like any
+// other. The marker reserves nothing: a PUT built by hand carrying the same
+// three fields unifig sends for an unmarked zone was accepted by a real UDR on
+// `Vpn`, and a read-back found the new member really there (ADR-0019).
+//
+// What refused every such change was unifig's own payload. go-unifi models the
+// marker with `omitempty`, so it went back out on exactly the zones carrying
+// it, and the Controller's write DTO answers a field it has not heard of with a
+// 400 — which made a serialisation bug look like a rule about which zones the
+// Controller lets anyone edit (#27).
+func TestApplyChangesTheMembershipOfAZoneTheControllerMarksNoEdit(t *testing.T) {
+	r := startReplay(t)
+	marked := r.markedZone(t)
+	lan := r.aNetwork(t)
+
+	before := r.zoneMembers(t, marked)
+	if slices.Contains(before, lan) {
+		t.Fatalf("the recording already has %q in the %q zone, so this test would change nothing", lan, marked)
+	}
+
+	body := fmt.Sprintf(`networks:
+  - name: %q
+zones:
+  - name: %s
+    networks:
+      - %q
+`, lan, marked, lan)
+
+	res := planFirewall(t, r, body)
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d — a marked zone is one unifig plans an update for like any other\nplan:\n%s",
+			res.ExitCode, exitChangesPending, res.Stdout)
+	}
+
+	// applyFirewall fails the test on a non-zero exit, which is what a refused
+	// payload produces: `update zone "Vpn": Server error (400) ... Unrecognized
+	// field "attr_no_edit"`.
+	applyFirewall(t, r, body)
+
+	if after := r.zoneMembers(t, marked); !slices.Contains(after, lan) {
+		t.Errorf("the %q zone holds %v after the apply, and the config asked for %q to be in it", marked, after, lan)
+	}
+}
+
+// The assertion the round-trip above cannot make. The stand-in stores whatever
+// it is handed, so an apply that reads back correctly says nothing about what
+// was in the request — which is how a zone unifig could not write shipped with
+// a passing test (ADR-0014, ADR-0019).
+//
+// The rule is stated over the whole `attr_*` family rather than over the one
+// field that has been seen to bite, and the zone is seeded carrying the three
+// siblings so that stating it is not stating nothing. `attr_no_delete`,
+// `attr_hidden` and `attr_hidden_id` are the same shape with the same
+// `omitempty`, and the first firmware to put one of them on a zone reproduces
+// #27 exactly. Nothing here claims the Controller would refuse them — no one
+// has sent one to find out, and the stand-in refuses only what a UDR was
+// measured refusing. What is being stated is unifig's own rule: a marker the
+// Controller sends is not a field unifig sends back.
+func TestTheZoneUnifigWritesBackCarriesNoneOfTheControllersReadOnlyMarkers(t *testing.T) {
+	r := startReplay(t)
+	lan := r.aNetwork(t)
+	r.seedZone(t, "Marked", nil, map[string]any{
+		"attr_hidden":    true,
+		"attr_hidden_id": "6613a1f0c4b2d90a5e1f7001",
+		"attr_no_delete": true,
+	})
+
+	applyFirewall(t, r, fmt.Sprintf(`networks:
+  - name: %q
+zones:
+  - name: Marked
+    networks:
+      - %q
+`, lan, lan))
+
+	writes := r.zoneWrites(t)
+	if len(writes) != 1 {
+		t.Fatalf("unifig made %d writes to the zone collection, want the one update this config asks for: %v",
+			len(writes), writes)
+	}
+	sent := writes[0]
+
+	for field := range sent {
+		if strings.HasPrefix(field, "attr_") {
+			t.Errorf("unifig sent the read-only marker %q back to the Controller: %v", field, sent)
+		}
+	}
+	// And it still carries the shape a real UDR accepted, so that "no markers"
+	// cannot be met by sending nothing worth sending.
+	for _, needed := range []string{"_id", "name", "network_ids"} {
+		if _, carried := sent[needed]; !carried {
+			t.Errorf("the update carries no %q: %v", needed, sent)
 		}
 	}
 }
