@@ -197,7 +197,13 @@ policies as #21 confirmed it for zones.
   gone before the write. Whether that costs anything depends on whether a v2 PUT
   replaces the object or merges into it, which nothing here measured and the
   replay stand-in nonetheless assumes. Filed as **issue #35**, with the probe
-  that would settle it.
+  that would settle it. **Answered and taken there**
+  (`docs/adr/0021-a-v2-put-replaces-so-an-update-merges-into-what-the-controller-sent.md`):
+  it replaces, the loss was reproduced on hardware as a live-path defect, and an
+  update now merges into the object the Controller sent. The marker rule this
+  ADR is about survives the change and is kept by name over the whole `attr_*`
+  family, because merging into that object would otherwise send back a marker
+  go-unifi has never heard of.
 - `TestStatingAZonesNetworksLeavesAMemberUnifigCannotNameAlone` now has hardware
   behind it and carries a comment saying so, which was an acceptance criterion of
   #30 whatever the outcome turned out to be.

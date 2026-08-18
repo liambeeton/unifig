@@ -379,9 +379,22 @@ func (r *replay) collectionV2(w http.ResponseWriter, req *http.Request, base str
 			if entry["_id"] != id {
 				continue
 			}
-			// Replaced rather than merged, the way the Controller replaces its
-			// own — which is what makes "unifig writes the whole object back"
-			// something this suite can actually check.
+			// Replaced rather than merged, the way a real v2 endpoint was
+			// measured replacing — an apply that changed one live policy's
+			// verdict on a migrated UDR reverted the ICMP type an operator had
+			// narrowed it to, in the same request (ADR-0021, issue #35). This
+			// used to be the guess that made "unifig writes the whole object
+			// back" checkable here, held to a lower standard than
+			// refusedByZoneWrite beside it; it is now the measurement.
+			//
+			// For a **zone** it is still the guess. #35 measured the policy
+			// endpoint and deliberately did not claim the other one, whose only
+			// read looks like a merge (issue #38). It stays a replace here
+			// rather than being softened to match: a stand-in that merged would
+			// store what unifig failed to send and read it back as a success,
+			// which is the direction that hides a defect rather than finds one.
+			// So this is deliberately stricter than the zone endpoint may turn
+			// out to be, and says so rather than being taken for a measurement.
 			sent["_id"] = id
 			(*held)[i] = sent
 			r.writeJSON(w, sent)
@@ -1058,12 +1071,16 @@ func (r *replay) seedPolicy(t *testing.T, name, action, source, destination stri
 	defer r.mu.Unlock()
 	r.issued++
 	policy := map[string]any{
-		"_id":         fmt.Sprintf("6613a1f0c4b2d90a5e1f7%03d", r.issued),
-		"name":        name,
-		"action":      action,
-		"enabled":     true,
-		"protocol":    "all",
-		"schedule":    map[string]any{"mode": "ALWAYS", "time_all_day": true},
+		"_id":      fmt.Sprintf("6613a1f0c4b2d90a5e1f7%03d", r.issued),
+		"name":     name,
+		"action":   action,
+		"enabled":  true,
+		"protocol": "all",
+		// The recording's shape: all eighty-three policies a migrated router
+		// ships carry `{mode: ALWAYS}` and no `time_all_day` at all. A seed that
+		// added the key would be a fixture stating something no policy anyone
+		// has read says, and it is exactly the key a Go bool invents.
+		"schedule":    map[string]any{"mode": "ALWAYS"},
 		"source":      map[string]any{"zone_id": zones[source], "matching_target": "ANY"},
 		"destination": map[string]any{"zone_id": zones[destination], "matching_target": "ANY"},
 		"site_id":     "6613a1f0c4b2d90a5e1f0000",

@@ -139,7 +139,11 @@ twelve "Allow Return Traffic". A policy's identity is therefore its name *and*
 its pair of zones, not its name alone — unifig matched on name and refused every
 migrated site as ambiguous, which was issue #24. `index` runs from 30000 to
 2147483647 on the predefined set, so the old fixture's lone `index: 10000` was a
-plausible guess about a value unifig still does not send.
+plausible guess about a value unifig does not send when it *creates* a policy —
+10000 turns out to be exactly what the Controller assigns one. An update does
+send it, the live value back unchanged, and the Controller keeps it: no 400 and
+no reordering, measured in issue #35, which is why `batch-reorder` is not
+implicated in an ordinary update (ADR-0021).
 
 ## Re-recording from a real UDR
 

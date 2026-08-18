@@ -2,6 +2,8 @@ package reconcile
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -440,22 +442,16 @@ func updateFirewallPolicy(
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// The live object goes back with only unifig's own fields changed, so
 			// the schedule, the port and address matching, the logging switch and
-			// everything else an operator set in the Controller's UI survive — as
-			// far as they can: a field go-unifi does not model was dropped at
-			// unmarshal, and a marker the Controller sends is cleared here rather
-			// than sent.
+			// everything else an operator set in the Controller's UI survive.
 			//
-			// The two halves do not cost the same. Clearing keeps a payload
-			// well-formed and loses nothing anybody has seen; dropping takes
-			// `origin_id` and the ICMP matching off every policy a migrated router
-			// ships, and whether that costs anything rests on something nobody has
-			// measured (issue #35).
-			updated := writablePolicy(live)
-			if err := overwriteManagedPolicy(&updated, desired, bound); err != nil {
-				return err
-			}
-			_, err := client.UpdateFirewallZonePolicy(ctx, site, &updated)
-			return err
+			// That promise used to carry a qualification, and the qualification
+			// turned out to be the whole of it. What went back was a struct, and
+			// a v2 PUT replaces rather than merges — measured on a migrated UDR,
+			// where an apply changing one policy's verdict reverted the ICMP type
+			// an operator had narrowed it to, in the same request and without
+			// saying so (ADR-0021, issue #35). So the object that goes back is
+			// the one the Controller sent.
+			return mergeIntoStoredPolicy(ctx, client, site, live.ID, desired, bound)
 		},
 	}, true
 }
@@ -562,8 +558,14 @@ func changedPolicyFields(current, desired config.FirewallPolicy) []Field {
 }
 
 // overwriteManagedPolicy writes the config's values onto a Controller policy and
-// touches nothing else — the single place that decides which policy fields
-// unifig owns.
+// touches nothing else. It is what a **create** writes onto unifig's own
+// defaults for a new policy; an update writes the same four values onto the
+// object the Controller sent, in storedPolicy.overwriteManaged.
+//
+// The two are apart because the verbs are: a create has no stored object and no
+// operator's fields to preserve, so it starts from a struct and the wire shape
+// it produces is one a UDR has accepted (ADR-0019). They are the same list of
+// fields, though — a fifth field unifig comes to own is a change to both.
 func overwriteManagedPolicy(policy *unifi.FirewallZonePolicy, desired config.FirewallPolicy, bound bindings) error {
 	source, err := bound.zoneID(desired.Source)
 	if err != nil {
@@ -581,8 +583,179 @@ func overwriteManagedPolicy(policy *unifi.FirewallZonePolicy, desired config.Fir
 	return nil
 }
 
-// writablePolicy is a live policy as unifig sends it back: the Controller's
-// read-only markers cleared.
+// markerPrefix is what the Controller names its read-only markers with, and the
+// whole of how one is recognised here. The family is `attr_hidden`,
+// `attr_hidden_id`, `attr_no_delete` and `attr_no_edit` today, and a firmware
+// that ships a fifth is covered by the same line.
+const markerPrefix = "attr_"
+
+// storedPolicy is a live policy as the Controller holds it: every field it sent,
+// kept as the JSON it sent rather than read through a struct that has an opinion
+// about which fields a policy has.
+//
+// It exists because a v2 PUT replaces the object rather than merging into it
+// (ADR-0021). Under a replace, the difference between the read shape and the
+// struct is not a detail of deserialisation — it is the list of fields an update
+// takes off the policy.
+type storedPolicy map[string]json.RawMessage
+
+// mergeIntoStoredPolicy is unifig's update to a live policy: the object the
+// Controller holds, with unifig's own fields written onto it, put back whole.
+//
+// Two things here are deliberate and answer the same measurement. It reads the
+// policy as JSON rather than as a `unifi.FirewallZonePolicy`, because a struct
+// leaves out every field go-unifi v2.3.0 does not model — `origin_id` on all
+// eighty-three policies a migrated router ships, `icmp_typename` and
+// `icmp_v6_typename`,
+// `origin_type`, `hits`, `last_hit` — and every modelled field `omitempty`
+// elides at its zero value, which is how an empty `description` went missing
+// too. And it reads at the moment of writing rather than sending back the copy
+// the plan was computed from, so a narrowing the operator made in the UI while
+// they were reading the plan is not reverted by approving it.
+//
+// What the write endpoint makes of those fields coming back is the one thing
+// #35 could not measure. The policy endpoint is known not to be the minimal DTO
+// the zone endpoint turned out to be — it took `predefined` in a create body and
+// the live `index` in an update body (ADR-0019) — and known is not measured. A
+// refusal would be a 400 naming the field, which stops the apply and reads
+// exactly like #27; dropping the field is the silent destruction that was
+// measured. Loud beats silent, and the reading that would settle it is issue #37.
+func mergeIntoStoredPolicy(
+	ctx context.Context,
+	client unifi.Client,
+	site, id string,
+	desired config.FirewallPolicy,
+	bound bindings,
+) error {
+	stored, err := readStoredPolicy(ctx, client, site, id)
+	if err != nil {
+		return err
+	}
+	stored.dropMarkers()
+	if err := stored.overwriteManaged(desired, bound); err != nil {
+		return err
+	}
+	return client.Put(ctx, policyPath(site, id), stored, nil)
+}
+
+// readStoredPolicy is one live policy as the Controller holds it, read again at
+// the moment of writing.
+//
+// It asks for the collection and picks the policy out of it rather than asking
+// for that one policy by ID. Both are paths go-unifi knows, and only the
+// collection is one unifig has ever sent: it is what every plan reads and what
+// the recording holds, so an update depends on no endpoint a plan did not
+// already depend on.
+//
+// What that costs is one read of all eighty-three policies per policy updated,
+// where the single-object path would read one. It is the same request count and
+// a bigger body, on a router with fewer than a hundred policies, and an apply
+// updating several of them is rare — a poor trade for depending on an endpoint
+// nothing here has ever exercised.
+//
+// A policy that is not in the answer is not an error to report at the library's
+// wording. The operator asked to change a policy and there is no longer one to
+// change, which is a thing to say plainly.
+func readStoredPolicy(ctx context.Context, client unifi.Client, site, id string) (storedPolicy, error) {
+	var held []storedPolicy
+	if err := client.Get(ctx, policiesPath(site), nil, &held); err != nil {
+		return nil, fmt.Errorf("reading the firewall policies of site %q back before writing one: %w", site, err)
+	}
+	for _, stored := range held {
+		if stored.id() == id {
+			return stored, nil
+		}
+	}
+	return nil, errors.New("the Controller no longer has it")
+}
+
+// policiesPath and policyPath are the Controller's v2 firewall-policy
+// endpoints, written out in full because go-unifi resolves a relative path
+// under the v1 base and exposes no v2 one — the gap readZoneFacts describes,
+// from the other side of it.
+//
+// Only the new-style base is named, where readZoneFacts tries both. A client
+// that reached an old-style Controller could not have authenticated to it at
+// all: API-key auth is a UniFi OS gate, so the SDK refuses to build a client for
+// one (ADR-0003), and a write is not the place to guess at a path a read could
+// afford to be wrong about.
+func policiesPath(site string) string {
+	return fmt.Sprintf("%s/site/%s/firewall-policies", unifi.NewStyleAPI.ApiV2Path, site)
+}
+
+func policyPath(site, id string) string {
+	return fmt.Sprintf("%s/%s", policiesPath(site), id)
+}
+
+// id is the Controller's own ID for a stored policy, and empty when the field is
+// absent or is not a string — neither of which any policy anyone has read does,
+// and both of which are a policy this cannot be asked to match.
+func (p storedPolicy) id() string {
+	var id string
+	if err := json.Unmarshal(p["_id"], &id); err != nil {
+		return ""
+	}
+	return id
+}
+
+// overwriteManaged writes the config's values onto a stored policy and touches
+// nothing else: the update half of what overwriteManagedPolicy does for a
+// create, kept over the object the Controller sent rather than over the struct
+// go-unifi could read out of it. The four fields are the whole of what unifig
+// owns on a policy, and the other half of that list is up there.
+func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, bound bindings) error {
+	source, err := bound.zoneID(desired.Source)
+	if err != nil {
+		return err
+	}
+	destination, err := bound.zoneID(desired.Destination)
+	if err != nil {
+		return err
+	}
+
+	if err := p.set("name", desired.Name); err != nil {
+		return err
+	}
+	if err := p.set("action", storedActions[desired.Action]); err != nil {
+		return err
+	}
+	if err := p.setZone("source", source); err != nil {
+		return err
+	}
+	return p.setZone("destination", destination)
+}
+
+// set writes one field of a stored policy.
+func (p storedPolicy) set(field string, value any) error {
+	written, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("building the %s of this update: %w", field, err)
+	}
+	p[field] = written
+	return nil
+}
+
+// setZone writes the zone at one end of a stored policy, leaving the rest of
+// that end alone — the ports it matches, the addresses, the networks, whether it
+// matches the opposite of any of them.
+//
+// An end written whole would be this file's own subject one level down: a policy
+// an operator narrowed to a port would go back matching every port, because the
+// config says which zone an end is and nothing else about it.
+func (p storedPolicy) setZone(end, zone string) error {
+	fields := storedPolicy{}
+	if sent, held := p[end]; held {
+		if err := json.Unmarshal(sent, &fields); err != nil {
+			return fmt.Errorf("the %s end of the policy the Controller sent is not an object: %w", end, err)
+		}
+	}
+	if err := fields.set("zone_id", zone); err != nil {
+		return err
+	}
+	return p.set(end, fields)
+}
+
+// dropMarkers takes the Controller's read-only markers off a stored policy.
 //
 // The rule is writableZone's and the reasoning is there — a marker the
 // Controller sends is not a field unifig sends back (ADR-0019). What differs
@@ -593,18 +766,24 @@ func overwriteManagedPolicy(policy *unifi.FirewallZonePolicy, desired config.Fir
 // router ships has an `attr_*` field at all — so this fixes no failure anyone
 // has met.
 //
-// It is still unifig's rule to keep, because a policy is the other object
-// unifig writes whole and `omitempty` puts each of these on the wire exactly
-// when it is true. The first firmware to mark a policy reproduces #27 here, on
-// the one endpoint whose refusal has never been read, and the correlation would
-// look like a rule about which policies may be edited for the same reason it did
-// the first time (issue #34).
-func writablePolicy(live unifi.FirewallZonePolicy) unifi.FirewallZonePolicy {
-	live.Hidden = false
-	live.HiddenID = ""
-	live.NoDelete = false
-	live.NoEdit = false
-	return live
+// It is still unifig's rule to keep, because a policy is the other object unifig
+// writes whole. The first firmware to mark a policy reproduces #27 here, on the
+// one endpoint whose refusal has never been read, and the correlation would look
+// like a rule about which policies may be edited for the same reason it did the
+// first time (issue #34).
+//
+// Where writablePolicy cleared the four markers go-unifi models and let
+// `omitempty` do the rest, this drops the whole family by name. That is not a
+// widening of the rule — it is the rule as ADR-0019 and both marker tests state
+// it — but merging into what the Controller sent is what makes stating it that
+// way possible: a marker the library has never heard of used to be dropped by
+// accident and would now be sent back.
+func (p storedPolicy) dropMarkers() {
+	for field := range p {
+		if strings.HasPrefix(field, markerPrefix) {
+			delete(p, field)
+		}
+	}
 }
 
 // newFirewallPolicy builds the Controller object for a policy unifig is

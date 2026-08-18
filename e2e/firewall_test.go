@@ -597,6 +597,14 @@ func TestThePolicyUnifigWritesBackCarriesNoneOfTheControllersReadOnlyMarkers(t *
 		"attr_hidden_id": "6613a1f0c4b2d90a5e1f7002",
 		"attr_no_delete": true,
 		"attr_no_edit":   true,
+		// A fifth that go-unifi does not model, invented here on purpose and
+		// named so it cannot be mistaken for a field anybody has read. It is
+		// what tells the rule apart from its old implementation: clearing the
+		// four the library models let `omitempty` drop them, and dropped this
+		// one by never having heard of it. Merging into the object the
+		// Controller sent puts it back unless the rule is kept by name
+		// (issue #35).
+		"attr_invented_by_this_test": true,
 	})
 
 	applyFirewall(t, r, `firewall-policies:
@@ -630,6 +638,86 @@ func TestThePolicyUnifigWritesBackCarriesNoneOfTheControllersReadOnlyMarkers(t *
 		if id, _ := zone["zone_id"].(string); id == "" {
 			t.Errorf("the update carries no zone at its %s end: %v", end, sent)
 		}
+	}
+}
+
+// The defect issue #35 measured on hardware, in the one form a stand-in can
+// hold: a policy an operator narrowed in the Controller's UI, and an apply that
+// means to change the verdict and nothing else.
+//
+// A v2 PUT replaces the object rather than merging into it. That was the guess
+// this stand-in encoded and it is now a measurement: on 18 August 2026 unifig
+// changed one live policy's `action` on a migrated UDR and reverted its
+// `icmp_typename` from `ECHO_REQUEST` to `ANY` in the same request, silently
+// (ADR-0021). So a field missing from the body is a field the operator loses,
+// and what the body carries is the whole of what survives.
+//
+// The four fields seeded here are the losses that probe found, by the two
+// mechanisms it found them by, and every one of them is invisible in the plan:
+//
+//   - `origin_id`, `origin_type` and `icmp_typename` are gone at unmarshal,
+//     because go-unifi v2.3.0 does not model them. The last is the one the probe
+//     watched revert — the ICMP matching a narrowed policy is narrowed by — and
+//     the first two are a back-reference to whatever made the policy, read off
+//     `origin_type`'s own value of `network_config` rather than off anything
+//     Ubiquiti documents. Severing that is a sharper thing than a narrowing an
+//     operator can redo, which is why they are in here beside it.
+//   - `description` is gone for the other reason: go-unifi does model it, and
+//     `omitempty` elides an empty string. The loss was never confined to the
+//     fields the library has never heard of, and a fix scoped that way would
+//     have left this one behind.
+//
+// The mirror image is asserted by absence. The recording's policies carry a
+// schedule of `{mode: ALWAYS}` and no `time_all_day` at all, while a Go bool
+// serialises as `false` whether the Controller sent one or not — and a field
+// unifig invents is as much a change the operator never asked for as a field it
+// drops.
+func TestUpdatingAPolicySendsBackEveryFieldTheControllerSent(t *testing.T) {
+	r := startReplay(t)
+	sentByTheController := map[string]any{
+		"origin_id":     "6613a1f0c4b2d90a5e1f7101",
+		"origin_type":   "network_config",
+		"icmp_typename": "ECHO_REQUEST",
+		"description":   "",
+	}
+	r.seedPolicy(t, "Narrowed", "ALLOW", "Internal", "External", sentByTheController)
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: Narrowed
+    action: block
+    source: Internal
+    destination: External
+`)
+
+	writes := r.policyWrites(t)
+	if len(writes) != 1 {
+		t.Fatalf("unifig made %d writes to the policy collection, want the one update this config asks for: %v",
+			len(writes), writes)
+	}
+	sent := writes[0]
+
+	for field, want := range sentByTheController {
+		got, carried := sent[field]
+		if !carried {
+			t.Errorf("the update dropped %q, which the Controller sent and a PUT replaces: %v", field, sent)
+			continue
+		}
+		if got != want {
+			t.Errorf("the update sent %q as %v, want %v — the operator set it and unifig does not model it", field, got, want)
+		}
+	}
+	schedule, _ := sent["schedule"].(map[string]any)
+	if _, invented := schedule["time_all_day"]; invented {
+		t.Errorf("the update tells the Controller a schedule field it never sent: %v", schedule)
+	}
+
+	// The change the operator did ask for still happens, and what the Controller
+	// holds afterwards is the whole policy rather than the part unifig can name.
+	if sent["action"] != "BLOCK" {
+		t.Errorf("the update sent action %v, want the BLOCK the config asks for", sent["action"])
+	}
+	if typename := r.policyNamed(t, "Narrowed")["icmp_typename"]; typename != "ECHO_REQUEST" {
+		t.Errorf("the policy matches ICMP %v after the apply, and the operator had narrowed it to ECHO_REQUEST", typename)
 	}
 }
 

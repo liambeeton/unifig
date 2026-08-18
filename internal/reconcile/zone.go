@@ -201,9 +201,17 @@ func (f zoneFacts) owns(zone unifi.FirewallZone) bool { return f.builtIn[zone.ID
 // cannot borrow is the path: go-unifi resolves a relative path under the v1 API
 // base and only a leading-slash path is used as it stands, so the v2 path has to
 // be given in full — and it differs between the two controller styles, which the
-// client does not expose after resolving. Hence trying both. The dockerized
-// Controller is old-style and a UniFi OS console is new-style, so this repo's own
-// suites exercise each.
+// client does not expose after resolving. Hence trying both.
+//
+// Only the first of the two has ever answered anything, and this used to say
+// otherwise: the dockerized Controller is old-style, but the rig fronts it with
+// a proxy that answers the SDK's style probe (ADR-0003), so unifig sees a
+// new-style Controller in every suite it has. It sees one in the field too —
+// API-key auth is a UniFi OS gate, and the SDK refuses to build a client for a
+// Controller that answers the probe the old way. So the second base is
+// belt-and-braces rather than a style anybody exercises, and a write does not
+// get to be that relaxed: mergeIntoStoredPolicy names the new-style base and
+// nothing else.
 //
 // Not reaching the endpoint and not understanding it are different answers, and
 // only the first is worth trying the other path for. The body is taken as raw

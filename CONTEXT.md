@@ -103,6 +103,7 @@ _Avoid_: supported versions (the table says what was tested, which is a narrower
 
 **Internal API**:
 The undocumented Controller HTTP API that manages the config plane; the only API that can do Unifig's job. What it answers a read with is not what it will take back on a write: an object comes back carrying the Controller's own read-only markers, and writing that object whole means writing it without them. That is a rule unifig keeps on every object it writes whole, rather than a claim about every endpoint — the Zone is where a write endpoint was measured refusing to be told about them, and the Firewall Policy is where the same rule is kept without one (ADR-0019).
+A write **replaces** the object rather than merging into it, measured on the v2 Firewall Policy endpoint (ADR-0021). So a field left out of the body is a field the operator loses, and writing an object whole means writing back what the Controller sent rather than what a library could read out of it — the read shape a struct discards is not a detail of deserialisation, it is the list of fields an update would delete.
 _Avoid_: legacy API, private API, classic API
 
 **Integration API**:
