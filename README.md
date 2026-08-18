@@ -131,7 +131,7 @@ Changing encrypted DNS is **not** a [Risky change](#risky-changes), and the line
 
 ### Zones and firewall policies
 
-A Zone groups networks; a Firewall Policy governs the traffic between a pair of Zones. Both are Resources matched by name, and apply in dependency order — a file declaring a network, a Zone holding it and a Policy governing that Zone works in one run.
+A Zone groups networks; a Firewall Policy governs the traffic between a pair of Zones. Both are Resources — a Zone matched by name, a Policy by its name together with the pair of Zones it governs — and apply in dependency order — a file declaring a network, a Zone holding it and a Policy governing that Zone works in one run.
 
 The Controller ships its **own** Zones (`External`, `Internal`, `Gateway`, …), and this is the first place that matters:
 
@@ -317,7 +317,7 @@ Saying no skips that change and applies the rest — the question was about that
 
 There is no state file. Every run diffs your file against the live Controller directly (see `docs/adr/0001-stateless-reconcile.md`), which means:
 
-- **Resources are matched by name.** Controller IDs never appear in your file and are never needed. Renaming a network in YAML means replacing it, and two live networks sharing a name is an error rather than a guess.
+- **Resources are matched by a natural key, which is the name in the common case rather than the rule.** A Firewall Policy is keyed by its name *and* the pair of Zones it governs; a DHCP Reservation by MAC. Controller IDs never appear in your file and are never needed. Renaming a network in YAML means replacing it, and two live networks sharing a key is an error rather than a guess.
 - **Nothing is destroyed implicitly.** A network the Controller has and your file does not is left alone. Deleting it is [`--prune`](#pruning)'s job, and you have to ask.
 - **Only the fields your file models are written.** An apply that changes a subnet leaves the DHCP server, DNS entries and everything else on that network exactly as you set them in the Controller. The single exception announces itself in the plan: a DHCP pool cannot stay in a subnet the network no longer has, so a subnet change that strands one moves it.
 - **A field you leave out is a field unifig doesn't manage.** Only `name` is required, so `- name: IoT` is a complete entry meaning "this network is mine to match, and I'm not managing anything about it yet". It never means "clear its VLAN and subnet" — clearing a value is something you do in the Controller.

@@ -86,7 +86,8 @@ type Zone struct {
 }
 
 // FirewallPolicy is a rule governing traffic between a pair of Zones, keyed by
-// name.
+// its name together with the pair of Zones it governs — the Controller ships its
+// own policies one per pair and reuses names across them (ADR-0001).
 //
 // Source and Destination name Zones, and deliberately not only Zones this file
 // defines. The interesting policies are the ones that reach the Controller's own
