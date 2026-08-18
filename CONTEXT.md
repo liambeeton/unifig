@@ -39,7 +39,7 @@ A wireless network (SSID) the Controller broadcasts. A Resource, matched by name
 _Avoid_: SSID (that names the broadcast identifier, not the configured object), wifi network
 
 **Zone**:
-A named group of networks in the Controller's zone-based firewall. A Resource, matched by name. Custom Zones have the full lifecycle; built-in Zones (Internal, External, …) are matchable and updatable but never prunable, on the Controller's own marker rather than a list of names (ADR-0005). Its membership is one field rather than a collection, so stating it states the whole list — and a member unifig cannot name, such as the WAN in the built-in External Zone, is left exactly where it is rather than removed.
+A named group of networks in the Controller's zone-based firewall. A Resource, matched by name. Custom Zones have the full lifecycle; built-in Zones (Internal, External, …) are matchable and updatable but never prunable, on the Controller's own marker rather than a list of names (ADR-0005). One built-in is not like the others: the **Gateway Zone** is where the Controller itself answers, so it carries the site's management path and a Firewall Policy blocking traffic to it is the one firewall change that is Risky. Which Zone that is comes from the Controller's own key for it rather than from its name, for the reason the built-in marker does. Its membership is one field rather than a collection, so stating it states the whole list — and a member unifig cannot name, such as the WAN in the built-in External Zone, is left exactly where it is rather than removed.
 _Avoid_: firewall group (that is a different Controller object), interface group
 
 **Firewall Policy**:
@@ -62,7 +62,7 @@ _Avoid_: sync (ambiguous about direction)
 Deleting live Resources of a managed type that are absent from the config. Never implicit — only on explicit request, and built-in undeletable objects are always exempt. So is a Resource that something the same plan leaves in place still requires — a network with a WLAN on it, a Zone a Firewall Policy governs, a network with a DHCP Reservation's address inside its subnet — because the Controller refuses to delete one and a Plan is a statement about what will happen (ADR-0014). What it deletes is the Resource rather than whatever the Resource is part of: giving up a Reservation leaves the client record behind.
 
 **Risky change**:
-A change that can sever internet or management connectivity (e.g. any WAN/PPPoE mutation). Always individually confirmed, never silently applied — and never hard-blocked. The test is whether recovery could need physical access: an Encrypted DNS change can break name resolution for a whole site and is still not Risky, because the Controller stays reachable and the fix is one field away (ADR-0012).
+A change whose recovery could need physical access. Always individually confirmed, never silently applied — and never hard-blocked. Two kinds of change qualify: any WAN/PPPoE mutation, and a Firewall Policy that would newly block traffic to the Gateway Zone, where the Controller answers (ADR-0018). Losing the site's internet is the usual consequence of one and never the test on its own — an Encrypted DNS change can break name resolution for a whole site, and a Firewall Policy can block the internet outright, and neither is Risky, because the Controller stays reachable and the fix is one field away (ADR-0012).
 
 ### Workflow
 

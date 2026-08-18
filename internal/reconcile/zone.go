@@ -40,7 +40,7 @@ import (
 func planZones(
 	cfg config.Config,
 	live []unifi.FirewallZone,
-	owned zoneOwnership,
+	facts zoneFacts,
 	inUse referenced,
 	bound bindings,
 	opts Options,
@@ -69,14 +69,14 @@ func planZones(
 	}
 	// Prune was asked for and the zones were left out of it, so the plan says so
 	// rather than looking like a site with nothing to prune (ADR-0005, #23).
-	if !owned.known {
+	if !facts.known {
 		return changes, []Caveat{{
 			Kind: Zone,
 			Reason: "no zone will be deleted: unifig could not read which zones the Controller marks as its own, " +
 				"and deleting the wrong one would take the site off the internet",
 		}}
 	}
-	deletions, caveats := pruneZones(byName, named, owned, inUse, bound)
+	deletions, caveats := pruneZones(byName, named, facts, inUse, bound)
 	return append(changes, deletions...), caveats
 }
 
@@ -103,35 +103,66 @@ func listZones(ctx context.Context, client unifi.Client, site string) ([]unifi.F
 	return live, nil
 }
 
-// zoneMarker is the part of a zone that says whose it is, which go-unifi's
-// FirewallZone does not carry: the library models `attr_no_delete` and
-// `attr_no_edit`, and a real zone has neither of the first and uses the second
-// for something else.
+// zoneMarker is the part of a zone that go-unifi's FirewallZone does not carry:
+// the library models `attr_no_delete` and `attr_no_edit`, and a real zone has
+// neither of the first and uses the second for something else.
 //
-// `zone_key` is deliberately not here. A built-in also carries one, so it looks
-// like a second way to ask the same question, but it is not the Controller
-// saying the zone is its own — it is a name for which built-in this is. Reading
-// it would be keeping a list of Ubiquiti's zones by another route (ADR-0005).
+// It answers two questions off one response, and they are different questions.
+// `default_zone` is the Controller saying a zone is its own, which is what
+// prune's exemption turns on (ADR-0005). `zone_key` is the Controller saying
+// *which* of its own a zone is, which is what a Risky change turns on: the
+// Gateway zone is where the Controller answers, so a policy blocking traffic to
+// it can cut the path the site is managed over (ADR-0018).
+//
+// An earlier version of this type refused `zone_key`, on the grounds that
+// reading it would be keeping a list of Ubiquiti's zones by another route. That
+// holds for ownership, where the Controller answers directly and a list of names
+// would be second-guessing it. It does not hold here, because `default_zone`
+// cannot say which zone is the gateway at all: the choice is not between the
+// Controller's answer and a list, it is between `zone_key` and hard-coding the
+// string "Gateway" — which is the construct that had prune proposing to delete
+// every built-in (issue #23).
 type zoneMarker struct {
 	ID      string `json:"_id"`
+	Name    string `json:"name"`
 	Default bool   `json:"default_zone"`
+	ZoneKey string `json:"zone_key"`
 }
 
-// zoneOwnership is which zones the Controller marks as its own, and whether that
-// could be established at all.
+// gatewayZoneKey is the Controller's own key for the zone it answers in.
+//
+// The key is matched and the name beside it is read, rather than the name being
+// matched: an operator cannot rename a built-in today, but a firmware that
+// presented this zone under another name would silently stop every Risky mark
+// that depends on it, and silence is the one failure mode this rule cannot
+// afford.
+const gatewayZoneKey = "gateway"
+
+// zoneFacts is what the Controller says about its own zones, and whether it
+// could be asked at all.
 //
 // The distinction is the whole point of the type. An empty set means the site
 // genuinely has no built-in zones; an unknown set means unifig could not find
 // out, and the two must not lead to the same behaviour, because one of them ends
 // in a plan proposing to delete the zone that stands for the internet.
-type zoneOwnership struct {
+//
+// Both fields share the one `known` flag because they come from one response:
+// there is no state in which the Controller answered about its zones and unifig
+// learned one of these and not the other.
+type zoneFacts struct {
 	known   bool
 	builtIn map[string]bool
+	// gateway is the name of the zone the Controller answers in, and empty when
+	// the site has none. It is held as a name rather than an ID because a policy
+	// states its ends as names and is matched by them (policyKey), so a name is
+	// what the risk check has to compare.
+	gateway string
 }
 
-func (o zoneOwnership) owns(zone unifi.FirewallZone) bool { return o.builtIn[zone.ID] }
+func (f zoneFacts) owns(zone unifi.FirewallZone) bool { return f.builtIn[zone.ID] }
 
-// builtInZones reads which zones the Controller marks as its own.
+// readZoneFacts reads what the Controller says about its own zones: which are
+// built-in, and which of those is the one it answers in.
 //
 // It reads `default_zone`, which is the marker a zone carries. That is not the
 // marker a network carries: a network says the same thing with
@@ -140,6 +171,10 @@ func (o zoneOwnership) owns(zone unifi.FirewallZone) bool { return o.builtIn[zon
 // (issue #23, ADR-0005). The exemption is still read off the object rather than
 // from a list of built-in names unifig keeps — what changed is which field is
 // read, not the principle.
+//
+// It reads `zone_key` beside it for the gateway, and both come out of one
+// response rather than two: it is one GET, and asking twice would give two
+// answers about a Controller that may have changed between them.
 //
 // The request goes through the same client, so it carries the same
 // authentication and reaches the same Controller as everything else. What it
@@ -156,26 +191,29 @@ func (o zoneOwnership) owns(zone unifi.FirewallZone) bool { return o.builtIn[zon
 // the other one is tried; a request that succeeded and answered something this
 // cannot read is a Controller unifig does not understand, which is a settled
 // "cannot tell" rather than a reason to go asking elsewhere.
-func builtInZones(ctx context.Context, client unifi.Client, site string) zoneOwnership {
+func readZoneFacts(ctx context.Context, client unifi.Client, site string) zoneFacts {
 	for _, base := range []string{unifi.NewStyleAPI.ApiV2Path, unifi.OldStyleAPI.ApiV2Path} {
 		var body json.RawMessage
 		if err := client.Get(ctx, fmt.Sprintf("%s/site/%s/firewall/zone", base, site), nil, &body); err != nil {
 			continue
 		}
 
-		var owned []zoneMarker
-		if err := json.Unmarshal(body, &owned); err != nil {
-			return zoneOwnership{}
+		var marked []zoneMarker
+		if err := json.Unmarshal(body, &marked); err != nil {
+			return zoneFacts{}
 		}
-		builtIn := make(map[string]bool, len(owned))
-		for _, zone := range owned {
+		facts := zoneFacts{known: true, builtIn: make(map[string]bool, len(marked))}
+		for _, zone := range marked {
 			if zone.Default {
-				builtIn[zone.ID] = true
+				facts.builtIn[zone.ID] = true
+			}
+			if zone.ZoneKey == gatewayZoneKey {
+				facts.gateway = zone.Name
 			}
 		}
-		return zoneOwnership{known: true, builtIn: builtIn}
+		return facts
 	}
-	return zoneOwnership{}
+	return zoneFacts{}
 }
 
 // projectZones projects the site's zones into the config that would describe
@@ -317,7 +355,7 @@ func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings) (C
 func pruneZones(
 	live map[string]unifi.FirewallZone,
 	named map[string]bool,
-	owned zoneOwnership,
+	facts zoneFacts,
 	inUse referenced,
 	bound bindings,
 ) ([]Change, []Caveat) {
@@ -330,7 +368,7 @@ func pruneZones(
 		// per Resource and only a network is known to use that one (issue #23,
 		// ADR-0005), so nothing here should be read as saying which field a new
 		// type would use.
-		if named[name] || zone.NoDelete || owned.owns(zone) {
+		if named[name] || zone.NoDelete || facts.owns(zone) {
 			continue
 		}
 		if by := inUse[name]; len(by) > 0 {

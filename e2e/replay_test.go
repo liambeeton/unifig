@@ -812,6 +812,54 @@ func (r *replay) seedZone(t *testing.T, name string, networks []string, fields m
 	r.zones = append(r.zones, zone)
 }
 
+// gatewayZone is the name the recording gives the zone the Controller answers
+// in, found the way unifig finds it: by the Controller's own `zone_key` rather
+// than by the name. A test that hard-coded "Gateway" would be asserting a guess
+// about someone else's product, which is the mistake ADR-0013 was written about.
+func (r *replay) gatewayZone(t *testing.T) string {
+	t.Helper()
+	for _, zone := range r.liveZones(t) {
+		if zone["zone_key"] == "gateway" {
+			name, _ := zone["name"].(string)
+			return name
+		}
+	}
+	t.Fatalf("the recording holds no zone the Controller marks as its gateway")
+	return ""
+}
+
+// renameGateway gives the gateway zone a different name, leaving the key that
+// says what it is untouched. It is how a test asks whether unifig found the zone
+// by the key or by the name, and there is no other way to tell the two apart.
+func (r *replay) renameGateway(t *testing.T, name string) {
+	t.Helper()
+	was := r.gatewayZone(t)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, zone := range r.zones {
+		if zone["name"] == was {
+			zone["name"] = name
+			return
+		}
+	}
+}
+
+// hideTheGateway drops the key that says which zone the Controller answers in,
+// leaving a response unifig can read perfectly well and find no gateway in.
+//
+// That is a different failure from a response it cannot read at all, and the two
+// have to be reachable separately: one is a Controller that answered a question
+// unifig did not understand, and this one is a Controller that answered it and
+// said nothing about a gateway.
+func (r *replay) hideTheGateway(t *testing.T) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, zone := range r.zones {
+		delete(zone, "zone_key")
+	}
+}
+
 // seedPolicy is the same for a firewall policy, stated in the zone names a test
 // reads rather than in the IDs the Controller stores.
 func (r *replay) seedPolicy(t *testing.T, name, action, source, destination string, fields map[string]any) {

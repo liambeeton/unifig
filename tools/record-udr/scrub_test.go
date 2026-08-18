@@ -794,6 +794,43 @@ func TestScrubKeepsAZoneOnTheMarkerARealRouterSends(t *testing.T) {
 	}
 }
 
+// A zone_key survives the scrub with its value intact, not merely present.
+//
+// unifig finds the zone the Controller answers in by this key rather than by its
+// name, because a name is a guess about someone else's product and a key is what
+// the Controller says (ADR-0018). That only works while the key reaches the
+// recording unchanged: `zone_key` is in no name table and matches no shape, so it
+// falls through the scrub as written — which is a property of two functions
+// agreeing rather than of anything asserting it.
+//
+// The test above asks whether a kept zone has a key at all, and would pass on a
+// scrub that replaced every one with a placeholder. This asks whether it is still
+// the same key. The failure it guards against is the silent one: a re-recording
+// where every zone_key came back scrubbed would disable every Risky mark on the
+// firewall, and a plan with no `!` on it reads as a plan that risks nothing.
+func TestScrubLeavesAZoneKeyExactlyAsTheRouterSentIt(t *testing.T) {
+	out := scrubbed(t)
+
+	var raw []map[string]any
+	if err := json.Unmarshal([]byte(rawFirewallZones), &raw); err != nil {
+		t.Fatalf("the fixture is not valid JSON: %v", err)
+	}
+	sent := map[string]string{}
+	for _, zone := range raw {
+		name, _ := zone["name"].(string)
+		key, _ := zone["zone_key"].(string)
+		sent[name] = key
+	}
+
+	for _, zone := range out.zones {
+		name, _ := zone["name"].(string)
+		key, _ := zone["zone_key"].(string)
+		if want := sent[name]; key != want {
+			t.Errorf("the %s zone came back keyed %q, want %q as the router sent it", name, key, want)
+		}
+	}
+}
+
 func TestScrubKeepsTheControllersOwnPoliciesAndDropsTheOperatorsOwn(t *testing.T) {
 	out := scrubbed(t)
 
