@@ -614,12 +614,7 @@ func TestThePolicyUnifigWritesBackCarriesNoneOfTheControllersReadOnlyMarkers(t *
     destination: External
 `)
 
-	writes := r.policyWrites(t)
-	if len(writes) != 1 {
-		t.Fatalf("unifig made %d writes to the policy collection, want the one update this config asks for: %v",
-			len(writes), writes)
-	}
-	sent := writes[0]
+	sent := r.onlyPolicyWrite(t)
 
 	for field := range sent {
 		if strings.HasPrefix(field, "attr_") {
@@ -689,12 +684,7 @@ func TestUpdatingAPolicySendsBackEveryFieldTheControllerSent(t *testing.T) {
     destination: External
 `)
 
-	writes := r.policyWrites(t)
-	if len(writes) != 1 {
-		t.Fatalf("unifig made %d writes to the policy collection, want the one update this config asks for: %v",
-			len(writes), writes)
-	}
-	sent := writes[0]
+	sent := r.onlyPolicyWrite(t)
 
 	for field, want := range sentByTheController {
 		got, carried := sent[field]
@@ -718,6 +708,79 @@ func TestUpdatingAPolicySendsBackEveryFieldTheControllerSent(t *testing.T) {
 	}
 	if typename := r.policyNamed(t, "Narrowed")["icmp_typename"]; typename != "ECHO_REQUEST" {
 		t.Errorf("the policy matches ICMP %v after the apply, and the operator had narrowed it to ECHO_REQUEST", typename)
+	}
+}
+
+// The create-path counterpart, and the one field where unifig was measured
+// disagreeing with the Controller about a policy it makes.
+//
+// `newFirewallPolicy` sets the fields a policy needs to govern traffic at all,
+// because a bare struct would be disabled, on no schedule and matching nothing.
+// `create_allow_respond` is modelled by go-unifi v2.3.0 as a plain `bool` with
+// no `omitempty`, so it goes on the wire on every create whether unifig has an
+// opinion about it or not — and unifig had none, which made the Go zero value
+// the opinion. On the live migrated UDR on 18 August 2026 all eighty-six
+// policies the Controller ships carried `true` and the one unifig created
+// carried `false`, with the Controller's UI showing that policy's return-traffic
+// toggle off beside its own policies' on (issue #36). This test counts
+// eighty-three of them, because that is how many of the eighty-six the recording
+// holds.
+//
+// What the field does to traffic is **not** what this asserts, and nothing in
+// this repository has measured it: no one has sent a conversation through a
+// unifig-created allow policy and watched what came back. The rule being stated
+// is the narrower one the evidence supports — a policy unifig creates agrees
+// with the Controller's own about return traffic — which is why the value is
+// read off the recording rather than written here as `true`. A recording from a
+// router whose own policies said otherwise would move this test's expectation
+// with it, the way markedZone and gatewayZone are asked rather than named.
+//
+// It is asserted on the request rather than the round-trip for the reason the
+// marker tests are: the stand-in stores whatever it is handed, so reading the
+// policy back afterwards would pass just as well if unifig had sent nothing at
+// all (ADR-0014, ADR-0019).
+func TestThePolicyUnifigCreatesAgreesWithTheControllerAboutReturnTraffic(t *testing.T) {
+	r := startReplay(t)
+
+	// Read before the apply, so what is being compared against is the
+	// Controller's own policies rather than the one this test is about to make.
+	const field = "create_allow_respond"
+	own := r.livePolicies(t)
+	if len(own) == 0 {
+		t.Fatalf("the recording holds no policy of the Controller's own to agree with about %q", field)
+	}
+	want, carried := own[0][field]
+	if !carried {
+		t.Fatalf("the recording's policies carry no %q, so there is nothing here for unifig to agree or disagree with", field)
+	}
+	for _, policy := range own {
+		if policy[field] != want {
+			// Fatal rather than skipped, the way markedZone fails when the
+			// recording cannot answer it. A recording whose own policies
+			// disagreed would retire the only assertion on unifig's create body
+			// while `CreateAllowRespond` stayed set in the code, and a pin that
+			// quietly stops pinning is the thing ADR-0014 objects to.
+			t.Fatalf("the recording's %d policies disagree among themselves about %q, so there is no value of the Controller's to match: re-read #36 against that router before trusting the one unifig sends",
+				len(own), field)
+		}
+	}
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: Let them answer
+    action: allow
+    source: Internal
+    destination: External
+`)
+
+	sent := r.onlyPolicyWrite(t)
+
+	got, carried := sent[field]
+	if !carried {
+		t.Fatalf("the create carries no %q, and go-unifi sends it without omitempty on every create: %v", field, sent)
+	}
+	if got != want {
+		t.Errorf("unifig creates a policy with %q = %v, and all %d of the Controller's own carry %v",
+			field, got, len(own), want)
 	}
 }
 

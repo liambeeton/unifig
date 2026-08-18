@@ -190,6 +190,23 @@ policies as #21 confirmed it for zones.
   seen carrying one. What transfers is not the refusal but unifig's own rule: a
   marker the Controller sends is not a field unifig sends back. The stand-in's
   refusal list stays zone-only, because only the zone's refusal was measured.
+- The five booleans this session watched go out as `false` and come back echoed
+  were read here as a harmless artefact of `omitempty`'s absence. Four of them
+  are, for two different reasons: `logging`, `match_ip_sec` and
+  `match_opposite_protocol` sit where the Controller's own do, `false` on all
+  eighty-three policies a migrated router ships, while `predefined: false`
+  differs from all eighty-three and should — a policy unifig made is not one the
+  Controller ships. The fifth is neither. **`create_allow_respond` is `true` on
+  every one of the Controller's own** — all eighty-six on the live site, of which
+  the recording holds eighty-three — so unifig was sending the
+  opposite on everything it created, and the Go zero value was the decision
+  nobody made — the same shape as the `schedule.time_all_day` finding ADR-0021
+  reached from the other direction. Found while running #35's probe and filed as
+  **issue #36**. **Half taken there**: `newFirewallPolicy` now sets it to agree
+  with the Controller and a request-shape test pins the create body. What the
+  field does to traffic is still unmeasured and still needs hardware, so the
+  value rests on agreement with the Controller rather than on a claim about
+  return traffic, and that half of #36 stays open.
 - The rule has a second half this ADR did not look at, and it is the live one.
   `updated := live` starts from a struct, so every field the Controller sent that
   go-unifi does not model — `origin_id` on all 83 policies a migrated router

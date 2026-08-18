@@ -901,6 +901,23 @@ func (r *replay) policyWrites(t *testing.T) []map[string]any {
 	return r.writesTo(policyPath)
 }
 
+// onlyPolicyWrite is the one body unifig sent to the policy collection, for the
+// request-shape tests whose config asks for exactly one change to one policy.
+//
+// The count is checked rather than the last write taken, because these tests are
+// about what unifig put on the wire: a second write nobody expected is a
+// different apply than the one being described, and reading field names out of
+// whichever body happened to be last would report on it as though it were.
+func (r *replay) onlyPolicyWrite(t *testing.T) map[string]any {
+	t.Helper()
+	writes := r.policyWrites(t)
+	if len(writes) != 1 {
+		t.Fatalf("unifig made %d writes to the policy collection, want the one this config asks for: %v",
+			len(writes), writes)
+	}
+	return writes[0]
+}
+
 func (r *replay) writesTo(base string) []map[string]any {
 	r.mu.Lock()
 	defer r.mu.Unlock()

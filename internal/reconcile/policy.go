@@ -789,24 +789,68 @@ func (p storedPolicy) dropMarkers() {
 // newFirewallPolicy builds the Controller object for a policy unifig is
 // creating.
 //
-// The config models three fields and a policy has thirty, so the rest are the
-// Controller's own defaults for a new policy — matching what its UI creates: the
-// policy applies to every protocol, in both address families, at all times, from
-// anywhere in the source zone to anywhere in the destination zone. A policy
-// created from a bare struct would instead be disabled, on no schedule, and
-// matching nothing, which would govern no traffic at all.
+// The config models four fields and a policy has thirty, so the rest are set
+// here: the policy applies to every protocol, in both address families, at all
+// times, from anywhere in the source zone to anywhere in the destination zone.
+// A policy created from a bare struct would instead be disabled, on no schedule,
+// and matching nothing, which would govern no traffic at all. That reasoning is
+// the whole of why these values are what they are, and it is all this comment
+// claims for them: it used to say they were "the Controller's own defaults for a
+// new policy — matching what its UI creates", which nobody has checked, because
+// no policy created in the UI has ever been read back field by field (issue #36).
+//
+// What has been checked is that the Controller takes them: #30 created a policy
+// on the live migrated UDR and every field here came back as sent (ADR-0019).
+// Accepted is not matched, and the recording is where the difference shows —
+// of the eighty-three policies a migrated router ships, sixty-three are
+// `protocol: all` and sixty-one are `ip_version: BOTH`, because they are
+// purpose-built rules rather than anybody's starting shape. They are the wrong
+// table to read a default off, and the one field below that *was* read off them
+// is read off them for a reason that has nothing to do with defaults.
+//
+// That field is named because of what the unnamed ones do. go-unifi v2.3.0
+// models six of a policy's booleans without `omitempty`, so all six go on the
+// wire on every create whether unifig names them or not; `enabled` is the one
+// unifig names, and the other five go as Go's zero rather than as anyone's
+// decision. Three of those five sit where the Controller's own policies sit
+// anyway — `logging`, `match_ip_sec` and `match_opposite_protocol` are false on
+// all eighty-three. `predefined: false` differs from all eighty-three and should:
+// a policy unifig made is not one the Controller ships. `create_allow_respond`
+// was neither, which is the whole of issue #36.
 //
 // They apply on create only. An operator who afterwards narrows the policy to a
-// port, a client or an evening keeps that forever, because updates go through
-// overwriteManagedPolicy, which never touches anything here.
+// port, a client or an evening keeps that forever, because an update merges into
+// the object the Controller sent and writes only the same four values
+// (mergeIntoStoredPolicy, ADR-0021).
 func newFirewallPolicy() unifi.FirewallZonePolicy {
 	return unifi.FirewallZonePolicy{
 		Enabled:             true,
 		Protocol:            "all",
 		IPVersion:           "BOTH",
 		ConnectionStateType: "ALL",
+		// Every policy the Controller ships sets this and unifig set the
+		// opposite on everything it made: measured on the live migrated UDR on
+		// 18 August 2026, all eighty-six of the Controller's own carried true
+		// and the one unifig had created carried false, its return-traffic
+		// toggle showing off in the UI beside their on (issue #36). The
+		// recording holds eighty-three of those eighty-six, which is why the
+		// count differs between here and the test that pins this.
+		//
+		// What the field does to traffic is not measured, here or anywhere in
+		// this repository — nobody has sent a conversation through a
+		// unifig-created allow policy and watched what came back. So the reason
+		// for the value is not a claim about return traffic; it is that
+		// disagreeing with the Controller on every policy unifig creates is a
+		// thing to do on purpose or not at all, and false was never on purpose.
+		// The half that needs hardware is the open half of issue #36.
+		CreateAllowRespond: true,
 		// The Controller rejects a policy with no schedule outright, so this is
-		// less a default than a field with one permitted value at creation.
+		// less a default than a field with one permitted value at creation. It
+		// is not parity either: all eighty-three policies the recording holds
+		// carry `{mode: ALWAYS}` and no `time_all_day` at all. Sending one is
+		// inventing a field on the object, which is a loss on the update path
+		// (ADR-0021) and nothing on this one, where there is no object yet and
+		// no operator's value to write over.
 		Schedule: unifi.FirewallZonePolicySchedule{Mode: "ALWAYS", TimeAllDay: true},
 		Source: unifi.FirewallZonePolicySource{
 			MatchingTarget:   "ANY",
