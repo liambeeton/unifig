@@ -20,6 +20,16 @@ network uses `attr_no_delete`.**
 | Firewall Zone | `default_zone`, alongside a stable `zone_key` |
 | Firewall Policy | `predefined` |
 
+**The Policy row was confirmed against hardware on 18 August 2026.** With one
+operator-authored policy on a site holding 86 of the Controller's own,
+`plan --prune` proposed deleting that one and left all 86 alone — the exemption
+read off `predefined` rather than off any list unifig keeps, doing exactly what
+this ADR claims for it
+(`docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md`).
+The same session found the marker table's one remaining trap: a zone also carries
+`attr_no_edit`, which marks nothing this ADR is about and which unifig must not
+send back when it writes.
+
 A firewall zone has no `attr_no_delete` field at all. unifig read it there
 anyway, on the assumption the network's convention was shared, and because zones
 were the first Resource nothing available could confirm (ADR-0013) it shipped

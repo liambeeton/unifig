@@ -142,6 +142,17 @@ func TestStatingAZonesNetworksSaysWhichOneLeavesIt(t *testing.T) {
 // manages and has no name the config can use. Stating the LANs in such a zone
 // must therefore not detach the uplink from it — the membership is owned per
 // member, which is ADR-0004 one level in.
+//
+// Provenance: this ran against hardware on 18 August 2026, not only against the
+// stand-in. A membership PUT to a real built-in zone holding a network unifig
+// cannot name returned 200, and an independent read-back found the stated member
+// present and the unnameable one still beside it. See
+// docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md.
+// The same session found that the PUT unifig itself builds is refused for the
+// three zones marked attr_no_edit — not by this rule, but because go-unifi
+// serialises that read-only field back into the request (issue #27). This test
+// passes here because the stand-in stores whatever it is handed; it is the
+// behaviour that is confirmed, not unifig's ability to perform it today.
 func TestStatingAZonesNetworksLeavesAMemberUnifigCannotNameAlone(t *testing.T) {
 	r := startReplay(t)
 	lan := r.aNetwork(t)

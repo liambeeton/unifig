@@ -76,6 +76,13 @@ What is still unanswered is the narrowest of the three: whether a policy unifig
 holds only the Controller's own policies, and answering it needs a write to a
 real site rather than a read.
 
+**Answered on 18 August 2026, and it round-trips.** Every field
+`newFirewallPolicy` sends came back unaltered; the Controller adds ten defaults
+it chooses and rewrites nothing it was given
+(`docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md`).
+That write session also corrected the assumption this ADR's own successors had
+built on `attr_no_edit`, which is the more expensive of the two findings.
+
 ## Considered Options
 
 - **Seed zones and policies into the dockerized Controller's database directly** — rejected on ADR-0008's reasoning, and more clearly here: the Controller refuses to create one through its own API, so seeding means writing to MongoDB behind the application's back. That tests unifig against rows this suite invented, in a Controller that has already said it does not have this feature.
