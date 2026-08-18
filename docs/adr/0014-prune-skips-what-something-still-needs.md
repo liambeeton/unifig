@@ -85,6 +85,19 @@ the one that can be read off the Controller rather than inferred about it:
 of being over-careful here is a prune that says what it declined; the cost of
 being wrong the other way is the bug this ADR exists to close.
 
+**Answered on 18 August 2026, in favour of the convenient reading.** A write
+session against the migrated UDR created a custom zone, watched the Controller
+generate eighteen predefined policies for its pairs, and then deleted the zone:
+`DELETE` returned `204` and the Controller reclaimed all eighteen itself
+(`docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md`).
+The paragraph above was the right position to hold while nobody had looked — the
+cost of being over-careful really was only a prune that says what it declined.
+It is the wrong position now: the deletion this rule declines to propose is one
+the Controller performs without complaint, so the hold-back should narrow to
+operator-authored policies, which is the scope issue #22 asked for. That change
+is issue #28's, and it is a decision rather than a correction this ADR can make
+on its own.
+
 ## And it says so
 
 Each declined deletion is a `Caveat` — not a change, because nothing happens, and
@@ -143,13 +156,15 @@ sentence.
   and teaching it to refuse would be writing a fixture that asserts a guess
   (ADR-0013). What the firewall suite states is unifig's promise about its own
   plan, which is the part this ADR is about.
-- **On a migrated router, `--prune` may now decline every custom zone.** If the
-  Controller generates predefined policies for a custom zone's pairs as it does
-  for the built-ins' eighty-three, each of them holds its zone back. The zone is
+- **On a migrated router, `--prune` declines every custom zone.** Not "may": one
+  custom zone made the Controller generate eighteen predefined policies for its
+  pairs, and each of them holds the zone back. The zone is
   still deletable in the Controller's UI, and the plan names the policy that kept
-  it, so this is narrower rather than silent. It is also the bullet to revisit
-  first if hardware ever shows the Controller cleaning those up itself — with a
-  recording that shows it, not a fixture that assumes it.
+  it, so this is narrower rather than silent. This was written as the bullet to
+  revisit first if hardware ever showed the Controller cleaning those up itself,
+  with a recording rather than a fixture — hardware showed exactly that on
+  18 August 2026, so it is now the bullet being revisited, in issue #28
+  (`docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md`).
 - **Reading is not matching**, and the duplicate refusals moved accordingly: the
   WLAN and policy reads no longer refuse a site over two of them unifig cannot
   tell apart, and the verbs that actually match them do it instead. A file with no
