@@ -303,10 +303,12 @@ func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings) (C
 // deleting the zone that stands for the internet, and an operator who approved
 // it would find out what that means.
 //
-// If ownership could not be established, nothing is pruned. A zone deletion is
-// the one change here whose blast radius makes silence the wrong default: not
+// If ownership could not be established, nothing is pruned: planZones returns
+// before it calls this, carrying a caveat that says so. A zone deletion is the
+// one change here whose blast radius makes silence the wrong default — not
 // knowing which zones are the Controller's has to mean leaving all of them
-// alone, rather than treating every one of them as fair game (issue #23).
+// alone, rather than treating every one of them as fair game (issue #23) — and
+// an unexplained empty result would be exactly that silence.
 //
 // A zone a policy will still be governing afterwards is not proposed either, and
 // says so — the same rule as a network with a WLAN on it, and the same reason: a
@@ -319,12 +321,15 @@ func pruneZones(
 	inUse referenced,
 	bound bindings,
 ) ([]Change, []Caveat) {
-	if !owned.known {
-		return nil, nil
-	}
 	changes := make([]Change, 0, len(live))
 	var caveats []Caveat
 	for name, zone := range live {
+		// `owns` reads `default_zone`, the marker a zone actually carries.
+		// `NoDelete` is checked beside it because the library models the field on
+		// this type, not because a zone has been seen carrying it: the marker is
+		// per Resource and only a network is known to use that one (issue #23,
+		// ADR-0005), so nothing here should be read as saying which field a new
+		// type would use.
 		if named[name] || zone.NoDelete || owned.owns(zone) {
 			continue
 		}
