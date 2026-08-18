@@ -19,12 +19,29 @@ import (
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/liambeeton/unifig/internal/compat"
 )
 
-// The version pin doubles as the CI compatibility promise for this suite;
-// override the image via UNIFIG_TEST_CONTROLLER_IMAGE when running the matrix.
-const defaultControllerImage = "jacobalberty/unifi:v10.0.162"
+// compatibilityConfig is where the Controller versions live: the same file CI
+// builds its matrix from and the published table is generated against
+// (compatibility.yaml). The rig reads it rather than pinning a version of its
+// own, so a bare `make e2e` runs against the newest version in the matrix and
+// the two cannot drift. UNIFIG_TEST_CONTROLLER_IMAGE overrides it, which is how
+// CI points one job at one version.
+const compatibilityConfig = "../compatibility.yaml"
+
+// How the Network application finds the database that starts beside it. The
+// credentials are a container-to-container detail on a private network that
+// lives for one suite run; nothing outside the rig can reach either.
+const (
+	databaseHost     = "database"
+	databaseUser     = "unifig"
+	databasePassword = "unifig"
+	databaseName     = "unifi"
+)
 
 // rig is the process-level test rig: a real dockerized UniFi Network
 // application (the Controller) fronted by a reverse proxy that emulates the
@@ -42,11 +59,17 @@ type rig struct {
 	// apiKey is the key the proxy accepts, standing in for a UDR API key.
 	apiKey string
 
-	binary    string // built unifig binary
-	session   string // unifises session cookie for rig plumbing
-	client    *http.Client
-	proxy     *httptest.Server
+	binary  string // built unifig binary
+	session string // unifises session cookie for rig plumbing
+	client  *http.Client
+	proxy   *httptest.Server
+	// container is the Network application, database the MongoDB it needs, and
+	// net the private network the two of them talk over. The Controller image
+	// ships no database (see ADR-0016), so the rig starts one; unifig never
+	// sees either.
 	container testcontainers.Container
+	database  testcontainers.Container
+	net       *testcontainers.DockerNetwork
 }
 
 // insecureTransport trusts the Controller's self-signed certificate.
@@ -84,8 +107,16 @@ func (r *rig) shutdown(ctx context.Context) {
 	if r.proxy != nil {
 		r.proxy.Close()
 	}
+	// In the reverse of the order they were started, so the network is not
+	// removed while something is still attached to it.
 	if r.container != nil {
 		_ = r.container.Terminate(ctx)
+	}
+	if r.database != nil {
+		_ = r.database.Terminate(ctx)
+	}
+	if r.net != nil {
+		_ = r.net.Remove(ctx)
 	}
 }
 
@@ -103,28 +134,54 @@ func (r *rig) buildBinary() error {
 	return nil
 }
 
-// startController boots the pinned dockerized Controller in demo mode, or
-// adopts an already-running one when UNIFIG_TEST_CONTROLLER_URL is set (a
-// faster inner loop while developing the suite).
+// startController boots a dockerized Controller from the matrix in demo mode,
+// with the database it needs beside it, or adopts an already-running one when
+// UNIFIG_TEST_CONTROLLER_URL is set (a faster inner loop while developing the
+// suite).
 func (r *rig) startController(ctx context.Context) error {
 	if u := os.Getenv("UNIFIG_TEST_CONTROLLER_URL"); u != "" {
 		r.controllerURL = u
 		return nil
 	}
 
+	cfg, err := compat.LoadConfig(compatibilityConfig)
+	if err != nil {
+		return err
+	}
 	image := os.Getenv("UNIFIG_TEST_CONTROLLER_IMAGE")
 	if image == "" {
-		image = defaultControllerImage
+		image = cfg.ControllerImage(cfg.Newest())
+	}
+
+	// A network of its own, rather than the default bridge: it is what gives
+	// the database a name the Controller can resolve, and it goes away with the
+	// suite.
+	private, err := network.New(ctx)
+	if err != nil {
+		return fmt.Errorf("creating the network the Controller and its database share: %w", err)
+	}
+	r.net = private
+
+	if err := r.startDatabase(ctx, cfg.Container.Database); err != nil {
+		return err
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        image,
 			ExposedPorts: []string{"8443/tcp"},
-			Env:          map[string]string{"UNIFI_STDOUT": "true"},
+			Networks:     []string{private.Name},
+			Env: map[string]string{
+				"MONGO_HOST":       databaseHost,
+				"MONGO_PORT":       "27017",
+				"MONGO_USER":       databaseUser,
+				"MONGO_PASS":       databasePassword,
+				"MONGO_DBNAME":     databaseName,
+				"MONGO_AUTHSOURCE": "admin",
+			},
 			Files: []testcontainers.ContainerFile{{
 				HostFilePath:      "testdata/demo-mode",
-				ContainerFilePath: "/usr/local/unifi/init.d/demo-mode",
+				ContainerFilePath: "/custom-cont-init.d/demo-mode",
 				FileMode:          0o755,
 			}},
 			WaitingFor: wait.ForHTTP("/status").
@@ -150,6 +207,34 @@ func (r *rig) startController(ctx context.Context) error {
 		return err
 	}
 	r.controllerURL = endpoint
+	return nil
+}
+
+// startDatabase starts the MongoDB the Network application stores everything
+// in. It waits for the port to answer from outside the container, which is
+// what tells the two mongod runs apart: the official image starts one bound to
+// loopback to create the root user, and only the second is reachable at all.
+func (r *rig) startDatabase(ctx context.Context, image string) error {
+	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        image,
+			ExposedPorts: []string{"27017/tcp"},
+			Networks:     []string{r.net.Name},
+			NetworkAliases: map[string][]string{
+				r.net.Name: {databaseHost},
+			},
+			Env: map[string]string{
+				"MONGO_INITDB_ROOT_USERNAME": databaseUser,
+				"MONGO_INITDB_ROOT_PASSWORD": databasePassword,
+			},
+			WaitingFor: wait.ForListeningPort("27017/tcp").WithStartupTimeout(3 * time.Minute),
+		},
+		Started: true,
+	})
+	if err != nil {
+		return fmt.Errorf("starting the Controller's database (%s): %w", image, err)
+	}
+	r.database = container
 	return nil
 }
 

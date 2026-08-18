@@ -1,0 +1,76 @@
+# What unifig's version-compatibility promise is made of.
+#
+# Everything CI runs the process-level suite against is in this file, and none
+# of it is in code: adding a Controller version to the matrix is a line here.
+# The published table (docs/COMPATIBILITY.md) and the untested-version warning
+# the CLI prints are both generated from what those runs actually did, by
+# `tools/compat` — so nothing in either is a claim this file could make on its
+# own.
+
+# The floor of the promise. Nothing below this is tested, so nothing below it
+# belongs in this file; the generator refuses a version that is.
+floor: "10.0"
+
+container:
+  # The image the suite boots. linuxserver/unifi-network-application publishes
+  # every Network version above the floor and is still publishing;
+  # jacobalberty/unifi, which this suite ran against until ADR-0016, stopped at
+  # 10.0.162 and so could never carry a matrix of more than one version.
+  image: linuxserver/unifi-network-application
+  # The Network application in that image does not ship a database, so the rig
+  # starts one beside it.
+  database: mongo:8
+
+# The Controller versions CI boots, newest first. The first is also what a bare
+# `make e2e` runs against, so the pin and the matrix cannot drift apart.
+versions:
+  - "10.5.67"
+  - "10.4.57"
+  - "10.1.84"
+  - "10.0.162"
+
+# The rows of the published table, and the tests that are the evidence for
+# each. The tests are named by file because that is how this suite is already
+# organised; the generator reads which tests are in the file and how they went,
+# so a row appears in the table only where its tests actually ran and passed.
+#
+# Every `_test.go` file holding tests has to be named here and every name here
+# has to match tests that ran, which is what stops the table from quietly
+# ceasing to cover something.
+areas:
+  - name: Networks
+    tests: reconcile_test.go
+  - name: WLANs
+    tests: wlan_test.go
+  - name: Port Forwards
+    tests: portforward_test.go
+  - name: DHCP Reservations
+    tests: reservation_test.go
+  - name: Export
+    tests: export_test.go
+  # The areas below are tested against a recording rather than a container, so
+  # the table has to say why it cannot put them in a version column. The
+  # generator requires a `why` from exactly the areas whose tests replay a
+  # recording, and refuses one from the rest, so this is never a claim about
+  # coverage — only an explanation of a gap the runs themselves demonstrate.
+  - name: WAN slots
+    tests: wan_test.go
+    why: >-
+      with no gateway attached a container has no WAN entries at all, so there
+      is nothing to match, update or seed onto (ADR-0008)
+  - name: Encrypted DNS
+    tests: dns_test.go
+    why: >-
+      a Setting is whatever the firmware an operator actually runs says it is,
+      which no container can be trusted to answer for (ADR-0012)
+  - name: Zones and Firewall Policies
+    tests: firewall_test.go
+    why: >-
+      no container has a zone-based firewall at all — both collections answer
+      `200 []` on every site and a zone create is refused, because the feature
+      belongs to an adopted gateway (ADR-0013)
+  - name: Untested-version warning
+    tests: version_test.go
+    why: >-
+      the Controller version these tests need is by definition one the matrix
+      does not carry, so they set it on a recording rather than boot it

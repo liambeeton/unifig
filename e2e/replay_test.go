@@ -372,6 +372,44 @@ func (r *replay) write(w http.ResponseWriter, body json.RawMessage) {
 	}
 }
 
+// seedVersion makes the recorded Controller answer that it runs another
+// version, which is how a test reaches a Controller the compatibility matrix
+// does not carry. There is no other way to get one: the matrix is the set of
+// versions CI can boot, so an untested version is by definition not among them.
+func (r *replay) seedVersion(t *testing.T, version string) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	answered := systemInformation(t, r.sysinfo)
+	answered["version"] = version
+
+	encoded, err := json.Marshal(map[string]any{
+		"meta": map[string]any{"rc": "ok"},
+		"data": []map[string]any{answered},
+	})
+	if err != nil {
+		t.Fatalf("re-encoding the recorded system information: %v", err)
+	}
+	r.sysinfo = encoded
+}
+
+// systemInformation is the one entry stat/sysinfo answers with. The caller
+// holds the lock.
+func systemInformation(t *testing.T, recorded json.RawMessage) map[string]any {
+	t.Helper()
+	var answered struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(recorded, &answered); err != nil {
+		t.Fatalf("reading the recorded system information: %v", err)
+	}
+	if len(answered.Data) == 0 {
+		t.Fatal("the recording holds no system information, so it does not say which Controller it came from")
+	}
+	return answered.Data[0]
+}
+
 // slotNames names the uplinks the recording holds, in the order the Controller
 // returns them — the names, where slot returns the entry occupying one.
 //

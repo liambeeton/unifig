@@ -1,8 +1,14 @@
 name: CI
 
 # Every step here is a make target, so CI and a developer's laptop run the
-# same commands. The two jobs mirror the Makefile's split: `check` needs no
-# Docker daemon, `e2e` does.
+# same commands. The two halves mirror the Makefile's split: `check` needs no
+# Docker daemon, the matrix does.
+#
+# The matrix itself is not written here. compatibility.yaml says which
+# Controller versions to run against, `compat versions` hands that list to the
+# job fan-out below, and the published table is generated from what those jobs
+# actually did — so adding a version is a line in that file and nothing in this
+# workflow.
 
 on:
   push:
@@ -34,17 +40,12 @@ jobs:
       - name: Check
         run: make check
 
-  e2e:
-    name: e2e vs UniFi Network ${{ matrix.network }}
+  versions:
+    name: versions
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      # One pinned Network version for now; issue #11 grows this into the
-      # published compatibility matrix.
-      matrix:
-        network: ["v10.0.162"]
-    env:
-      CONTROLLER_IMAGE: jacobalberty/unifi:${{ matrix.network }}
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,12 +53,80 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Pull outside the test run so a slow or flaky registry doesn't eat
-      # into the suite's own timeout.
-      - name: Pull Controller image
-        run: docker pull "$CONTROLLER_IMAGE"
+      # Through the same loader the rig and the generator use, so a
+      # compatibility.yaml either of them would refuse cannot become a workflow
+      # that quietly runs against fewer Controllers than the table claims.
+      - id: read
+        run: echo "matrix=$(go run ./tools/compat versions)" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    name: e2e vs UniFi Network ${{ matrix.network }}
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One failing version must not hide the others: the table is generated
+      # from every run, so every run has to happen.
+      fail-fast: false
+      matrix:
+        network: ${{ fromJSON(needs.versions.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
       - name: E2E
-        run: make e2e
-        env:
-          UNIFIG_TEST_CONTROLLER_IMAGE: ${{ env.CONTROLLER_IMAGE }}
+        run: make matrix-run VERSION=${{ matrix.network }}
+
+      # What the run did, for the compatibility job to generate the table from.
+      # It is the whole `go test -json` stream rather than a summary, so the
+      # table is generated from the run itself and a disagreement is readable.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matrix-${{ matrix.network }}
+          path: .matrix/*.json
+          if-no-files-found: error
+
+  compatibility:
+    name: compatibility table
+    needs: [versions, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: matrix-*
+          path: .matrix
+          merge-multiple: true
+
+      # The committed table has to be the one these runs produce. A change that
+      # adds a version, adds an area, or adds tests to one, fails here until the
+      # generated files are regenerated and committed.
+      - name: Check the published table
+        run: make matrix-check
+
+      # What the runs say the table should be, whether or not it matches. Adding
+      # a version otherwise means running the whole matrix locally — four
+      # Controller boots — purely to produce files CI has already computed, so
+      # this makes the fix a download rather than half an hour of Docker.
+      - name: The table these runs produce
+        if: always()
+        run: make matrix-generate
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compatibility-table
+          path: |
+            docs/COMPATIBILITY.md
+            internal/compat/matrix.json
+          if-no-files-found: error

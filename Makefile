@@ -16,6 +16,16 @@ GOLANGCI_LINT := $(TOOLS_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 # Arguments forwarded to the binary by `run`, e.g. make run ARGS="export".
 ARGS ?=
 
+# Where a matrix run keeps what each Controller version's suite did. The
+# compatibility table is generated from these, so they are results rather than
+# logs; gitignored, because what gets committed is the table.
+MATRIX ?= .matrix
+
+# One version of the matrix, for `make matrix-run` — which is how CI runs the
+# suite, one version per job. Empty here on purpose: a version that defaulted to
+# something would be a job quietly testing the wrong Controller.
+VERSION ?=
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -56,6 +66,31 @@ check: fmt-check lint build test ## Everything that does not need Docker
 .PHONY: e2e
 e2e: ## Run the testcontainers suite against a real Controller (needs Docker)
 	$(GO) test ./e2e/... -timeout 20m -count=1
+
+# The compatibility matrix: the same suite, against every Controller version in
+# compatibility.yaml, and the published table generated from what those runs
+# did. Adding a version is a line in that file — none of this changes.
+.PHONY: matrix
+matrix: matrix-run-all matrix-generate ## Run the suite against every Controller version and regenerate the table (needs Docker)
+
+# One version of it. CI runs this in a job per version and keeps $(MATRIX) as an
+# artifact, which the compatibility job then generates the table from.
+.PHONY: matrix-run-all
+matrix-run-all:
+	$(GO) run ./tools/compat run -out $(MATRIX)
+
+.PHONY: matrix-run
+matrix-run: ## Run the suite against one Controller version (VERSION=10.5.67)
+	@[ -n "$(VERSION)" ] || { echo "VERSION is not set, e.g. make matrix-run VERSION=10.5.67" >&2; exit 1; }
+	$(GO) run ./tools/compat run -version $(VERSION) -out $(MATRIX)
+
+.PHONY: matrix-generate
+matrix-generate: ## Regenerate the table from results already in $(MATRIX)
+	$(GO) run ./tools/compat generate -results $(MATRIX)
+
+.PHONY: matrix-check
+matrix-check: ## Fail if the committed table is not what those runs produce
+	$(GO) run ./tools/compat check -results $(MATRIX)
 
 # Connection config comes from the environment only — the developer's direnv
 # .envrc, which is gitignored. Nothing here defaults, hardcodes or echoes a

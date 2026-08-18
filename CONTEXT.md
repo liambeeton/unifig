@@ -89,6 +89,11 @@ _Avoid_: credential (too narrow), sensitive field
 Generating YAML config from the live Controller state. The brownfield adoption path.
 _Avoid_: import (direction is Controller → files)
 
+**Compatibility matrix**:
+The Controller versions CI runs the whole process-level suite against, and the table generated from what those runs did (`docs/COMPATIBILITY.md`). It is evidence rather than a promise: a version is in it because a run passed, and the areas no container can answer for carry the version of the recording instead, since a recording is one router (ADR-0013, ADR-0016). A Controller running something the matrix does not carry is **untested**, which earns a warning on stderr and never a refusal — untested is not broken, and unifig has no evidence either way.
+An **area** is one row of it — a body of behaviour with a test file behind it, such as Networks or Zones and Firewall Policies — and its **evidence** is which kind of Controller answered those tests, `container` or `recording`. Both are read out of the suite rather than declared, so a row cannot claim a kind of Controller its tests never talked to.
+_Avoid_: supported versions (the table says what was tested, which is a narrower claim), certified
+
 ### APIs
 
 **Internal API**:
