@@ -1,0 +1,107 @@
+{
+  "image": "linuxserver/unifi-network-application",
+  "floor": "10.0",
+  "versions": [
+    "10.5.67",
+    "10.4.57",
+    "10.1.84",
+    "10.0.162"
+  ],
+  "recording": {
+    "version": "10.5.67",
+    "source": "e2e/testdata/udr"
+  },
+  "areas": [
+    {
+      "name": "Networks",
+      "tests": "reconcile_test.go",
+      "evidence": "container",
+      "versions": [
+        "10.5.67",
+        "10.4.57",
+        "10.1.84",
+        "10.0.162"
+      ]
+    },
+    {
+      "name": "WLANs",
+      "tests": "wlan_test.go",
+      "evidence": "container",
+      "versions": [
+        "10.5.67",
+        "10.4.57",
+        "10.1.84",
+        "10.0.162"
+      ]
+    },
+    {
+      "name": "Port Forwards",
+      "tests": "portforward_test.go",
+      "evidence": "container",
+      "versions": [
+        "10.5.67",
+        "10.4.57",
+        "10.1.84",
+        "10.0.162"
+      ]
+    },
+    {
+      "name": "DHCP Reservations",
+      "tests": "reservation_test.go",
+      "evidence": "container",
+      "versions": [
+        "10.5.67",
+        "10.4.57",
+        "10.1.84",
+        "10.0.162"
+      ]
+    },
+    {
+      "name": "Export",
+      "tests": "export_test.go",
+      "evidence": "container",
+      "versions": [
+        "10.5.67",
+        "10.4.57",
+        "10.1.84",
+        "10.0.162"
+      ]
+    },
+    {
+      "name": "WAN slots",
+      "tests": "wan_test.go",
+      "evidence": "recording",
+      "versions": [
+        "10.5.67"
+      ],
+      "why": "with no gateway attached a container has no WAN entries at all, so there is nothing to match, update or seed onto (ADR-0008)"
+    },
+    {
+      "name": "Encrypted DNS",
+      "tests": "dns_test.go",
+      "evidence": "recording",
+      "versions": [
+        "10.5.67"
+      ],
+      "why": "a Setting is whatever the firmware an operator actually runs says it is, which no container can be trusted to answer for (ADR-0012)"
+    },
+    {
+      "name": "Zones and Firewall Policies",
+      "tests": "firewall_test.go",
+      "evidence": "recording",
+      "versions": [
+        "10.5.67"
+      ],
+      "why": "no container has a zone-based firewall at all — both collections answer `200 []` on every site and a zone create is refused, because the feature belongs to an adopted gateway (ADR-0013)"
+    },
+    {
+      "name": "Untested-version warning",
+      "tests": "version_test.go",
+      "evidence": "recording",
+      "versions": [
+        "10.5.67"
+      ],
+      "why": "the Controller version these tests need is by definition one the matrix does not carry, so they set it on a recording rather than boot it"
+    }
+  ]
+}

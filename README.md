@@ -25,6 +25,21 @@ Connection config lives in the environment only — never in the resource YAML, 
 
 On the UDR: UniFi OS → Control Plane → Admins & Users → your admin → Create API Key. Unifig authenticates with that key only (`X-API-KEY`); it never asks for your admin password. API-key auth on Internal API endpoints is enforced by the UniFi OS layer — see `docs/adr/0003-apikey-auth-os-gate.md`.
 
+### Which Controller versions this works on
+
+`docs/COMPATIBILITY.md` is the answer, and it is generated rather than written: CI runs the whole test suite against every UniFi Network version in `compatibility.yaml`, and the table is built from what those runs did. It also says which areas a container cannot answer for at all, and which Controller version the recorded responses behind them came from. The versions are deliberately not repeated here — the table is the one place they live, and a list in this file is a list that goes stale.
+
+A version that is not in the table gets a warning and nothing else:
+
+```
+unifig: this Controller runs UniFi Network 10.6.0, which is newer than any version unifig has been
+tested against — the newest is 10.5.67 (docs/COMPATIBILITY.md). Carrying on anyway.
+```
+
+(That is an illustration; `docs/COMPATIBILITY.md` prints the same sentence with the versions this build actually carries.)
+
+Every online command prints it once, on stderr, and then does exactly what it was asked. Untested means nobody has run the suite against it, which is not the same as broken — unifig has no business refusing to manage a router on that basis.
+
 ## The config file
 
 One `unifig.yaml` describes the Controller's configuration. `examples/unifig.yaml` is a working starting point; `schema/unifig.schema.json` is the contract.
@@ -500,14 +515,15 @@ Changes are listed in the order apply will run them, so a consumer reading the a
 ```sh
 make check   # fmt-check + lint + build + test; needs no Docker
 make fmt     # format with gofumpt
-make e2e     # the dockerized suite
+make e2e     # the dockerized suite, against the newest Controller in the matrix
+make matrix  # the same suite against every Controller version, then regenerate the table
 make run ARGS="export"   # run against a live Controller, credentials from the environment
 make record-udr          # re-record e2e/testdata/udr from a real UDR, read-only and scrubbed
 ```
 
 Requirements: Go for `make check`, plus Docker for `make e2e`. `make` installs its own pinned golangci-lint (which carries gofumpt) into `bin/`; the pin lives in the Makefile.
 
-Tests drive the whole tool at the process boundary against a real dockerized Controller (see `docs/adr/0003-apikey-auth-os-gate.md` for the rig design). That suite is `make e2e`; `make test` runs everything else, skipping it. The Controller version pin lives in `e2e/rig_test.go` (`defaultControllerImage`) and in the CI matrix.
+Tests drive the whole tool at the process boundary against a real dockerized Controller (see `docs/adr/0003-apikey-auth-os-gate.md` for the rig design). That suite is `make e2e`; `make test` runs everything else, skipping it. There is no version pin in the rig: which Controller versions exist lives in `compatibility.yaml`, `make e2e` boots the newest of them, and CI fans out over all of them. The Controller image needs a database beside it, which the rig starts and throws away with the suite (`docs/adr/0016-the-matrix-needs-an-image-that-is-still-published.md`).
 
 The Settings are what that container cannot stand in for — with no gateway it has no WAN entries at all, and no container can be trusted to say what a Setting looks like on the firmware you actually run — so those tests run against recorded Controller responses served at the same base URL, through the same API-key header, to the same real binary (`e2e/replay_test.go`). The recordings live in `e2e/testdata/udr/`.
 
@@ -521,4 +537,6 @@ The firewall fixtures were hand-written until that recording, and replacing them
 
 Validate's tests are the exception, and deliberately so: it is offline by design, and requiring Docker to prove no Controller is needed would be an odd way to demonstrate it. They sit at the highest Docker-free seam instead — `cli.Run`, driven from an external test package in `internal/cli/` so they cannot reach past it.
 
-Rig knobs: `UNIFIG_TEST_CONTROLLER_IMAGE` overrides the pinned Controller image; `UNIFIG_TEST_CONTROLLER_URL` points the suite at an already-running demo-mode Controller for a faster inner loop.
+`make matrix` is the compatibility promise, made mechanically: it runs the whole suite against every version in `compatibility.yaml` and regenerates `docs/COMPATIBILITY.md` and `internal/compat/matrix.json` from what those runs did (`tools/compat`). CI does the same thing one version per job and fails if the committed table is not what its runs produce, so the published table cannot say something no run said. Adding a version is a line in `compatibility.yaml`; so is adding a row, and the generator refuses a configuration that names tests which are not there or leaves a test file out of the table entirely.
+
+Rig knobs: `UNIFIG_TEST_CONTROLLER_IMAGE` overrides the Controller image the matrix would have chosen; `UNIFIG_TEST_CONTROLLER_URL` points the suite at an already-running demo-mode Controller for a faster inner loop.

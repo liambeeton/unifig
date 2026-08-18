@@ -1,14 +1,37 @@
 #!/bin/sh
-# Runs inside the jacobalberty/unifi container before the Network application
-# starts. Demo mode (is_simulation) skips the setup wizard and provisions the
+# Runs inside the Controller container before the Network application starts,
+# as one of the image's /custom-cont-init.d scripts.
+#
+# Two things have to be in system.properties by then: where the database is,
+# and that this is a demo site. The image writes the first itself out of the
+# MONGO_* variables, but only if the file does not already exist, and nothing
+# orders that against this script — so whichever of the two runs first, this
+# writes the half that is missing and leaves the half that is there.
+#
+# Demo mode (is_simulation) skips the setup wizard and provisions the
 # admin/admin account the rig logs in with; the simulated gateway makes the
-# demo site resemble a UDR-managed one.
+# demo site resemble a UDR-managed one. It does not provision a zone-based
+# firewall: that belongs to an adopted gateway, and there is none here
+# (ADR-0013).
+props=/config/data/system.properties
 
-write_config() {
-  echo "${1}=${2}" >> /usr/lib/unifi/data/system.properties
-}
+mkdir -p /config/data
+touch "$props"
 
-write_config is_simulation true
-write_config demo.num_uap 0
-write_config demo.num_ugw 1
-write_config demo.num_usw 1
+if ! grep -q '^db.mongo.uri=' "$props"; then
+  cat >> "$props" <<PROPERTIES
+db.mongo.local=false
+db.mongo.uri=mongodb://${MONGO_USER}:${MONGO_PASS}@${MONGO_HOST}:${MONGO_PORT}/${MONGO_DBNAME}?tls=false&authSource=${MONGO_AUTHSOURCE}
+statdb.mongo.uri=mongodb://${MONGO_USER}:${MONGO_PASS}@${MONGO_HOST}:${MONGO_PORT}/${MONGO_DBNAME}_stat?tls=false&authSource=${MONGO_AUTHSOURCE}
+unifi.db.name=${MONGO_DBNAME}
+PROPERTIES
+fi
+
+if ! grep -q '^is_simulation=' "$props"; then
+  cat >> "$props" <<PROPERTIES
+is_simulation=true
+demo.num_uap=0
+demo.num_ugw=1
+demo.num_usw=1
+PROPERTIES
+fi

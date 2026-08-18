@@ -2,7 +2,7 @@
 
 Issue #8 asked for Zones and Firewall Policies "covered by dockerized-Controller tests at the process-level seam". They are not, and cannot be. The dockerized Controller has no zone-based firewall at all.
 
-What was actually found on `jacobalberty/unifi:v10.0.162`, the newest tag that image publishes and the one CI pins:
+What was actually found on `jacobalberty/unifi:v10.0.162`, the newest tag that image publishes and the one CI pinned at the time — the suite has since moved to an image that is still being published (ADR-0016), and **10.5.67 in a container answers the same way**, five minor versions on:
 
 - `GET /v2/api/site/<site>/firewall/zone` answers `200 []`. So does `firewall-policies`, and so does `zone-matrix`. Not an error — an empty collection.
 - A **freshly created site** answers the same way, so this is not leftover state on the demo site. There is no point at which a Controller of this version produces a built-in zone.
@@ -81,12 +81,14 @@ real site rather than a read.
 - **Seed zones and policies into the dockerized Controller's database directly** — rejected on ADR-0008's reasoning, and more clearly here: the Controller refuses to create one through its own API, so seeding means writing to MongoDB behind the application's back. That tests unifig against rows this suite invented, in a Controller that has already said it does not have this feature.
 - **Adopt a gateway into the container** — rejected: there is no gateway to adopt. Device adoption is out of scope for this project (issue #1), and a simulated one is not a device that provisions a firewall.
 - **Wait for a newer container image** — rejected as a blocker, though it may change the answer later. v10.0.162 is the newest tag published; the maintainer's own router runs 10.5.67. Blocking an area of the v1 catalogue on somebody else's release schedule is the wrong trade when the recording mechanism already exists and was built for exactly this.
+
+  **It did not change the answer.** The compatibility matrix (ADR-0016) now boots 10.5.67 in a container, and its zone and policy collections answer `200 []` exactly as this one did. Waiting was not going to work, because the missing thing is an adopted gateway rather than a newer build.
 - **Ship Zones and Policies untested** — rejected. The area that can lock an operator out of their own network is not the one to leave uncovered, and a recording tests the whole binary end to end even where the fixture's provenance is weaker than it should be.
 - **Test at a code seam instead, with a fake client** — rejected: the spec ruled out code-level mocking once and for all, and it would stop exercising the v2 URL layout and the bare-array decoding, which is most of what is new here.
 
 ## Consequences
 
-- The compatibility matrix (issue #11) cannot say anything about Zones or Policies from CI alone, and should not pretend to. Firewall coverage is a claim about a recording until a container ships the feature.
+- The compatibility matrix (issue #11) cannot say anything about Zones or Policies from CI alone, and should not pretend to. Firewall coverage is a claim about a recording until a container ships the feature. **That matrix now exists and does exactly this**: `docs/COMPATIBILITY.md` has no firewall row in its version columns at all, and carries the firewall in a second table attributed to the recording's own Controller version. Which table an area lands in is read out of the tests — whether they replay a recording — rather than written down, so a container that one day ships the feature moves the row by making the tests stop replaying.
 - `make record-udr` reads six endpoints rather than four, and its scrub keeps only the zones and policies the Controller marks as its own — `default_zone` and `predefined`. It read `attr_no_delete` on a zone until migrated hardware showed no zone carries it (issue #23). A zone an operator made is named after their household, and the tests that want a custom zone seed their own. Not recording something remains the only rule that cannot be got wrong (ADR-0011).
 - A zone's membership is rewritten during the scrub rather than merely substituted: the router's own LANs are dropped in favour of the committed one, so a member naming a dropped LAN is pointed at the LAN the recording keeps. Without that, every zone would come back holding ids that resolve to nothing.
 - **Re-recording from a migrated UDR was the acceptance test issue #8 could not run, and it has now been run.** This bullet has said three things in two days: that it should happen before v1, then that v1 would carry the debt rather than block on a change to the maintainer's home network, and now that the recording exists. The middle version was written while the router was on the legacy firewall and the migration looked like it would not happen; it is worth remembering that the argument for shipping the debt was reasonable and would have shipped two defects that only hardware could find.

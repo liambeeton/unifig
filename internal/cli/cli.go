@@ -18,6 +18,7 @@ import (
 
 	"github.com/filipowm/go-unifi/v2/unifi"
 
+	"github.com/liambeeton/unifig/internal/compat"
 	"github.com/liambeeton/unifig/internal/config"
 	"github.com/liambeeton/unifig/internal/export"
 	"github.com/liambeeton/unifig/internal/reconcile"
@@ -97,9 +98,9 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	verb, rest := args[0], args[1:]
 	switch verb {
 	case "plan":
-		return runPlan(ctx, rest, stdout)
+		return runPlan(ctx, rest, stdout, stderr)
 	case "apply":
-		return runApply(ctx, rest, stdin, stdout)
+		return runApply(ctx, rest, stdin, stdout, stderr)
 	case "export":
 		return runExport(ctx, rest, stdout, stderr)
 	case "validate":
@@ -135,7 +136,7 @@ func connectionFromEnv() (connection, error) {
 
 // runPlan shows what apply would do and says so in its exit code, so that a
 // pipeline or a git hook can gate on drift without reading the output.
-func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
+func runPlan(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags, positional, err := splitFlags(args, boolean("json"), boolean("prune"))
 	if err != nil {
 		return err
@@ -145,7 +146,7 @@ func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 
-	_, plan, err := computePlan(ctx, path, options(flags))
+	_, plan, err := computePlan(ctx, path, options(flags), stderr)
 	if err != nil {
 		return err
 	}
@@ -175,7 +176,7 @@ func runPlan(ctx context.Context, args []string, stdout io.Writer) error {
 // reconnects" are different answers to different questions — which is why
 // --auto-approve does not cover the second one and --allow-risky is its own
 // flag.
-func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+func runApply(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	flags, positional, err := splitFlags(args,
 		boolean("auto-approve"), boolean("allow-risky"), boolean("prune"))
 	if err != nil {
@@ -186,7 +187,7 @@ func runApply(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return err
 	}
 
-	client, plan, err := computePlan(ctx, path, options(flags))
+	client, plan, err := computePlan(ctx, path, options(flags), stderr)
 	if err != nil {
 		return err
 	}
@@ -270,7 +271,7 @@ func options(flags flags) reconcile.Options {
 // connect, compare. plan and apply share it so that what apply is about to do is
 // literally what plan just showed, and it hands back the client because apply
 // needs to keep talking to the same Controller it just read.
-func computePlan(ctx context.Context, path string, opts reconcile.Options) (unifi.Client, reconcile.Plan, error) {
+func computePlan(ctx context.Context, path string, opts reconcile.Options, stderr io.Writer) (unifi.Client, reconcile.Plan, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, reconcile.Plan{}, err
@@ -279,9 +280,9 @@ func computePlan(ctx context.Context, path string, opts reconcile.Options) (unif
 	if err != nil {
 		return nil, reconcile.Plan{}, err
 	}
-	client, err := connect(conn)
+	client, err := openController(conn, stderr)
 	if err != nil {
-		return nil, reconcile.Plan{}, fmt.Errorf("connecting to Controller at %s: %w", conn.url, err)
+		return nil, reconcile.Plan{}, err
 	}
 	plan, err := reconcile.ComputePlan(ctx, client, site, cfg, opts)
 	if err != nil {
@@ -350,9 +351,9 @@ func runExport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	client, err := connect(conn)
+	client, err := openController(conn, stderr)
 	if err != nil {
-		return fmt.Errorf("connecting to Controller at %s: %w", conn.url, err)
+		return err
 	}
 	cfg, notices, err := reconcile.Project(ctx, client, site)
 	if err != nil {
@@ -534,6 +535,27 @@ func accept(accepted []flagSpec, name string) (flagSpec, bool) {
 		return flagSpec{}, false
 	}
 	return accepted[i], true
+}
+
+// openController connects and then says so if the Controller on the other end
+// is a version unifig has never been tested against.
+//
+// The warning goes to stderr and nothing else happens: an untested Controller
+// is one nobody has run the suite against, not one anybody has found a fault
+// in, so refusing to talk to it would be unifig deciding an operator's router
+// is unsupported on no evidence at all. Every online verb comes through here so
+// that none of them can quietly be the exception.
+func openController(conn connection, stderr io.Writer) (unifi.Client, error) {
+	client, err := connect(conn)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Controller at %s: %w", conn.url, err)
+	}
+	// Version is already in hand: the SDK asks for the system information while
+	// connecting, so this costs no extra request.
+	if warning := compat.Warning(client.Version()); warning != "" {
+		_, _ = fmt.Fprintf(stderr, "unifig: %s\n", warning)
+	}
+	return client, nil
 }
 
 func connect(conn connection) (unifi.Client, error) {

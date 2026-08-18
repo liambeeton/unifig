@@ -11,3 +11,7 @@
 
 # local connection secrets (direnv workflow)
 .envrc
+
+# what each Controller version's suite did, kept by `make matrix`. The table
+# generated from these is committed; the raw results are not.
+/.matrix/
