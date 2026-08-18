@@ -26,7 +26,7 @@
     },
     "firewall-policies": {
       "title": "Firewall policies",
-      "description": "The rules governing traffic between a pair of zones. Matched against the Controller by name, and applied after the zones they name, so a file declaring a zone and a policy on it applies in one run.",
+      "description": "The rules governing traffic between a pair of zones. Matched against the Controller by name together with the pair of zones the policy governs, and applied after the zones they name, so a file declaring a zone and a policy on it applies in one run.",
       "type": "array",
       "items": { "$ref": "#/$defs/firewallPolicy" }
     },
@@ -145,7 +145,7 @@
       "properties": {
         "name": {
           "title": "Name",
-          "description": "The policy's name, as shown in the Controller. This is its natural key.",
+          "description": "The policy's name, as shown in the Controller. Its natural key is this name together with the pair of zones it governs, because the Controller ships its own policies one per pair and reuses names across them — so two policies may share a name, but not a name and both ends.",
           "type": "string",
           "minLength": 1
         },
