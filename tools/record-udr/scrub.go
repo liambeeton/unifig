@@ -469,7 +469,7 @@ func (s *scrubber) firewall(raw recording, lan, uplinks []map[string]any) (zones
 		// zone says it with `default_zone` and a stable `zone_key`. This line
 		// used to read the network's marker, on the assumption the convention was
 		// shared, and the first recording taken from migrated hardware kept
-		// nothing at all as a result (issue #23, ADR-0013).
+		// nothing at all as a result (issue #23, ADR-0005).
 		if zone["default_zone"] != true {
 			continue
 		}

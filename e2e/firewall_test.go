@@ -41,14 +41,9 @@ func applyFirewall(t *testing.T, r *replay, body string, args ...string) result 
 
 // aLAN is the network the recording holds for zones to be about — asked for
 // rather than named, for the same reason the WAN suite asks which uplinks exist.
-func aLAN(t *testing.T, r *replay) string {
-	t.Helper()
-	return r.aNetwork(t)
-}
-
 func TestPlanShowsAZoneToCreateAndApplyMakesIt(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 
 	body := fmt.Sprintf(`networks:
   - name: %q
@@ -121,7 +116,7 @@ func TestAZoneWithNoNetworksKeyLeavesItsMembershipAlone(t *testing.T) {
 // plan says so before it does.
 func TestStatingAZonesNetworksSaysWhichOneLeavesIt(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 	r.seedZone(t, "Segmented", []string{lan}, nil)
 
 	body := `zones:
@@ -149,7 +144,7 @@ func TestStatingAZonesNetworksSaysWhichOneLeavesIt(t *testing.T) {
 // member, which is ADR-0004 one level in.
 func TestStatingAZonesNetworksLeavesAMemberUnifigCannotNameAlone(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 
 	before := r.zoneMembers(t, "External")
 	if len(before) == 0 {
@@ -276,7 +271,7 @@ firewall-policies:
 // prints the order apply will use, so an operator sees it before agreeing to it.
 func TestPlanOrdersPoliciesAfterZonesAndDeletionsTheOtherWayAround(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 	r.seedZone(t, "Old Zone", []string{lan}, nil)
 	r.seedPolicy(t, "Old Policy", "ALLOW", "Old Zone", "External", nil)
 
@@ -350,7 +345,7 @@ func TestPruneNeverDeletesTheControllersBuiltInZones(t *testing.T) {
 		t.Fatal("the recording holds no built-in zones, so this test would prove nothing")
 	}
 
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 	r.seedZone(t, "Prunable", []string{lan}, nil)
 
 	// A config that has never heard of the built-ins, pruned.
@@ -419,7 +414,7 @@ func TestPruneLeavesTheControllersOwnPoliciesAlone(t *testing.T) {
 // takes part in has no business deleting one.
 func TestPruneLeavesTheFirewallAloneWhenTheFileDoesNotMentionIt(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 	r.seedZone(t, "Bystander", []string{lan}, nil)
 	r.seedPolicy(t, "Bystander Policy", "ALLOW", "Bystander", "External", nil)
 
@@ -446,7 +441,7 @@ func TestPruneLeavesTheFirewallAloneWhenTheFileDoesNotMentionIt(t *testing.T) {
 // asserts a guess about somebody else's product (ADR-0013).
 func TestPruneLeavesAZoneAPolicyStillGovernsAlone(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 	r.seedZone(t, "Held Zone", []string{lan}, nil)
 	r.seedPolicy(t, "Held Policy", "ALLOW", "Held Zone", "External", nil)
 
@@ -493,7 +488,7 @@ func TestPruneLeavesAZoneAPolicyStillGovernsAlone(t *testing.T) {
 // refusing it costs on a migrated router.
 func TestTheControllersOwnPolicyStillHoldsItsZoneBack(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 	r.seedZone(t, "Held By Predefined", []string{lan}, nil)
 	r.seedPolicy(t, "Block All Traffic", "BLOCK", "Held By Predefined", "External",
 		map[string]any{"predefined": true})
@@ -553,7 +548,7 @@ func TestAPolicyNamingAZoneThatExistsNowhereIsRefusedWithTheZonesThatDo(t *testi
 // enough: the ownership read decodes the whole answer or none of it.
 func TestPruneLeavesEveryZoneAloneWhenItCannotTellWhichAreTheControllersOwn(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 	r.seedZone(t, "Prunable", []string{lan}, map[string]any{"default_zone": "not a bool"})
 
 	// A config that names none of the live zones, pruned. Every one of them is a
@@ -667,7 +662,7 @@ func TestTwoPoliciesOnZonesUnifigCannotNameAreNotADuplicate(t *testing.T) {
 
 func TestPlanRefusesToGuessBetweenTwoZonesSharingAName(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 	r.seedZone(t, "Twice", []string{lan}, nil)
 	r.seedZone(t, "Twice", nil, nil)
 
@@ -747,7 +742,7 @@ firewall-policies:
 // that describes it, and that file plans clean.
 func TestExportWritesTheFirewallAndItPlansClean(t *testing.T) {
 	r := startReplay(t)
-	lan := aLAN(t, r)
+	lan := r.aNetwork(t)
 	r.seedZone(t, "Exported Zone", []string{lan}, nil)
 	r.seedPolicy(t, "Exported Policy", "BLOCK", "Exported Zone", "External", nil)
 
