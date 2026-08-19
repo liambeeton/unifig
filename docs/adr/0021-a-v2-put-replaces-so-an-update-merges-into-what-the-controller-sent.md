@@ -118,15 +118,26 @@ and a different session — **issue #38**, with the reading that would settle it
   worth measuring rather than assuming: two v2 collections, two DTOs, and only
   one of them refuses what it has not heard of.
 
-  **What this does not say is that a generated policy's `origin_id` survives an
-  update.** The probe added the four to a custom policy that never had them, so
-  the reading is that the DTO does not *take* them from a body — not that it
-  leaves the Controller's own values where they are. The two are different
-  claims, and only a policy the Controller generated carries the fields to tell
-  them apart. #37's probe was deliberately scoped to a throwaway policy nothing
-  rides, so that reading was not taken and is not inferred here. Sending the
-  fields back remains the right side to err on: under a replace, a body that
-  carries a field cannot be the reason it went missing.
+  That reading left one thing open — whether a *generated* policy's own
+  `origin_id` survives an update, as against the DTO merely not taking the field
+  off a body — and going after it dissolved the question instead of answering
+  it. `origin_id` appears only on policies the Controller generated, and those
+  are exactly the policies unifig **cannot address**: their `_id` is a composite
+  of `source_zone_id + destination_zone_id + index`, which neither GET nor PUT
+  resolves (404 `api.err.FirewallPolicyNotFound`). Of the 88 policies on the
+  site at the time, 87 were of that shape and the one real 24-hex id belonged to
+  the policy unifig had just created — which carries no `origin_id` at all.
+
+  **So no policy unifig can update carries an `origin_id`, and this ADR's
+  sharpest worry is unreachable.** Severing a generated policy's back-reference
+  to the network that made it was the loss worth fearing, and there is no request
+  unifig can send that would do it.
+
+  What that turned up instead is that unifig cannot update the Controller's own
+  policies at all, which is a defect of its own and is **issue #41** rather than
+  a consequence of this decision. It is the reason the comment on
+  `updateFirewallPolicy` calling a predefined policy "updatable like any other"
+  no longer says so.
 - `hits` and `last_hit` were the part of that reasoned about rather than
   measured, and the reasoning turned out to be moot rather than wrong: the
   Controller does not take either from the body at all. Sending them a moment

@@ -437,10 +437,19 @@ func updateFirewallPolicy(
 		return Change{}, false
 	}
 
-	// The Controller's own policy on this pair is matchable and updatable like
-	// any other — only prune exempts it (ADR-0005) — so `Allow All Traffic` from
-	// Internal to Gateway is a one-line edit away from being the rule that locks
-	// the operator out. That is the change this mark exists for.
+	// The Controller's own policy on this pair is matchable like any other, and
+	// only prune exempts it (ADR-0005) — so `Allow All Traffic` from Internal to
+	// Gateway is a one-line edit away from being the rule that locks the operator
+	// out. That is the change this mark exists for.
+	//
+	// It is not updatable, though, and this mark currently guards a change that
+	// cannot be applied. A policy the Controller ships has no addressable `_id`
+	// — it is a composite of both zone ids and the index, which the write
+	// endpoint answers 404 to — so the PUT below has nowhere to land, while the
+	// collection read it merges into succeeds. Measured on the live migrated UDR
+	// on 19 August 2026, off the back of #37, and filed as issue #41 with the
+	// reading that would confirm it. Nothing is changed here for it: what a plan
+	// should say about a policy it cannot write is that issue's to decide.
 	risk := ""
 	if closesTheGateway(current, desired, facts) {
 		risk = gatewayRisk
