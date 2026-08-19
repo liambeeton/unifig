@@ -293,6 +293,38 @@ func TestApplyLeavesPortForwardSettingsUnifigDoesNotModelAlone(t *testing.T) {
 	}
 }
 
+// The same promise as the test above, made about the whole object rather than
+// about three fields somebody thought to name.
+//
+// A forward is the smallest object unifig manages — this suite's own seed comes
+// back with eleven fields — so it is where the struct round-trip cost least and
+// still cost something: before #39 an update to a mapping also wrote
+// `src_limiting_enabled` and `src_firewall_group_id`, at Go's zero, onto an
+// object the Controller had stored neither on. Nothing said so in the plan.
+func TestApplyingAPortForwardChangeWritesNoFieldTheConfigDoesNotState(t *testing.T) {
+	testRig.seedPortForward(t, map[string]any{
+		"name": "Forward Only Stated", "enabled": false, "pfwd_interface": "wan",
+		"dst_port": "8449", "fwd": "10.20.0.10", "fwd_port": "8123",
+		"proto": "tcp", "src": "any", "destination_ip": "any", "log": true,
+	})
+	cleanupPortForwards(t, "Forward Only Stated")
+
+	path := configFile(t, `port-forwards:
+  - name: Forward Only Stated
+    port: 8449
+    forward-ip: 10.20.0.11
+    forward-port: 8123
+    protocol: tcp
+`)
+
+	before := testRig.livePortForward(t, "Forward Only Stated")
+
+	apply(t, path)
+
+	after := testRig.livePortForward(t, "Forward Only Stated")
+	assertOnlyTheseFieldsMoved(t, before, after, "fwd")
+}
+
 // A forward the config does not mention is not unifig's business, which is the
 // same promise every other section makes: name one forward in the file and the
 // rest are not at stake.

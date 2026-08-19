@@ -252,9 +252,25 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// update stores what unifig sent, the way the Controller does: the entry is
-// replaced by the body rather than merged with it, which is what makes "unifig
-// writes the whole object back" a thing this suite can actually check.
+// update stores what unifig sent, the way the Controller does: the fields the
+// body carries are written onto the entry, and every field it leaves out is
+// left exactly as it was.
+//
+// It merges because that is what was measured. A v1 PUT carrying an ID and one
+// field changes that field and keeps the rest — asked of a real dockerized
+// Controller by TestAV1PutOnANetworkKeepsTheFieldsTheBodyLeavesOut, and read
+// back off all four collections unifig updates by the apply-side tests beside
+// it (ADR-0023). It used to replace, which was a fixture asserting a guess —
+// the thing ADR-0014 objects to — and one that cost nothing only while unifig
+// happened to send the whole object back anyway.
+//
+// The WAN slots are the rows this could not be asked about directly, because a
+// container has no WAN entries at all (ADR-0008). What stands in for that is
+// not a guess either: a slot is a networkconf entry, so the endpoint measured
+// above is this endpoint, and the reading across is between two rows of one
+// collection rather than between two endpoints. The v2 firewall tree in this
+// same file replaces, and that difference is measured too (ADR-0021) — which is
+// why neither is inferred from the other.
 func (r *replay) update(w http.ResponseWriter, req *http.Request, id string) {
 	var sent map[string]any
 	if err := json.NewDecoder(req.Body).Decode(&sent); err != nil {
@@ -269,9 +285,11 @@ func (r *replay) update(w http.ResponseWriter, req *http.Request, id string) {
 		if entry["_id"] != id {
 			continue
 		}
-		sent["_id"] = id
-		r.entries[i] = sent
-		r.write(w, data(sent))
+		merged := maps.Clone(entry)
+		maps.Copy(merged, sent)
+		merged["_id"] = id
+		r.entries[i] = merged
+		r.write(w, data(merged))
 		return
 	}
 
@@ -771,6 +789,27 @@ func (r *replay) slot(t *testing.T, slot string) map[string]any {
 	return nil
 }
 
+// asStored is a test's fields as a Controller would be holding them: the map
+// round-tripped through JSON, so a number seeded as a Go `int` is read back as
+// the `float64` any JSON decoder produces.
+//
+// The rig gets this for nothing, because its seeds go to a real Controller over
+// HTTP and come back decoded. The stand-in's seeds are handed to it in memory,
+// so without this a test could read back a type no Controller can send — and
+// pass or fail on the difference between two ways of writing 911.
+func asStored(t *testing.T, fields map[string]any) map[string]any {
+	t.Helper()
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("seeding the stand-in with %v: %v", fields, err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(encoded, &stored); err != nil {
+		t.Fatalf("seeding the stand-in with %v: %v", fields, err)
+	}
+	return stored
+}
+
 // seedSlot sets fields on a WAN slot without going through unifig — the
 // stand-in's version of the rig seeding the Controller through its own API, and
 // the reason these tests do not depend on which values the recording happens to
@@ -778,12 +817,11 @@ func (r *replay) slot(t *testing.T, slot string) map[string]any {
 func (r *replay) seedSlot(t *testing.T, slot string, fields map[string]any) {
 	t.Helper()
 	entry := r.slot(t, slot)
+	stored := asStored(t, fields)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for name, value := range fields {
-		entry[name] = value
-	}
+	maps.Copy(entry, stored)
 }
 
 // addSlot puts another uplink on the Controller, which is how a test states
@@ -791,6 +829,8 @@ func (r *replay) seedSlot(t *testing.T, slot string, fields map[string]any) {
 // router's answer, not the set of routers that exist.
 func (r *replay) addSlot(t *testing.T, slot string, fields map[string]any) {
 	t.Helper()
+	stored := asStored(t, fields)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -801,9 +841,7 @@ func (r *replay) addSlot(t *testing.T, slot string, fields map[string]any) {
 		"enabled":          true,
 		"wan_networkgroup": slot,
 	}
-	for name, value := range fields {
-		entry[name] = value
-	}
+	maps.Copy(entry, stored)
 	r.entries = append(r.entries, entry)
 }
 

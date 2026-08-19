@@ -282,13 +282,12 @@ func createDHCPReservation(desired config.DHCPReservation, record unifi.User) Ch
 		Fields: setReservationFields(desired),
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			if record.ID != "" {
-				// The client's own record goes back with only unifig's two
-				// fields changed, so the name the operator gave the device in
-				// the Controller's UI survives being given an address here.
-				updated := record
-				overwriteManagedReservation(&updated, desired)
-				_, err := client.UpdateUser(ctx, site, &updated)
-				return err
+				// Only unifig's two fields go on the wire, so the name the
+				// operator gave the device in the Controller's UI survives
+				// being given an address here — a v1 PUT leaves what the body
+				// leaves out (ADR-0023).
+				return writeManaged(ctx, client, clientRecordPath(site, record.ID),
+					managedReservationUpdate(record.ID, desired))
 			}
 			reservation := newClientRecord(desired)
 			_, err := client.CreateUser(ctx, site, &reservation)
@@ -311,14 +310,11 @@ func updateDHCPReservation(desired config.DHCPReservation, live unifi.User) (Cha
 		Name:   config.NormalisedMAC(desired.MAC),
 		Fields: fields,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
-			// The live record goes back with only unifig's own fields changed,
-			// so the client's name, note, user group and blocked state survive
-			// an apply rather than being reset by a record unifig built from
-			// scratch. It also carries the Controller ID the update needs.
-			updated := live
-			overwriteManagedReservation(&updated, desired)
-			_, err := client.UpdateUser(ctx, site, &updated)
-			return err
+			// Only unifig's own fields go on the wire, so the client's name,
+			// note, user group and blocked state survive an apply — a v1 PUT
+			// leaves what the body leaves out (ADR-0023).
+			return writeManaged(ctx, client, clientRecordPath(site, live.ID),
+				managedReservationUpdate(live.ID, desired))
 		},
 	}, true
 }
@@ -375,10 +371,11 @@ func deleteDHCPReservation(live unifi.User) Change {
 		// kept: there is no absence to render here.
 		Fields: []Field{{Name: "ip", From: live.FixedIP, Notes: []string{givesUpAddress(live)}}},
 		write: func(ctx context.Context, client unifi.Client, site string) error {
-			updated := live
-			updated.UseFixedIP = false
-			_, err := client.UpdateUser(ctx, site, &updated)
-			return err
+			// One field, which is the whole of what giving up a reservation is:
+			// the address stops being fixed and the record is otherwise the one
+			// the Controller was holding (ADR-0015, ADR-0023).
+			return writeManaged(ctx, client, clientRecordPath(site, live.ID),
+				managedUpdate{"_id": live.ID, "use_fixedip": false})
 		},
 	}
 }
@@ -427,18 +424,44 @@ func changedReservationFields(current, desired config.DHCPReservation) []Field {
 	return []Field{{Name: "ip", From: text(current.IP), To: desired.IP}}
 }
 
-// overwriteManagedReservation writes the config's values onto a client record
-// and touches nothing else — the single place that decides which fields unifig
-// owns on a record that is mostly not unifig's.
+// clientRecordPath is the Controller's v1 endpoint for one client record. It is
+// named for the record rather than for the reservation, because that is what it
+// is: a reservation is two fields of one (ADR-0015).
+func clientRecordPath(site, id string) string { return restPath(site, "user", id) }
+
+// overwriteManagedReservation and managedReservationUpdate are the two halves
+// of which fields unifig owns on a record that is mostly not unifig's, apart
+// for the same reason as every other type's pair and stating the same list.
 //
 // The MAC is written as the Controller stores it. On an update that is a no-op
 // by construction, since matching is what found this record; on the create path
 // it is what stops a config written in upper case from producing a record whose
 // MAC does not match the one the next plan reads back.
+//
+// This half is what a **create** writes onto the empty record newClientRecord
+// builds, for a device the Controller has never seen.
 func overwriteManagedReservation(record *unifi.User, desired config.DHCPReservation) {
 	record.MAC = config.NormalisedMAC(desired.MAC)
 	record.UseFixedIP = true
 	record.FixedIP = desired.IP
+}
+
+// managedReservationUpdate is the other half: the body of a write onto a record
+// the Controller already holds, which is the ID the endpoint needs and the two
+// fields a reservation is.
+//
+// It carries both of unifig's verbs, because on this type they are one write.
+// Giving a known client an address is a *create* of the reservation and an edit
+// to the record; changing the address is an update of both. What differs is
+// what the plan says, which is the operator's question rather than the wire's
+// (createDHCPReservation).
+func managedReservationUpdate(id string, desired config.DHCPReservation) managedUpdate {
+	return managedUpdate{
+		"_id":         id,
+		"mac":         config.NormalisedMAC(desired.MAC),
+		"use_fixedip": true,
+		"fixed_ip":    desired.IP,
+	}
 }
 
 // newClientRecord builds the Controller object for a client unifig is creating a

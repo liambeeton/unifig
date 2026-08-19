@@ -12,7 +12,8 @@ import (
 
 // wpaPSK is the Controller's security mode for a WLAN clients join with a
 // pre-shared key, and the only mode a passphrase belongs to. Stating one in the
-// config is therefore stating this, which is what overwriteManagedWLAN writes.
+// config is therefore stating this, which is what unifig's managed WLAN fields
+// write.
 const wpaPSK = "wpapsk"
 
 // passphraseSecurities are the security modes on which a stored passphrase
@@ -231,7 +232,7 @@ func updateWLAN(desired config.WLAN, live unifi.WLAN, bound bindings) (Change, b
 		return Change{}, false
 	}
 
-	// Writing a passphrase writes WPA-PSK with it (see overwriteManagedWLAN), so
+	// Writing a passphrase writes WPA-PSK with it (see managedWLANUpdate), so
 	// stating one for a WLAN the Controller does not hold that way changes how
 	// every client joins it. unifig does not model security, so the config
 	// cannot say that and the plan does — the update-path counterpart of
@@ -262,13 +263,12 @@ func updateWLAN(desired config.WLAN, live unifi.WLAN, bound bindings) (Change, b
 			if err != nil {
 				return err
 			}
-			// The live object goes back with only unifig's own fields changed,
-			// so band selection, PMF, minimum data rates, MAC filters and
-			// everything else the operator set in the Controller's UI survive.
-			updated := live
-			overwriteManagedWLAN(&updated, desired, networkID)
-			_, err = client.UpdateWLAN(ctx, site, &updated)
-			return err
+			// Only the fields the config states go on the wire, so band
+			// selection, PMF, minimum data rates, MAC filters and everything
+			// else the operator set in the Controller's UI survive — a v1 PUT
+			// leaves what the body leaves out (ADR-0023).
+			return writeManaged(ctx, client, wlanPath(site, live.ID),
+				managedWLANUpdate(live.ID, desired, networkID))
 		},
 	}, true
 }
@@ -359,9 +359,12 @@ func changedWLANFields(current, desired config.WLAN) []Field {
 	return fields
 }
 
-// overwriteManagedWLAN writes the config's values onto a Controller WLAN and
-// touches nothing else — the WLAN counterpart of overwriteManagedNetwork, and
-// the single place that decides which WLAN fields unifig owns.
+// wlanPath is the Controller's v1 endpoint for one WLAN.
+func wlanPath(site, id string) string { return restPath(site, "wlanconf", id) }
+
+// overwriteManagedWLAN and managedWLANUpdate are the two halves of which WLAN
+// fields unifig owns — the WLAN counterpart of overwriteManagedNetwork and
+// managedNetworkUpdate, apart for the same reason and stating the same list.
 //
 // Setting a passphrase also sets the security mode, because on the Controller
 // the two are one decision: an x_passphrase on a WLAN whose security is `open`
@@ -374,6 +377,8 @@ func changedWLANFields(current, desired config.WLAN) []Field {
 // A passphrase harvested off a WLAN the Controller holds as open would arrive
 // back here as a config asking for WPA-PSK, and unifig would lock an open WLAN
 // on nobody's instruction.
+//
+// This half is what a **create** writes onto the struct newWLAN builds.
 func overwriteManagedWLAN(wlan *unifi.WLAN, desired config.WLAN, networkID string) {
 	wlan.Name = desired.Name
 	wlan.NetworkID = networkID
@@ -383,13 +388,29 @@ func overwriteManagedWLAN(wlan *unifi.WLAN, desired config.WLAN, networkID strin
 	}
 
 	// Not a modelled field, and not really a write either: the Controller
-	// rejects `schedule_with_duration: null` outright, and it does not return
-	// the field on a read — so a live WLAN decoded and handed straight back
-	// would be refused for a field the operator never touched. Normalising the
-	// empty case here covers create and update in one place.
+	// rejects `schedule_with_duration: null` outright, so a WLAN created from a
+	// struct whose slice is nil is refused for a field the operator never
+	// touched. It is a create-path repair only — an update names the fields it
+	// sends, and this is not one of them.
 	if wlan.ScheduleWithDuration == nil {
 		wlan.ScheduleWithDuration = []unifi.WLANScheduleWithDuration{}
 	}
+}
+
+// managedWLANUpdate is the other half: the body of an **update**, which is the
+// ID the endpoint needs and the fields the config states.
+//
+// The network is here at every update rather than only when it changes, because
+// it is a managed field like the name: what the config says a WLAN's clients
+// join is what the WLAN's clients join. Sending it unchanged costs nothing under
+// a merge, and leaving it out would make this list disagree with the create's.
+func managedWLANUpdate(id string, desired config.WLAN, networkID string) managedUpdate {
+	managed := managedUpdate{"_id": id, "name": desired.Name, "networkconf_id": networkID}
+	if desired.Passphrase != "" {
+		managed["x_passphrase"] = desired.Passphrase
+		managed["security"] = wpaPSK
+	}
+	return managed
 }
 
 // newWLAN builds the Controller object for a WLAN unifig is creating.

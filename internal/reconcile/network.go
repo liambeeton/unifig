@@ -147,18 +147,15 @@ func updateNetwork(desired config.Network, live unifi.Network) (Change, bool) {
 		Name:   desired.Name,
 		Fields: fields,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
-			// The live object goes back with only unifig's own fields
-			// changed, so the Controller keeps every setting unifig does not
-			// model — the DNS servers, the lease time, the IGMP switches —
-			// instead of having them reset by an object unifig built from
-			// scratch. It also carries the Controller ID the update needs.
-			updated := live
-			overwriteManagedNetwork(&updated, desired)
-			if relocated {
-				updated.DHCPDStart, updated.DHCPDStop = pool.start, pool.stop
-			}
-			_, err := client.UpdateNetwork(ctx, site, &updated)
-			return err
+			// Only the fields the config states go on the wire, so the
+			// Controller keeps every setting unifig does not model — the DNS
+			// servers, the lease time, the IGMP switches and the ninety-odd
+			// others — because a v1 PUT merges rather than replacing
+			// (ADR-0023). What used to go instead was the live object read
+			// through a go-unifi struct, which kept those settings too and
+			// wrote eighty-three fields the Controller had never stored.
+			return writeManaged(ctx, client, networkPath(site, live.ID),
+				managedNetworkUpdate(live, desired, pool, relocated))
 		},
 	}, true
 }
@@ -312,15 +309,25 @@ func changedNetworkFields(current, desired config.Network) []Field {
 	return fields
 }
 
-// overwriteManagedNetwork writes the config's values onto a Controller network
-// and touches nothing else. It is the single place that decides which fields
-// unifig owns, which is what stops plan (what would change) and apply (what
-// does change) from ever disagreeing about the answer.
+// networkPath is the Controller's v1 endpoint for one networkconf entry. A WAN
+// slot is one of those too, so updateWANSlot writes through this same path.
+func networkPath(site, id string) string { return restPath(site, "networkconf", id) }
+
+// overwriteManagedNetwork and managedNetworkUpdate are the two halves of which
+// fields unifig owns on a network, and between them they are the whole of it —
+// which is what stops plan (what would change) and apply (what does change)
+// from disagreeing about the answer. They state the same list twice because the
+// verbs differ, so a fourth field unifig comes to own is a change to both.
 //
 // "Owns" is per field and per file, not per type: the omissions
-// changedNetworkFields declines to report are the same omissions this declines
+// changedNetworkFields declines to report are the same omissions these decline
 // to write, so a network named in the config keeps every setting the config did
 // not name.
+//
+// This half writes onto a Controller object, and is what a **create** writes
+// onto unifig's own defaults for a new LAN (newNetwork). There is no live
+// object under a create and nothing of the operator's to preserve, so a struct
+// is the right thing to be building.
 func overwriteManagedNetwork(network *unifi.Network, desired config.Network) {
 	network.Name = desired.Name
 	if desired.VLAN != 0 {
@@ -330,6 +337,56 @@ func overwriteManagedNetwork(network *unifi.Network, desired config.Network) {
 	if desired.Subnet != "" {
 		network.IPSubnet = desired.Subnet
 	}
+}
+
+// managedNetworkUpdate is the other half: the body of an **update**, which is
+// the ID the endpoint needs and the fields the config states. A v1 PUT merges,
+// so everything left out of this map is left as the Controller was holding it
+// — which is the update rule ADR-0004 states, kept by the Controller rather
+// than by unifig handing the object back (ADR-0023).
+//
+// The DHCP pool is the one thing here the config does not state, and a changed
+// subnet carries it because the **oldest Controller in the matrix demands it**.
+// A body moving `ip_subnet` and naming no `dhcpd_start`/`dhcpd_stop` is
+// `api.err.Invalid` on 10.0.162; the identical body with those two keys is
+// taken, and two empty strings satisfy it as well as real addresses do. On
+// 10.1.84, 10.4.57 and 10.5.67 the same body is simply accepted. It had been
+// invisible because the go-unifi struct sent the pair on every write, at "" when
+// the Controller held nothing — nobody had noticed that was load-bearing, and
+// the first shape of ADR-0023's change passed on 10.5.67 and failed two
+// long-standing tests on the floor.
+//
+// So the body carries the pool the network will have. Where the subnet change
+// stranded the old one that is the rebuilt pool relocateDHCP worked out, and the
+// plan has already said so; otherwise it is the pool the Controller is holding,
+// sent back at the value it already has. An unchanged subnet carries nothing.
+//
+// What that costs on a Controller above the floor is the two keys appearing at
+// "" on a network that had neither — the only fields unifig writes here that
+// nothing asked for. It is two rather than eighty-three, it is confined to a
+// subnet change, and it is the price of the floor being 10.0 rather than
+// something newer (ADR-0023).
+func managedNetworkUpdate(live unifi.Network, desired config.Network, pool dhcpPool, relocated bool) managedUpdate {
+	managed := managedUpdate{"_id": live.ID, "name": desired.Name}
+	if desired.VLAN != 0 {
+		managed["vlan"] = desired.VLAN
+		managed["vlan_enabled"] = true
+	}
+	if desired.Subnet == "" {
+		return managed
+	}
+
+	managed["ip_subnet"] = desired.Subnet
+	if live.IPSubnet == desired.Subnet {
+		return managed
+	}
+	sent := dhcpPool{start: live.DHCPDStart, stop: live.DHCPDStop}
+	if relocated {
+		sent = pool
+	}
+	managed["dhcpd_start"] = sent.start
+	managed["dhcpd_stop"] = sent.stop
+	return managed
 }
 
 // newNetwork builds the Controller object for a network unifig is creating.
@@ -342,7 +399,8 @@ func overwriteManagedNetwork(network *unifi.Network, desired config.Network) {
 //
 // They apply on create only. An operator who afterwards changes the DHCP
 // range, turns off mDNS or narrows the lease time keeps those edits forever:
-// updates go through overwriteManagedNetwork, which never touches anything here.
+// an update sends managedNetworkUpdate, which names none of them, and a v1 PUT
+// leaves what the body leaves out (ADR-0023).
 func newNetwork(desired config.Network) unifi.Network {
 	network := unifi.Network{
 		Purpose:               "corporate",

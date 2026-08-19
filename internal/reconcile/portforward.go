@@ -205,14 +205,12 @@ func updatePortForward(desired config.PortForward, live unifi.PortForward) (Chan
 		Name:   desired.Name,
 		Fields: fields,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
-			// The live object goes back with only unifig's own fields changed, so
-			// the uplink the forward listens on, the logging switch and whether it
-			// is enabled at all survive an apply rather than being reset by an
-			// object unifig built from scratch.
-			updated := live
-			overwriteManagedPortForward(&updated, desired)
-			_, err := client.UpdatePortForward(ctx, site, &updated)
-			return err
+			// Only the fields the config states go on the wire, so the uplink
+			// the forward listens on, the logging switch and whether it is
+			// enabled at all survive an apply — a v1 PUT leaves what the body
+			// leaves out (ADR-0023).
+			return writeManaged(ctx, client, portForwardPath(site, live.ID),
+				managedPortForwardUpdate(live.ID, desired))
 		},
 	}, true
 }
@@ -367,9 +365,13 @@ func changedPortForwardFields(live unifi.PortForward, desired config.PortForward
 	return fields
 }
 
-// overwriteManagedPortForward writes the config's values onto a Controller port
-// forward and touches nothing else — the single place that decides which fields
-// unifig owns.
+// portForwardPath is the Controller's v1 endpoint for one port forward.
+func portForwardPath(site, id string) string { return restPath(site, "portforward", id) }
+
+// overwriteManagedPortForward and managedPortForwardUpdate are the two halves
+// of which fields unifig owns on a forward, apart for the same reason as every
+// other type's pair and stating the same list. This half is what a **create**
+// writes onto the struct newPortForward builds.
 func overwriteManagedPortForward(forward *unifi.PortForward, desired config.PortForward) {
 	forward.Name = desired.Name
 	forward.DstPort = strconv.Itoa(desired.Port)
@@ -381,6 +383,30 @@ func overwriteManagedPortForward(forward *unifi.PortForward, desired config.Port
 	}
 }
 
+// managedPortForwardUpdate is the other half: the body of an **update**, which
+// is the ID the endpoint needs and the fields the config states.
+//
+// Four of the five go every time rather than only when they differ, which is
+// what the create half does and what changedPortForwardFields already implies:
+// the schema requires all four, so a forward in the config always states its
+// port, its target and its protocol. The source is the one optional field, and
+// omitting it means unmanaged as usual (ADR-0004) — under a merge that is the
+// same sentence on the wire as it is in the file.
+func managedPortForwardUpdate(id string, desired config.PortForward) managedUpdate {
+	managed := managedUpdate{
+		"_id":      id,
+		"name":     desired.Name,
+		"dst_port": strconv.Itoa(desired.Port),
+		"fwd":      desired.ForwardIP,
+		"fwd_port": strconv.Itoa(desired.ForwardPort),
+		"proto":    desired.Protocol,
+	}
+	if desired.Source != "" {
+		managed["src"] = desired.Source
+	}
+	return managed
+}
+
 // newPortForward builds the Controller object for a forward unifig is creating.
 //
 // The four values below are the Controller's own defaults for a new forward,
@@ -389,9 +415,10 @@ func overwriteManagedPortForward(forward *unifi.PortForward, desired config.Port
 // would instead be disabled and bound to no uplink, which forwards nothing.
 //
 // They apply on create only. An operator who afterwards moves the forward onto a
-// second WAN, turns on logging or disables it for a while keeps that, because
-// updates go through overwriteManagedPortForward, which never touches anything
-// here — and `any` is replaced immediately below when the config states a source.
+// second WAN, turns on logging or disables it for a while keeps that: an update
+// sends managedPortForwardUpdate, which names none of them, and a v1 PUT leaves
+// what the body leaves out (ADR-0023). `any` is replaced immediately below when
+// the config states a source.
 func newPortForward(desired config.PortForward) unifi.PortForward {
 	forward := unifi.PortForward{
 		Enabled:       true,

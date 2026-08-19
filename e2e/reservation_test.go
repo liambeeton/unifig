@@ -189,6 +189,37 @@ func TestApplyLeavesTheRestOfTheClientRecordUntouched(t *testing.T) {
 	}
 }
 
+// The same promise as the test above, made about the whole record rather than
+// about four fields somebody thought to name — which on this type is the
+// promise, because a reservation *is* two fields of somebody else's record
+// (ADR-0015). Everything on it that unifig does not manage belongs to whoever
+// set it in the UI, and there is no list of what that might be.
+//
+// The record is seeded with the fields a Controller puts on one and nothing
+// else, so what the apply writes shows up against it. Before #39 an update
+// wrote five fields at Go's zero onto a record holding thirteen — `network_id`,
+// `fixed_ap_enabled` and two `virtual_network_override_*` switches among them —
+// none of them unifig's to have an opinion about, and none of them in the plan.
+func TestApplyingAReservationChangeWritesNoFieldTheConfigDoesNotState(t *testing.T) {
+	testRig.seedReservation(t, map[string]any{
+		"mac": "00:11:22:33:44:0e", "name": "Only Stated NAS", "note": "on the shelf",
+		"noted": true, "blocked": true, "use_fixedip": true, "fixed_ip": "192.168.1.64",
+	})
+	cleanupClients(t, "00:11:22:33:44:0e")
+
+	path := configFile(t, `dhcp-reservations:
+  - mac: "00:11:22:33:44:0e"
+    ip: 192.168.1.164
+`)
+
+	before := testRig.liveClient(t, "00:11:22:33:44:0e")
+
+	apply(t, path)
+
+	after := testRig.liveClient(t, "00:11:22:33:44:0e")
+	assertOnlyTheseFieldsMoved(t, before, after, "fixed_ip")
+}
+
 // A client the Controller already knows but holds no reservation for is a
 // *create* of the reservation, because the reservation is what did not exist.
 // The record underneath it does, so the write is an edit to that record rather

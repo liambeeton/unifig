@@ -119,13 +119,15 @@ and a different session — **issue #38**, with the reading that would settle it
 - The replay stand-in's replace-semantics stops being an assumption. Its comment
   now cites this measurement, which is what ADR-0014's objection to fixtures that
   assert guesses asked for.
-- The same shape exists on every v1 Resource unifig updates — a network, a WLAN,
-  a port forward all round-trip through a go-unifi struct, and ADR-0004 already
-  says the Internal API "stores whatever it is sent rather than merging". Nothing
-  here measured those endpoints and this ADR claims nothing about them. Filed as
-  **issue #39**, which needs no hardware: those areas are the ones the dockerized
-  Controller does cover, so the same question can be put to a real Network
-  application by a test.
+- The same shape existed on every v1 Resource unifig updates — a network, a WLAN,
+  a port forward all round-tripped through a go-unifi struct, and ADR-0004 said
+  the Internal API "stores whatever it is sent rather than merging". Nothing here
+  measured those endpoints and this ADR claimed nothing about them. Issue #39
+  put the question to a dockerized Controller, and **the answer was the opposite
+  one**: a v1 PUT merges, so those updates were dropping nothing and inventing
+  eighty-three fields instead. They send only the fields the config states now
+  (ADR-0023). Two endpoints, two measurements, two shapes — and the reason this
+  ADR filed the question rather than answering it by symmetry.
 - What none of this can say is what any of it does on firmware other than
   10.5.67, which is the standing limitation of a single household's router and
   the reason `docs/COMPATIBILITY.md` exists.

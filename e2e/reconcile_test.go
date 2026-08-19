@@ -626,6 +626,94 @@ func TestApplyLeavesControllerSettingsUnifigDoesNotModelAlone(t *testing.T) {
 	}
 }
 
+// What a v1 PUT does with a field the body leaves out, measured rather than
+// assumed.
+//
+// ADR-0004 said the Internal API "stores whatever it is sent rather than
+// merging", and every update unifig makes rests on that sentence. It was an
+// assertion about the create path read across onto the update path, and nobody
+// had put the question to a Controller — while #35 measured the *v2*
+// firewall-policy endpoint and found a replace there, which destroyed an
+// operator's ICMP narrowing in the same request that changed a verdict
+// (ADR-0021). That is what made asking this one an issue of its own (#39).
+//
+// It is asked through the rig's own client rather than through unifig, because
+// what is under test is the Controller. A body carrying the ID and one field is
+// a body unifig would never send, and that is exactly the point: it is the
+// shortest question that tells a merge from a replace.
+func TestAV1PutOnANetworkKeepsTheFieldsTheBodyLeavesOut(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Probe Merge", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 191, "ip_subnet": "10.191.0.1/24",
+		"dhcpd_enabled": true, "dhcpd_start": "10.191.0.100", "dhcpd_stop": "10.191.0.199",
+		"dhcpd_dns_enabled": true, "dhcpd_dns_1": "9.9.9.9",
+		"domain_name": "chosen.by.hand",
+	})
+	t.Cleanup(func() { testRig.deleteNetworksNamed(t, "Probe Merge") })
+
+	before := testRig.liveNetwork(t, "Probe Merge")
+	id, _ := before["_id"].(string)
+
+	testRig.putDirectly(t, "/api/s/default/rest/networkconf/"+id, map[string]any{
+		"_id": id, "vlan": 291,
+	})
+
+	after := testRig.liveNetwork(t, "Probe Merge")
+	if vlan, ok := after["vlan"].(float64); !ok || vlan != 291 {
+		t.Fatalf("the PUT did not take: vlan = %#v — a body the Controller ignored measures nothing", after["vlan"])
+	}
+	assertOnlyTheseFieldsMoved(t, before, after, "vlan")
+}
+
+// The same rule as it reaches an operator: an apply changing one modelled field
+// writes that field, and the object the Controller holds is otherwise the one
+// it was holding before.
+//
+// TestApplyLeavesControllerSettingsUnifigDoesNotModelAlone above names five
+// fields and checks those; this names none and checks all of them, which is the
+// only form of the promise that a field nobody has thought of is covered by.
+// The difference is not academic — before #39 this test failed on eighty-three
+// fields, every one of them a Go zero value written onto a Controller that had
+// stored nothing there, `is_nat` and `internet_access_enabled` among them.
+//
+// `external_id` is the other half, and the field this suite can point at: the
+// Controller puts one on every network and `go-unifi` v2.3.0 does not model it,
+// so it is not in the struct unifig used to send back and cannot be in the body
+// unifig sends now. It survives because the endpoint merges. Under the v2
+// endpoint's replace it would not have, which is the whole of why this had to
+// be measured rather than read across from ADR-0021.
+//
+// That it is there at all is a precondition rather than the point, so it fails
+// hard: a Controller that stamps no external_id leaves this test demonstrating
+// only half of what it says it does, and a check that quietly stops checking is
+// what ADR-0014 objects to. Every version in the matrix was run against before
+// that was written this way — 10.0.162, 10.1.84, 10.4.57 and 10.5.67 all stamp
+// one — so it is a measured precondition rather than a hoped-for one.
+func TestApplyingANetworkChangeWritesNoFieldTheConfigDoesNotState(t *testing.T) {
+	testRig.seedNetwork(t, map[string]any{
+		"name": "Apply Only Stated", "purpose": "corporate", "enabled": true,
+		"vlan_enabled": true, "vlan": 134, "ip_subnet": "10.134.0.1/24",
+		"dhcpd_enabled": true, "dhcpd_start": "10.134.0.100", "dhcpd_stop": "10.134.0.199",
+		"dhcpd_dns_enabled": true, "dhcpd_dns_1": "9.9.9.9",
+		"domain_name": "chosen.by.hand",
+	})
+	path := managedNetwork(t, `networks:
+  - name: Apply Only Stated
+    vlan: 234
+    subnet: 10.134.0.1/24
+`, "Apply Only Stated")
+
+	before := testRig.liveNetwork(t, "Apply Only Stated")
+	if _, held := before["external_id"]; !held {
+		t.Fatalf("this Controller puts no external_id on a network, so the field go-unifi does not model is not this one: %v", before)
+	}
+
+	apply(t, path)
+
+	after := testRig.liveNetwork(t, "Apply Only Stated")
+	assertOnlyTheseFieldsMoved(t, before, after, "vlan")
+}
+
 // The one field unifig writes without modelling, and only when leaving it
 // alone is not an option: a DHCP pool cannot stay in a subnet the network no
 // longer has, and the Controller rejects the whole update if it tries.
@@ -1075,4 +1163,81 @@ func assertNoChangesPendingEnv(t *testing.T, env map[string]string, args ...stri
 		t.Errorf("re-planning after apply exited %d, want %d — apply is not idempotent\nplan:\n%s",
 			res.ExitCode, exitNoChanges, res.Stdout)
 	}
+}
+
+// assertOnlyTheseFieldsMoved is the whole-object form of ADR-0004's rule: an
+// update writes the fields the config states, and the stored object is
+// otherwise the one that was there before.
+//
+// It is asked of the whole object rather than of a list of fields, because
+// there is no list to name. What an update must leave behind is everything the
+// config does not state — a hundred fields on a network, most of which unifig
+// has never heard of — so the only statement that covers them is the reading
+// before against the reading after. That is also what makes it a measurement
+// rather than a guess about which fields were at stake: a firmware that ships a
+// hundred and first is covered by the same line.
+//
+// A field the object gained is as much an unrequested change as one it lost,
+// and this reports them separately because they come from different mistakes:
+// losing one is a body that left it out under an endpoint that replaces, and
+// gaining one is a struct's zero value written where the Controller had stored
+// nothing (ADR-0021).
+func assertOnlyTheseFieldsMoved(t *testing.T, before, after map[string]any, stated ...string) {
+	t.Helper()
+
+	// The named fields have to have moved, not merely to be present. Without
+	// this an apply that wrote nothing at all would satisfy every assertion
+	// below — nothing lost, nothing gained, nothing changed — and pass for the
+	// exact opposite of the reason these tests exist.
+	for _, field := range stated {
+		if rendered(before[field]) == rendered(after[field]) {
+			t.Errorf("the change under test did not happen: %s is still %v", field, after[field])
+		}
+	}
+
+	var lost, moved []string
+	for field, was := range before {
+		now, held := after[field]
+		if !held {
+			lost = append(lost, fmt.Sprintf("%s=%v", field, was))
+			continue
+		}
+		if slices.Contains(stated, field) || rendered(was) == rendered(now) {
+			continue
+		}
+		moved = append(moved, fmt.Sprintf("%s: %v -> %v", field, was, now))
+	}
+	var gained []string
+	for field, now := range after {
+		if _, held := before[field]; !held {
+			gained = append(gained, fmt.Sprintf("%s=%v", field, now))
+		}
+	}
+	slices.Sort(lost)
+	slices.Sort(gained)
+	slices.Sort(moved)
+
+	if len(lost) > 0 {
+		t.Errorf("the apply took %d fields off the object the Controller was holding, and the config states none of them: %s",
+			len(lost), strings.Join(lost, " "))
+	}
+	if len(gained) > 0 {
+		t.Errorf("the apply wrote %d fields onto the object that the Controller had never stored, and the config states none of them: %s",
+			len(gained), strings.Join(gained, " "))
+	}
+	if len(moved) > 0 {
+		t.Errorf("the apply changed %d fields the config does not state: %s",
+			len(moved), strings.Join(moved, " "))
+	}
+}
+
+// rendered is one stored field's value as JSON, so that two readings of a
+// nested object or a list are compared by what they say rather than by whether
+// Go handed back the same map.
+func rendered(value any) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	return string(encoded)
 }

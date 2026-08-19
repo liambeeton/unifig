@@ -14,12 +14,15 @@
 //     inside this package: they never reach the config file, the plan output,
 //     or the operator. Two live Resources sharing one key make the match
 //     ambiguous, and that is where a reconcile stops rather than guesses.
-//   - Only the fields the config actually states are written (ADR-0004). An
-//     update reads the live Resource, overwrites those fields and puts the
-//     whole object back, so everything unifig does not model — DHCP ranges,
-//     DNS servers, IGMP settings — survives an apply rather than being reset
-//     to the zero values of a struct unifig built. A modelled field the file
-//     omits is unmanaged on the same terms, never a request to empty it.
+//   - Only the fields the config actually states are written (ADR-0004), so
+//     everything unifig does not model — DHCP ranges, DNS servers, IGMP
+//     settings — survives an apply rather than being reset to the zero values
+//     of a struct unifig built. A modelled field the file omits is unmanaged on
+//     the same terms, never a request to empty it. How an update keeps that
+//     promise is the endpoint's answer rather than one rule: the v1 verbs merge,
+//     so an update sends its own fields and the Controller puts the object back
+//     (ADR-0023), while a v2 PUT replaces, so an update carries back the whole
+//     object the Controller sent (ADR-0021). Both were measured.
 //   - Nothing is destroyed unless it was asked for. A Resource missing from
 //     the config is unmanaged, not condemned; deleting it takes Options.Prune,
 //     and even then the Controller's own undeletable objects are exempt, a

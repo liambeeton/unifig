@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -422,6 +423,39 @@ func TestPruneNeverDeletesAWANSlotTheConfigDoesNotName(t *testing.T) {
 				slot, res.Stdout)
 		}
 	}
+}
+
+// The same promise as the test below, made about the whole entry rather than
+// about five fields somebody thought to name — and on the update where getting
+// it wrong costs the most, because the recovery for a broken uplink can need
+// physical access.
+//
+// This is the one v1 write #39 could not put to a container: with no gateway
+// attached there are no WAN entries at all (ADR-0008), which is why these tests
+// replay a recording. What the stand-in can still state is what unifig *sent*,
+// because it merges the body into the entry the way the Controller was measured
+// to (ADR-0023) — so an update that carried the whole go-unifi struct would show
+// up here as an entry that gained the fields the struct invented, exactly as it
+// does against a real Controller for the four kinds that have one.
+func TestApplyingAWANChangeWritesNoFieldTheConfigDoesNotState(t *testing.T) {
+	r := startReplay(t)
+	slot := dhcpSlot(t, r)
+	r.seedSlot(t, slot, map[string]any{
+		"wan_dns_preference":    "manual",
+		"wan_dns1":              "1.1.1.1",
+		"wan_failover_priority": 3,
+		"wan_vlan_enabled":      true,
+		"wan_vlan":              911,
+	})
+
+	before := maps.Clone(r.slot(t, slot))
+
+	applyEnv(t, withWANPassword(r), "--allow-risky", configFile(t, pppoeConfig(slot)))
+
+	after := r.slot(t, slot)
+	assertOnlyTheseFieldsMoved(t, before, after,
+		"wan_type", "wan_username", "x_wan_password",
+		"wan_pppoe_username_enabled", "wan_pppoe_password_enabled")
 }
 
 // unifig owns the fields its config models and nothing else. A WAN slot carries

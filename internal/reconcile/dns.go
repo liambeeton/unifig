@@ -219,12 +219,19 @@ func updateEncryptedDNS(desired config.EncryptedDNS, live unifi.SettingDoh) (Cha
 			// enabled toggles on the resolvers survive an apply.
 			//
 			// "Only its own fields" is bounded by what the SDK's own type
-			// models, here and on every other write in this engine: a field of
-			// the setting that unifig.SettingDoh has no place for was dropped
-			// when the response was decoded and cannot be handed back. Today's
-			// recording has no such field, so nothing would catch it if the
-			// Controller grew one — which is worth knowing rather than
+			// models: a field of the setting that unifig.SettingDoh has no place
+			// for was dropped when the response was decoded and cannot be handed
+			// back. Today's recording has no such field, so nothing would catch
+			// it if the Controller grew one — which is worth knowing rather than
 			// implying otherwise.
+			//
+			// This is the last write in the engine still shaped that way, and
+			// deliberately: the setting tree is not the `rest/` tree #39
+			// measured, and a Setting is what the operator's own firmware says
+			// it is rather than what a container says (ADR-0012, ADR-0023).
+			// Writing the document whole is also load-bearing here, because
+			// `servers: []` states that there should be none and only a write
+			// that replaces the document says so.
 			updated := live
 			overwriteManagedEncryptedDNS(&updated, desired)
 			_, err := client.UpdateSettingDoh(ctx, site, &updated)

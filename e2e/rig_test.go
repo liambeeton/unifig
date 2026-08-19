@@ -933,3 +933,36 @@ func (r *rig) runUnifigWithInput(t *testing.T, args []string, extraEnv map[strin
 	}
 	return result{ExitCode: code, Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
 }
+
+// putDirectly writes a hand-built body to one of the Controller's own v1
+// endpoints — rig plumbing, the way seedNetwork is, and the only way to put the
+// Controller a question no config can: what does a PUT do with a field the body
+// leaves out? unifig cannot ask it, because unifig sends what unifig sends.
+//
+// It fails on the envelope as well as on the status, because the Internal API
+// reports a refusal in `meta.rc` at HTTP 200 and a probe that read that as a
+// success would measure nothing at all.
+func (r *rig) putDirectly(t *testing.T, path string, body map[string]any) {
+	t.Helper()
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshaling the body of PUT %s: %v", path, err)
+	}
+	resp := r.controllerDo(t, http.MethodPut, path, bytes.NewReader(encoded))
+	defer resp.Body.Close()
+
+	answered, _ := io.ReadAll(resp.Body)
+	var envelope struct {
+		Meta struct {
+			RC  string `json:"rc"`
+			Msg string `json:"msg"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(answered, &envelope); err != nil {
+		t.Fatalf("PUT %s answered something that is not an Internal API envelope (status %d): %s",
+			path, resp.StatusCode, answered)
+	}
+	if resp.StatusCode != http.StatusOK || envelope.Meta.RC != "ok" {
+		t.Fatalf("PUT %s: status %d: %s", path, resp.StatusCode, answered)
+	}
+}

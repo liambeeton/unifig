@@ -207,13 +207,12 @@ func updateWANSlot(desired config.WANSlot, live unifi.Network) (Change, bool) {
 		Fields: fields,
 		Risk:   wanRisk,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
-			// The live entry goes back with only unifig's own fields changed, so
-			// the failover priority, the DNS preference, the VLAN tag the ISP
-			// requires and everything else on the slot survive an apply.
-			updated := live
-			overwriteManagedWANSlot(&updated, desired)
-			_, err := client.UpdateNetwork(ctx, site, &updated)
-			return err
+			// Only the fields the config states go on the wire, so the failover
+			// priority, the DNS preference, the VLAN tag the ISP requires and
+			// everything else on the slot survive an apply — a v1 PUT merges,
+			// and a WAN slot is a networkconf entry like any other (ADR-0023).
+			return writeManaged(ctx, client, networkPath(site, live.ID),
+				managedWANSlotUpdate(live.ID, desired))
 		},
 	}, true
 }
@@ -238,9 +237,13 @@ func changedWANSlotFields(current, desired config.WANSlot) []Field {
 	return fields
 }
 
-// overwriteManagedWANSlot writes the config's values onto a Controller WAN
-// entry and touches nothing else — the single place that decides which WAN
-// fields unifig owns.
+// managedWANSlotUpdate is the body of a WAN slot update: the ID the endpoint
+// needs and the fields the config states, which between them are the whole of
+// which WAN fields unifig owns.
+//
+// It has no create half, unlike every Resource's: nothing creates a WAN slot,
+// because a slot is one of the Controller's own uplinks and a Setting rather
+// than a Resource. So this is the only place the list lives.
 //
 // Two things it deliberately never writes: the slot, because that is the
 // identity unifig matched on and moving an entry between slots is not an edit
@@ -258,18 +261,20 @@ func changedWANSlotFields(current, desired config.WANSlot) []Field {
 // Controller-side operation. They stay out of everything unifig prints —
 // fromLiveWANSlot reads credentials only for a slot actually using PPPoE, so
 // they are not exported and not diffed either.
-func overwriteManagedWANSlot(slot *unifi.Network, desired config.WANSlot) {
+func managedWANSlotUpdate(id string, desired config.WANSlot) managedUpdate {
+	managed := managedUpdate{"_id": id}
 	if desired.Type != "" {
-		slot.WANType = desired.Type
+		managed["wan_type"] = desired.Type
 	}
 	if desired.Username != "" {
-		slot.WANUsername = desired.Username
-		slot.WANPppoeUsernameEnabled = true
+		managed["wan_username"] = desired.Username
+		managed["wan_pppoe_username_enabled"] = true
 	}
 	if desired.Password != "" {
-		slot.XWANPassword = desired.Password
-		slot.WANPppoePasswordEnabled = true
+		managed["x_wan_password"] = desired.Password
+		managed["wan_pppoe_password_enabled"] = true
 	}
+	return managed
 }
 
 // noSuchSlot is the error for a config naming a slot this Controller does not

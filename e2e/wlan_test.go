@@ -537,6 +537,44 @@ wlans:
 	}
 }
 
+// The same promise as the test above, made about the whole object rather than
+// about four fields somebody thought to name: a rotation writes the passphrase
+// the config states and leaves the WLAN the Controller was holding otherwise
+// exactly as it was.
+//
+// The read shape of a WLAN is nothing like the struct unifig used to hand back.
+// This suite's own seed comes back with thirty-two fields, while most of what
+// `go-unifi` models carries no `omitempty` and so went on the wire whether the
+// Controller had sent it or not: before #39 this test failed on thirty-nine
+// fields the Controller had never stored. It is measured against what the
+// Controller holds rather than reasoned about, which is #39's whole point.
+func TestApplyingAWLANChangeWritesNoFieldTheConfigDoesNotState(t *testing.T) {
+	testRig.seedWLAN(t, map[string]any{
+		"name": "WLAN Only Stated", "enabled": true, "security": "wpapsk",
+		"x_passphrase": "the-old-passphrase", "networkconf_id": testRig.networkID(t, "Default"),
+		"hide_ssid": true, "wlan_band": "5g", "wlan_bands": []string{"5g"},
+		"mac_filter_enabled": true, "mac_filter_policy": "allow",
+		"mac_filter_list": []string{"00:11:22:33:44:55"},
+	})
+	cleanupWLANs(t, "WLAN Only Stated")
+
+	path := configFile(t, `networks:
+  - name: Default
+    subnet: 192.168.1.1/24
+wlans:
+  - name: WLAN Only Stated
+    network: Default
+    passphrase: ${WLAN_PASSPHRASE}
+`)
+
+	before := testRig.liveWLAN(t, "WLAN Only Stated")
+
+	applyEnv(t, withPassphrase(testPassphrase), path)
+
+	after := testRig.liveWLAN(t, "WLAN Only Stated")
+	assertOnlyTheseFieldsMoved(t, before, after, "x_passphrase")
+}
+
 func TestApplyMovesAWLANToAnotherNetworkAndTheNextPlanIsEmpty(t *testing.T) {
 	testRig.seedNetwork(t, map[string]any{
 		"name": "WLAN Move Target", "purpose": "corporate", "enabled": true,
