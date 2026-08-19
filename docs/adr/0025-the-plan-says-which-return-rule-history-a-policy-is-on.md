@@ -1,5 +1,19 @@
 # The plan says which return-rule history a policy is on, because unifig does not own the request
 
+> **Superseded by ADR-0026 on its decision, one day later.** This ADR declined to
+> own `create_allow_respond` on the update path for one stated reason — setting
+> it is "a write nobody has watched a Controller answer". Issue #40's probe
+> watched it on 19 August 2026: setting the flag on an update generates the
+> companion and clearing it removes one, each measured with the verdict held at
+> `ALLOW` so that only the flag moved. unifig owns the flag, a policy's companion
+> follows the config rather than its history, and the plan carries a
+> `return-rule` field rather than the notes described below.
+>
+> What survives is this ADR's readings, and one of them is still load-bearing:
+> the flag is **not** evidence that a companion exists, which is why the plan
+> renders that field from the live collection rather than from the flag. The
+> decision is history; the measurements are not.
+
 A Firewall Policy created allowing has a second policy beside it — the companion
 return rule the Controller generates, named `<name> (Return)` — and one created
 blocking and later allowed does not. Two operators applying the same config file

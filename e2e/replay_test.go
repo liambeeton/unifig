@@ -159,6 +159,13 @@ type writeContract struct {
 	refusesBody func(map[string]any) string
 	// semantics is what a PUT here does with a field the body leaves out.
 	semantics writeSemantics
+	// companions is whether this endpoint generates a companion return rule for
+	// a policy that asks for one, which only the firewall-policy collection
+	// does. It is modelled because it was measured on both verbs and in both
+	// directions (issue #40, ADR-0026) — and because without it an apply that
+	// asks for a companion is not idempotent here: the next plan would still see
+	// one missing, which is a real failure this stand-in would otherwise hide.
+	companions bool
 }
 
 // The two contracts, one per collection. Neither was inferred from the other:
@@ -172,8 +179,73 @@ var (
 	policyWriteContract = writeContract{
 		refusesBody: refusedByPolicyWrite,
 		semantics:   replaces,
+		companions:  true,
 	}
 )
+
+// reconcileCompanion brings the companion return rule into line with the policy
+// just written, which is what the Controller was measured doing on both verbs.
+//
+// Issue #40's probe, on the live migrated UDR on 19 August 2026, moved one
+// variable at a time on a throwaway `Dmz` -> `Dmz` policy with the verdict held
+// at `ALLOW` throughout: creating it with the flag took the site 86 -> 88,
+// clearing the flag took it 88 -> 87 and the companion was the one missing, and
+// setting the flag again took it 87 -> 88 with the companion back. So the flag
+// drives the companion on an update exactly as it does on a create, in both
+// directions, and this models that rather than the create alone.
+//
+// The companion is shaped the way one was read off the router: named after its
+// parent, `RESPOND_ONLY`, `predefined` — so unifig's prune spares it (ADR-0005)
+// and it holds no zone back (ADR-0019) — and carrying `origin_id` back to the
+// policy that caused it. Its ends are the reverse pair, which is where the
+// twelve `Allow Return Traffic` policies a migrated router ships sit.
+func (r *replay) reconcileCompanion(held *[]map[string]any, parent map[string]any) {
+	name, _ := parent["name"].(string)
+	requested, _ := parent["create_allow_respond"].(bool)
+	action, _ := parent["action"].(string)
+	if !requested || action != "ALLOW" {
+		r.dropCompanion(held, name)
+		return
+	}
+
+	companion := name + " (Return)"
+	for _, entry := range *held {
+		if entry["name"] == companion {
+			return
+		}
+	}
+	r.issued++
+	source, _ := parent["source"].(map[string]any)
+	destination, _ := parent["destination"].(map[string]any)
+	*held = append(*held, map[string]any{
+		"_id":                   fmt.Sprintf("6613a1f0c4b2d90a5e1fc%03d", r.issued),
+		"name":                  companion,
+		"action":                "ALLOW",
+		"enabled":               true,
+		"predefined":            true,
+		"connection_state_type": "RESPOND_ONLY",
+		"origin_type":           "custom_firewall_rule",
+		"origin_id":             parent["_id"],
+		"create_allow_respond":  false,
+		// The reverse pair, which is the end the reply arrives on.
+		"source":      destination,
+		"destination": source,
+		"site_id":     "6613a1f0c4b2d90a5e1f0000",
+	})
+}
+
+// dropCompanion removes the companion of the named policy, if it has one. It is
+// how the Controller was measured answering both a cleared request and a deleted
+// parent, which is one behaviour reached two ways.
+func (r *replay) dropCompanion(held *[]map[string]any, parent string) {
+	companion := parent + " (Return)"
+	for i, entry := range *held {
+		if entry["name"] == companion {
+			*held = append((*held)[:i], (*held)[i+1:]...)
+			return
+		}
+	}
+}
 
 // refused is every way this contract's endpoint has been measured answering
 // 400, asked once so the create and the update cannot drift apart — which is not
@@ -536,6 +608,9 @@ func (r *replay) collectionV2(
 		sent["_id"] = fmt.Sprintf("6613a1f0c4b2d90a5e1f9%03d", r.issued)
 		sent["site_id"] = "6613a1f0c4b2d90a5e1f0000"
 		*held = append(*held, sent)
+		if contract.companions {
+			r.reconcileCompanion(held, sent)
+		}
 		r.writeJSON(w, sent)
 
 	case req.Method == http.MethodPut && id != "":
@@ -572,13 +647,16 @@ func (r *replay) collectionV2(
 			sent["_id"] = id
 			if contract.semantics == replaces {
 				(*held)[i] = sent
-				r.writeJSON(w, sent)
-				return
+			} else {
+				for field, value := range sent {
+					(*held)[i][field] = value
+				}
 			}
-			for field, value := range sent {
-				(*held)[i][field] = value
+			stored := (*held)[i]
+			if contract.companions {
+				r.reconcileCompanion(held, stored)
 			}
-			r.writeJSON(w, (*held)[i])
+			r.writeJSON(w, stored)
 			return
 		}
 		r.t.Errorf("unifig updated something at %s the Controller does not have: %s", base, id)
@@ -589,7 +667,15 @@ func (r *replay) collectionV2(
 			if entry["_id"] != id {
 				continue
 			}
+			name, _ := entry["name"].(string)
 			*held = append((*held)[:i], (*held)[i+1:]...)
+			// The Controller reclaims the companion with its parent, measured by
+			// deleting one and watching the site return to its baseline id for
+			// id (ADR-0022). Without this a prune would leave orphans no test
+			// could see and no unifig could clean up.
+			if contract.companions {
+				r.dropCompanion(held, name)
+			}
 			r.writeJSON(w, map[string]any{})
 			return
 		}
@@ -1071,6 +1157,20 @@ func (r *replay) policyNamed(t *testing.T, name string) map[string]any {
 		t.Fatalf("the Controller has %d firewall policies named %q, want exactly 1", len(found), name)
 	}
 	return found[0]
+}
+
+// hasPolicyNamed is whether the site holds a policy by this name at all — the
+// question policyNamed cannot answer, because it fails the test when the answer
+// is none. What it is for is the companion return rule, which a test asks after
+// rather than before.
+func (r *replay) hasPolicyNamed(t *testing.T, name string) bool {
+	t.Helper()
+	for _, policy := range r.livePolicies(t) {
+		if policy["name"] == name {
+			return true
+		}
+	}
+	return false
 }
 
 // zoneMembers names the networks a zone holds, translated out of the Controller

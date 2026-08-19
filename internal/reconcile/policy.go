@@ -434,24 +434,14 @@ func updateFirewallPolicy(
 ) (Change, bool) {
 	current, _ := fromLivePolicy(live, bound)
 
-	fields := changedPolicyFields(current, desired)
+	// Whether the site is holding the companion this policy would have. It is
+	// asked of the live collection rather than of the policy's own
+	// `create_allow_respond`, for the reason returnRuleField gives: the flag is
+	// the request, and the companion is what an operator has.
+	fields := changedPolicyFields(current, desired, live.CreateAllowRespond, held[returnRuleName(live.Name)])
 	if len(fields) == 0 {
 		return Change{}, false
 	}
-	// What this update does to the companion return rule, hung off the verdict
-	// the way the create's note is, and read off the live policy because neither
-	// config.FirewallPolicy projection carries `create_allow_respond` — which is
-	// the only record of whether the Controller ever made one (ADR-0025, issue
-	// #40).
-	//
-	// The struct is a projection too, and it reads an absent key as false where
-	// storedPolicy keeps the two apart (ADR-0021). That distinction is the write
-	// path's — inventing a field on the object is a loss — and it collapses here
-	// on purpose: an absent key and a false both mean no companion was ever
-	// requested, which is one state of the policy however the Controller spelled
-	// it.
-	annotate(fields, "action",
-		returnRuleUpdateNote(current, desired, live.CreateAllowRespond, held[returnRuleName(live.Name)])...)
 
 	// The Controller's own policy on this pair is matchable like any other, and
 	// only prune exempts it (ADR-0005) — so `Allow All Traffic` from Internal to
@@ -628,8 +618,8 @@ func returnRuleNote(desired config.FirewallPolicy) []string {
 // `go-unifi` v2.3.0 does not model the field, so the struct a plan reads has no
 // access to it (ADR-0021) — and the name is what the plan has to print either
 // way. What is claimed is only ever "a policy by the name the Controller would
-// give the companion is here", which is exactly as strong as the sentence the
-// note goes on to write.
+// give the companion is here", which is exactly as strong as the line the plan
+// goes on to print.
 type policyNameSet map[string]bool
 
 func policyNames(live []unifi.FirewallZonePolicy) policyNameSet {
@@ -650,97 +640,62 @@ func policyNames(live []unifi.FirewallZonePolicy) policyNameSet {
 // the same object.
 func returnRuleName(parent string) string { return parent + " (Return)" }
 
-// returnRuleUpdateNote is what an update does to the companion return rule —
-// three things to say where the create has one, and never more than one of them
-// at a time.
+// returnRuleField is what an update does to the companion return rule, said as a
+// field of the change rather than as a note on one.
 //
-// The create owns the request: it asks for the companion on an allow and not
-// otherwise, so the second policy is unifig's own doing and the note states it
-// plainly (ADR-0022). An update owns nothing here. It puts back what the
-// Controller stored, minus the request wherever the verdict closes a path
-// because the Controller refuses that body — so what an operator ends up with
-// depends on how the policy came to exist rather than on what the config says,
-// and the plan's job is to tell them which history they are on (ADR-0025,
-// issue #40).
+// It is a field because it is a thing that can differ on its own. Everything
+// else unifig owns on a policy comes from a line of the config; this comes from
+// the verdict *and* from what the Controller is holding, and the two can
+// disagree with no config edit behind them — a policy sitting at `allow` with no
+// companion is exactly the state issue #40 was filed about, and it has to be
+// plannable or it can never be corrected. A note has to hang off a field that is
+// already changing, so a note could not have said this at all.
 //
-// Three of the four states have something to say, and two things decide which:
-// `create_allow_respond` as the Controller sent it, and whether a policy by the
-// companion's name is actually on the site.
+// Both ends are the companion rather than the flag. `create_allow_respond` is
+// what unifig writes and what the Controller acts on, but it is not what an
+// operator gets or loses: fifty-two of the eighty-six policies the live router
+// holds carry the flag true with no `<name> (Return)` anywhere on the site
+// (their companions are the twelve `Allow Return Traffic` policies, on reverse
+// pairs, which is the Controller's scheme for its own policies). Rendering the
+// flag would put a line in the plan for those saying a return rule goes away
+// when there is none to go. What is printed is the policy an operator will have
+// or not have.
 //
-// It takes both because the flag on its own says less than it looks like it
-// says. It is the request made at creation rather than a property of the policy
-// now — thirty-four policies that block carry it true — and, the other way
-// about, fifty-two `ALLOW` policies in the recording carry it true while not one
-// of them has a `<name> (Return)`. Reading it as proof of a companion is how a
-// plan comes to promise the deletion of a policy that was never there. See
-// policyNameSet.
-//
-//   - **Allowing, and closing, with the request standing and the companion on
-//     the site.** The companion goes.
-//     Measured on the live migrated UDR on 19 August 2026: 88 policies before
-//     the update and 87 after, the `(Return)` being the one missing. That
-//     request cleared the flag and closed the verdict at once, so which of the
-//     two the Controller acted on is not separated — and this does not need it
-//     to be, because unifig never sends one without the other:
-//     clearReturnRuleRequest clears exactly when the verdict closes. The note
-//     states the outcome it was measured producing; the mechanism is issue #40's
-//     own second box.
-//
-//     `block` is what was sent. `reject` was not — not here and not anywhere in
-//     this repository's readings — and this says the same thing about it, which
-//     is a reading across rather than a measurement. What carries it is the
-//     Controller's own message, which names no verdict at all and objects to the
-//     request rather than to the word (ADR-0022): the same rule `opensAPath`
-//     exists to state. The alternative is a plan that goes silent on one of the
-//     two ways an operator closes a path. Where a `reject` turns out to keep its
-//     companion, this note is what makes that visible rather than what hides it.
-//
-//   - **Closing, and allowing, with no request standing.** Nothing generates a
-//     companion, and that is measured rather than argued: ADR-0022 put a policy
-//     created `block` through an update to `allow` on the live migrated UDR on
-//     18 August 2026 and it came back `ALLOW` carrying the flag false, with no
-//     companion and no error. This is the row issue #40 was filed for — the
-//     policy an operator gets here differs from the one the same config file
-//     would have created, and every managed field agrees, so the plan was clean
-//     either way until this line.
-//
-//   - **Closing, and allowing, with the request standing.** The stored `true`
-//     goes back beside the new `ALLOW`, which the Controller takes, and nobody
-//     has watched what it does with it. Saying that is the only honest line
-//     available: promising a companion and promising none are both claims about
-//     a reading nobody has taken.
-//
-// The fourth state — allowing, and closing, with nothing by the companion's name
-// on the site — is a policy that had no companion to lose, and says nothing, on
-// returnRuleNote's own rule that silence is the true statement where there is no
-// second policy to announce. It is the state every one of the Controller's own
-// allow policies is in, and the reason the flag is not asked on its own.
-//
-// It asks `opensAPath` at both ends rather than reusing `becomesBlocking`, which
-// would read the same on today's three verdicts and mean something else: that
-// one is the risk check's list of verdicts that close a path, and this is the
-// Controller's own rule about the request, which turns on `allow` and nothing
-// else. A firmware shipping a fourth verdict separates them, and the return-rule
-// half is the half that must not guess (ADR-0022).
-func returnRuleUpdateNote(current, desired config.FirewallPolicy, requested, companionHeld bool) []string {
-	companion := returnRuleName(desired.Name)
-	switch {
-	case opensAPath(current.Action) && !opensAPath(desired.Action) && requested && companionHeld:
-		return []string{fmt.Sprintf(
-			"the Controller will also delete %q, the companion it made for the reply traffic",
-			companion)}
-	case !opensAPath(current.Action) && opensAPath(desired.Action) && requested:
-		return []string{fmt.Sprintf(
-			"this policy still carries the request for %q, which this update sends back untouched: "+
-				"whether the Controller makes the companion from an update is not measured",
-			companion)}
-	case !opensAPath(current.Action) && opensAPath(desired.Action):
-		return []string{fmt.Sprintf(
-			"this update makes no %q for the reply traffic: the Controller makes that companion "+
-				"for a policy created allowing, and this policy carries no such request",
-			companion)}
+// Empty when the two ends agree, which is the ordinary case: a policy that
+// allowed and still allows keeps its companion, and a plan does not mention what
+// is not moving.
+func returnRuleField(desired config.FirewallPolicy, requested, companionHeld bool) (Field, bool) {
+	want := opensAPath(desired.Action)
+	// Nothing for unifig to write: the request the Controller is holding already
+	// says what the verdict says. This is what keeps an exported firewall
+	// planning clean — the fifty-two shipped `ALLOW` policies carry the flag
+	// true and want it true, so none of them is a change.
+	if requested == want {
+		return Field{}, false
 	}
-	return nil
+
+	// Quoted, the way every other policy name in a plan is: `(Return)` is part
+	// of the name the Controller gives it, and unquoted it reads as an aside
+	// about the line rather than as the object it is.
+	companion := fmt.Sprintf("%q", returnRuleName(desired.Name))
+	var from, to any
+	if companionHeld {
+		from = companion
+	}
+	if want {
+		to = companion
+	}
+	// The write is worth making and there is nothing to show for it: a policy
+	// carrying the request with no companion by that name, closing. That is
+	// every one of the Controller's own policies, whose companions are the
+	// twelve `Allow Return Traffic` on reverse pairs rather than a `<name>
+	// (Return)`. The flag still goes out correct on any update that happens for
+	// another reason — it has to, or the Controller refuses the body — and a
+	// plan does not carry a line for a change with no consequence to state.
+	if from == to {
+		return Field{}, false
+	}
+	return Field{Name: "return-rule", From: from, To: to}, true
 }
 
 // changedPolicyFields lists the managed fields on which the Controller and the
@@ -750,8 +705,8 @@ func returnRuleUpdateNote(current, desired config.FirewallPolicy, requested, com
 // optional field is treated everywhere else — and it is the same rule
 // underneath. Omission means unmanaged, and the schema lets none of these be
 // omitted, so a policy in the config always states its verdict and both ends.
-func changedPolicyFields(current, desired config.FirewallPolicy) []Field {
-	fields := make([]Field, 0, 3)
+func changedPolicyFields(current, desired config.FirewallPolicy, requested, companionHeld bool) []Field {
+	fields := make([]Field, 0, 4)
 	if current.Action != desired.Action {
 		fields = append(fields, Field{Name: "action", From: text(current.Action), To: desired.Action})
 	}
@@ -761,6 +716,14 @@ func changedPolicyFields(current, desired config.FirewallPolicy) []Field {
 	if current.Destination != desired.Destination {
 		fields = append(fields,
 			Field{Name: "destination", From: text(current.Destination), To: desired.Destination})
+	}
+	// The fourth field, and the only one not read off a line of the config: the
+	// verdict decides whether a companion should be there, and the Controller
+	// decides whether one is. An update runs when they disagree, which is what
+	// makes a policy left at `allow` without a companion something unifig can
+	// put right rather than only describe (ADR-0026).
+	if field, differs := returnRuleField(desired, requested, companionHeld); differs {
+		fields = append(fields, field)
 	}
 	return fields
 }
@@ -844,7 +807,7 @@ type storedPolicy map[string]json.RawMessage
 // to err on under a replace: a body that carries a field cannot be the reason it
 // was dropped.
 //
-// The field that did refuse was not one of the six. See clearReturnRuleRequest.
+// The field that did refuse was not one of the six. See setReturnRuleRequest.
 func mergeIntoStoredPolicy(
 	ctx context.Context,
 	client unifi.Client,
@@ -929,8 +892,9 @@ func (p storedPolicy) id() string {
 // go-unifi could read out of it. The four fields are the whole of what unifig
 // owns on a policy, and the other half of that list is up there.
 //
-// The fifth field it touches it does not own, and clears rather than sets. See
-// clearReturnRuleRequest.
+// The fifth is `create_allow_respond`, which unifig does own and which is not a
+// line of the config: it is the verdict, restated as the request the Controller
+// acts on. See setReturnRuleRequest.
 func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, bound bindings) error {
 	source, err := bound.zoneID(desired.Source)
 	if err != nil {
@@ -953,74 +917,43 @@ func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, bound bind
 	if err := p.setZone("destination", destination); err != nil {
 		return err
 	}
-	return p.clearReturnRuleRequest(desired)
+	return p.setReturnRuleRequest(desired)
 }
 
-// clearReturnRuleRequest takes the request for a companion return rule off any
-// policy this update leaves closing a path, because the Controller refuses that
-// body — and under ADR-0021's merge, it refuses it on every policy there is.
+// setReturnRuleRequest writes the request for the companion return rule to match
+// the verdict the config states — the fifth field unifig owns on a policy, and
+// the one it came to own last.
 //
-// "Leaves", not "changes to": an update runs whenever any managed field differs,
-// so a policy that blocked before and blocks after still goes back through here,
-// and thirty-four of the live eighty-six are policies that block while carrying
-// the flag true. Turning on the *change* would let those through untouched and
-// they are refused exactly as loudly.
+// It only ever *cleared* until now, and the reason was a missing reading rather
+// than a principle. The Controller refuses a body asking for a companion beside
+// a verdict that closes a path (ADR-0022), so clearing was forced; setting was
+// a write nobody had watched a Controller answer, so ADR-0025 left the flag
+// alone on an opening verdict and had the plan describe the resulting
+// inconsistency instead.
 //
-// `create_allow_respond` asks the Controller to generate the companion at
-// creation (ADR-0022). unifig does not own it on an update, and an update sends
-// back whatever the Controller stored. What that meant was measured on the live
-// migrated UDR on 19 August 2026, as issue #37's probe: a throwaway policy
-// created `allow` — so stored with the flag true, which every policy the router
-// holds is — updated to `block` sends that true back beside `BLOCK`, and
+// Issue #40's own probe took both readings, on the live migrated UDR on 19
+// August 2026, on a throwaway `Dmz` -> `Dmz` policy that nothing rides. Each
+// moved one variable, with the verdict held at `ALLOW` throughout — which is
+// what ADR-0022's reading could not do, because its request changed the flag and
+// the verdict together:
 //
-//	400: Firewall policy create respond traffic not allowed
+//	create allow, flag true    86 -> 88 policies, companion present
+//	flag true -> false         88 -> 87 policies, companion GONE
+//	flag false -> true         87 -> 88 policies, companion BACK
+//	delete the policy          88 -> 86 policies, id for id
 //
-// The apply stops, nothing is written, and it is not an unlucky policy: all
-// eighty-six the migrated router ships carry the flag true, the thirty-four that
-// already block included. So every allow -> block update failed, in the
-// direction an operator tightens a firewall. It is the loud failure ADR-0021
-// accepted the risk of, arriving through a field that was not on its list.
+// So the flag drives the companion on an update exactly as it does on a create,
+// in both directions. unifig owns it, the config decides it, and a policy's
+// companion follows the file rather than the policy's history (ADR-0026).
 //
-// It only ever clears. Setting the flag when a verdict opens a path would make
-// the companion follow the config rather than the policy's history, which is a
-// real design question with two unmeasured readings behind it — whether an
-// update carrying it true generates a companion at all, and whether clearing it
-// removes one. That is issue #40, and ADR-0025 answered it the only way those
-// readings allow: unifig does not own the flag on this path, and the plan says
-// which history the policy is on instead (returnRuleUpdateNote). So on a verdict
-// that opens a path the stored value goes back untouched, the way every other
-// field unifig does not own does.
-//
-// The condition is the create's condition, and is literally the create's
-// predicate: `opensAPath`, anything but `allow`, because that is the rule the
-// Controller's own message states rather than the list of verdicts anybody has
-// watched it refuse (`block` was sent; `reject` was not).
-//
-// It writes the key only where the Controller sent one carrying `true`, which is
-// the narrowest thing that makes the body legal. Writing `false` onto a policy
-// that carried no such key would be inventing a field on the object, and that is
-// the other half of ADR-0021 — the `schedule.time_all_day` defect, where a Go
-// zero became a stored value the operator never set. Every policy the migrated
-// router holds carries the field, so nothing on today's hardware reaches that
-// branch; it is kept narrow because what makes the write illegal is a `true`
-// specifically, and nothing else here needs saying to the Controller.
-func (p storedPolicy) clearReturnRuleRequest(desired config.FirewallPolicy) error {
-	if opensAPath(desired.Action) || !p.returnRuleRequested() {
-		return nil
-	}
-	return p.set("create_allow_respond", false)
-}
-
-// returnRuleRequested is whether the policy the Controller sent carries a
-// standing request for the companion return rule — false when the field is
-// absent, or is not a bool, both of which are a policy nobody has read and
-// neither of which is a request this has to take back.
-func (p storedPolicy) returnRuleRequested() bool {
-	var requested bool
-	if err := json.Unmarshal(p["create_allow_respond"], &requested); err != nil {
-		return false
-	}
-	return requested
+// It writes the key unconditionally, where clearing wrote it only where the
+// Controller had sent one carrying `true`. That is not the `schedule.time_all_day`
+// defect of ADR-0021 in a new place, and the difference is ownership: inventing
+// a field is writing a Go zero onto something the operator set and unifig does
+// not model, while this is a field unifig now states on purpose, on every create
+// already, and every policy either site holds carries it.
+func (p storedPolicy) setReturnRuleRequest(desired config.FirewallPolicy) error {
+	return p.set("create_allow_respond", opensAPath(desired.Action))
 }
 
 // set writes one field of a stored policy.

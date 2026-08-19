@@ -110,6 +110,9 @@ the companion was the one missing. Two things changed in that one request — th
 flag was cleared and the verdict closed — so which of them the Controller acted
 on is not separated here, and this does not close issue #40's second box. It
 does say the companion is not left orphaned, which was the shape of the worry.
+(Issue #40's own probe closed that box on 19 August 2026 by holding the verdict
+at `ALLOW` and moving only the flag: clearing it removes the companion, setting
+it brings one back — ADR-0026.)
 
 ## The bug this found was unifig's own, and hours old
 
@@ -160,7 +163,9 @@ same standard ADR-0014 set: only what was measured. `block` was sent and refused
   and never set.** `overwriteManaged` calls `clearReturnRuleRequest`, which is
   the create's own rule — anything but `allow` — kept over the object the merge
   puts back. It only ever clears, because clearing is what the Controller demands
-  and setting is what issue #40 has to decide. The stand-in enforces it on the
+  and setting is what issue #40 has to decide. (It decided: unifig owns the flag
+  and sets it to match the verdict — ADR-0026. `clearReturnRuleRequest` is
+  `setReturnRuleRequest` now.) The stand-in enforces it on the
   PUT as well as the POST: `refusedByPolicyWrite` is the create's predicate,
   renamed for the second verb it was measured refusing, and putting the
   regression back fails the update tests as well as the create ones.
@@ -172,8 +177,10 @@ same standard ADR-0014 set: only what was measured. `block` was sent and refused
   follows the config rather than the history — is a real design question this ADR
   does not settle. Filed as **issue #40**, with the two readings that would
   settle it and the options it would choose between. ADR-0025 took the one option
-  that needs neither reading: the flag stays the create's, and the plan says
-  which of the two histories a policy is on.
+  that needed neither reading — the plan says which of the two histories a policy
+  is on — and ADR-0026 superseded it a day later, when the probe took both
+  readings and the first option became available: unifig owns the flag, and a
+  policy's companion follows the config rather than its history.
 - `origin_type` has a second value. ADR-0021 recorded `network_config` on the
   policies a migrated router ships; a companion carries `custom_firewall_rule`.
   Both are back-references to whatever made the policy, and neither is
