@@ -2603,3 +2603,57 @@ func TestAnEmptyPlanWithNothingToSayStillSaysTheControllerMatches(t *testing.T) 
 		t.Errorf("a plan with nothing to say should say so plainly:\n%s", res.Stdout)
 	}
 }
+
+// The recording itself has to carry the shape the Controller answers with, and
+// this is the guard that keeps it there.
+//
+// Every other test in this file can seed what it needs. This one cannot be
+// seeded by definition: its subject is the committed fixture, and the defect it
+// exists against is a re-recording that quietly flattens every `_id` back into a
+// document handle. That is not hypothetical — it is what `make record-udr` did
+// until issue #41, and the cost was that the replay stand-in had never been
+// handed a composite, so every policy in the suite was addressable and unifig
+// could plan an update it could not apply with the suite green throughout.
+//
+// It asserts the composite is *consistent* rather than merely long, because
+// consistency is what makes the recording a firewall: a policy has to point at
+// the zones the recording holds, through its `_id` as well as through its ends
+// (ADR-0027).
+//
+// It reads the policies through the stand-in rather than off disk, which is both
+// the file's convention and the sharper question: what the recording holds
+// matters because it is what the stand-in serves.
+func TestTheRecordedPoliciesCarryTheIdShapeTheControllerReturns(t *testing.T) {
+	r := startReplay(t)
+
+	recorded := r.livePolicies(t)
+	if len(recorded) == 0 {
+		t.Fatal("the recording holds no firewall policies, so it asserts nothing about their shape")
+	}
+
+	for _, policy := range recorded {
+		name, _ := policy["name"].(string)
+		id, _ := policy["_id"].(string)
+		source, _ := policy["source"].(map[string]any)
+		destination, _ := policy["destination"].(map[string]any)
+		index, ok := policy["index"].(float64)
+		if !ok {
+			t.Errorf("the recorded policy %q carries no index, so it cannot carry the id the Controller builds from one", name)
+			continue
+		}
+
+		want := fmt.Sprintf("%v%v%d", source["zone_id"], destination["zone_id"], int64(index))
+		if id != want {
+			t.Errorf("the recorded policy %q has _id %q, want its own zone ids and index run together, %q",
+				name, id, want)
+		}
+		// Said separately from the equality above, because this is the sentence
+		// that matters to unifig: a policy the Controller generates has no
+		// document handle, and one that appeared to have one would be a policy
+		// the suite believed was writable.
+		if isDocumentHandle(id) {
+			t.Errorf("the recorded policy %q has a document handle for an _id (%q), "+
+				"so the recording says the Controller stores a policy it generates", name, id)
+		}
+	}
+}
