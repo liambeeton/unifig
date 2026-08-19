@@ -176,8 +176,9 @@ re-recorded policy's `_id` still equals its own scrubbed zone ids and index —
 `TestScrubKeepsACompositeIdentifierComposite` is the guard on the scrub, and
 `TestTheRecordedPoliciesCarryTheIdShapeTheControllerReturns` is the guard on
 these files. **A re-recording that flattened the ids back would fail the second
-one 86 times**, which is what it did when it was checked against the recording
-this one replaced.
+one once per policy in this file**, and that is not a guess about the guard: run
+against the recording this one replaced, it failed 83 times, once for each policy
+that recording held.
 
 ## Re-recording from a real UDR
 
