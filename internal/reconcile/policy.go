@@ -594,7 +594,7 @@ func updateFirewallPolicy(
 // A policy the Controller ships is exempt on its own marker, like every other
 // built-in (ADR-0005). A policy's marker is `predefined`, which is how the
 // zone-based firewall marks the default policies it generates for a pair of
-// zones — and the eighty-three of those a migrated router ships are exactly what
+// zones — and the eighty-six of those a migrated router ships are exactly what
 // prune must not touch. `NoDelete` is checked beside it because the library
 // models the field on this type, not because a policy has been seen carrying it:
 // the marker is per Resource and only a network is known to use that one, so
@@ -718,7 +718,7 @@ func returnRuleNote(desired config.FirewallPolicy) []string {
 // The flag alone cannot answer it. `create_allow_respond` records the request
 // made at creation rather than anything about the policy now (ADR-0022), and the
 // recording proves the gap is real rather than theoretical: fifty-two of the
-// eighty-three policies a migrated router ships are `ALLOW` carrying the flag
+// eighty-six policies a migrated router ships are `ALLOW` carrying the flag
 // true, and **not one** of them has a `<name> (Return)` beside it. The twelve
 // companions such a router does hold are named `Allow Return Traffic` and sit on
 // reverse pairs — the Controller's own scheme for its own policies, which is not
@@ -889,7 +889,7 @@ type storedPolicy map[string]json.RawMessage
 // Two things here are deliberate and answer the same measurement. It reads the
 // policy as JSON rather than as a `unifi.FirewallZonePolicy`, because a struct
 // leaves out every field go-unifi v2.3.0 does not model — `origin_id` on all
-// eighty-three policies a migrated router ships, `icmp_typename` and
+// eighty-six policies a migrated router ships, `icmp_typename` and
 // `icmp_v6_typename`,
 // `origin_type`, `hits`, `last_hit` — and every modelled field `omitempty`
 // elides at its zero value, which is how an empty `description` went missing
@@ -948,7 +948,7 @@ func mergeIntoStoredPolicy(
 // the recording holds, so an update depends on no endpoint a plan did not
 // already depend on.
 //
-// What that costs is one read of all eighty-three policies per policy updated,
+// What that costs is one read of all eighty-six policies per policy updated,
 // where the single-object path would read one. It is the same request count and
 // a bigger body, on a router with fewer than a hundred policies, and an apply
 // updating several of them is rare — a poor trade for depending on an endpoint
@@ -1106,7 +1106,7 @@ func (p storedPolicy) setZone(end, zone string) error {
 // here is the evidence, and it is worth being plain about rather than letting
 // the symmetry imply otherwise: a real UDR was measured refusing `attr_no_edit`
 // on a zone, and nobody has ever sent one to the policy endpoint. Nor has a
-// policy been seen carrying a marker — none of the eighty-three a migrated
+// policy been seen carrying a marker — none of the eighty-six a migrated
 // router ships has an `attr_*` field at all — so this fixes no failure anyone
 // has met.
 //
@@ -1146,8 +1146,8 @@ func (p storedPolicy) dropMarkers() {
 // What has been checked is that the Controller takes them: #30 created a policy
 // on the live migrated UDR and every field here came back as sent (ADR-0019).
 // Accepted is not matched, and the recording is where the difference shows —
-// of the eighty-three policies a migrated router ships, sixty-three are
-// `protocol: all` and sixty-one are `ip_version: BOTH`, because they are
+// of the eighty-six policies a migrated router ships, sixty-six are
+// `protocol: all` and sixty-four are `ip_version: BOTH`, because they are
 // purpose-built rules rather than anybody's starting shape. They are the wrong
 // table to read a default off, and the one field below that *was* read off them
 // is read off them for a reason that has nothing to do with defaults.
@@ -1158,7 +1158,7 @@ func (p storedPolicy) dropMarkers() {
 // unifig names, and the other five go as Go's zero rather than as anyone's
 // decision. Three of those five sit where the Controller's own policies sit
 // anyway — `logging`, `match_ip_sec` and `match_opposite_protocol` are false on
-// all eighty-three. `predefined: false` differs from all eighty-three and should:
+// all eighty-six. `predefined: false` differs from all eighty-six and should:
 // a policy unifig made is not one the Controller ships. `create_allow_respond`
 // was neither, which is the whole of issue #36 — and it is the one value here
 // that is not fixed, because the Controller refuses it on any verdict but
@@ -1196,7 +1196,7 @@ func newFirewallPolicy(desired config.FirewallPolicy) unifi.FirewallZonePolicy {
 		CreateAllowRespond: opensAPath(desired.Action),
 		// The Controller rejects a policy with no schedule outright, so this is
 		// less a default than a field with one permitted value at creation. It
-		// is not parity either: all eighty-three policies the recording holds
+		// is not parity either: all eighty-six policies the recording holds
 		// carry `{mode: ALWAYS}` and no `time_all_day` at all. Sending one is
 		// inventing a field on the object, which is a loss on the update path
 		// (ADR-0021) and nothing on this one, where there is no object yet and

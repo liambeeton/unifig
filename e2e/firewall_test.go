@@ -714,7 +714,7 @@ zones:
 // What differs is the evidence behind it, and the test should not be read as
 // claiming otherwise. A real UDR was measured refusing `attr_no_edit` on a zone;
 // nobody has ever sent one to the policy endpoint, and no policy has been seen
-// carrying a marker at all — none of the eighty-three a migrated router ships
+// carrying a marker at all — none of the eighty-six a migrated router ships
 // has an `attr_*` field. What is stated here is unifig's own rule rather than
 // the Controller's: a marker the Controller sends is not a field unifig sends
 // back, on every object unifig writes whole (issue #34).
@@ -858,9 +858,10 @@ func TestUpdatingAPolicySendsBackEveryFieldTheControllerSent(t *testing.T) {
 // the opinion. On the live migrated UDR on 18 August 2026 all eighty-six
 // policies the Controller ships carried `true` and the one unifig created
 // carried `false`, with the Controller's UI showing that policy's return-traffic
-// toggle off beside its own policies' on (issue #36). This test counts
-// eighty-three of them, because that is how many of the eighty-six the recording
-// holds.
+// toggle off beside its own policies' on (issue #36). This test counts all
+// eighty-six: the recording used to hold eighty-three of them, and refreshing it
+// for issue #41 closed the gap, so the number here and the number on the router
+// are the same number now.
 //
 // What the field does to traffic is **not** what this asserts, and nothing in
 // this repository has measured it: no one has sent a conversation through a

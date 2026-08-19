@@ -143,9 +143,10 @@ makes its own network instead — `unzonedNetwork` and `placedNetwork` in
 needs a write rather than a read, and these files hold only the Controller's own
 policies. Issue #31, answered by the same write probe in #30. It is separated
 here from a bigger thing the recording did settle. The Controller ships
-**83 predefined policies, one per ordered pair of zones, reusing names across
+**86 predefined policies, one per ordered pair of zones, reusing names across
 pairs**: nineteen called "Allow All Traffic", sixteen "Block All Traffic",
-twelve "Allow Return Traffic". A policy's identity is therefore its name *and*
+twelve "Allow Return Traffic". 52 allow and 34 block, and every one of them
+carries `create_allow_respond: true`. A policy's identity is therefore its name *and*
 its pair of zones, not its name alone — unifig matched on name and refused every
 migrated site as ambiguous, which was issue #24. `index` runs from 30000 to
 2147483647 on the predefined set, so the old fixture's lone `index: 10000` was a
@@ -162,21 +163,21 @@ policy came from — `source.zone_id + destination.zone_id + index`, concatenate
 `api.err.FirewallPolicyNotFound` to it on GET and on PUT alike. Live hardware
 answered with eighty-six of those and not one plain id (ADR-0027, issue #41).
 
-**The files committed here do not carry it yet, and that is a debt rather than a
-decision.** The scrub used to map every `_id` through a 24-character placeholder,
-so this recording holds no composite id at all — all 83 policies below have a
-plain one — the replay stand-in had never been handed one, and every policy in the
-suite was addressable. That is how unifig came to plan an update it could not
-apply, on nineteen policies its own `unifig.yaml` names, with a green suite the
-whole time.
+That is a property of these files rather than a note about them, and it was not
+always. The scrub used to map every `_id` through a 24-character placeholder, so
+this recording held no composite id at all, the replay stand-in had never been
+handed one, and every policy in the suite was addressable — which is how unifig
+came to plan an update it could not apply, on nineteen policies its own
+`unifig.yaml` names, with a green suite the whole time.
 
-`tools/record-udr/scrub.go` is fixed: it now takes a composite apart, replaces
-each identifier in it, and puts it back the way it came, so a re-recorded policy's
-`_id` equals its own scrubbed zone ids and index, and
-`TestScrubKeepsACompositeIdentifierComposite` is what holds it there. **The files
-themselves need one `make record-udr` to catch up** — until that runs, the tests
-that are about a policy the Controller generates seed their own with
-`seedGeneratedPolicy`, which is where the distinction is exercised.
+Two things hold it there now. `tools/record-udr/scrub.go` takes a composite
+apart, replaces each identifier in it, and puts it back the way it came, so a
+re-recorded policy's `_id` still equals its own scrubbed zone ids and index —
+`TestScrubKeepsACompositeIdentifierComposite` is the guard on the scrub, and
+`TestTheRecordedPoliciesCarryTheIdShapeTheControllerReturns` is the guard on
+these files. **A re-recording that flattened the ids back would fail the second
+one 86 times**, which is what it did when it was checked against the recording
+this one replaced.
 
 ## Re-recording from a real UDR
 

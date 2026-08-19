@@ -1516,14 +1516,15 @@ func (r *replay) seedPolicy(t *testing.T, name, action, source, destination stri
 		"action":   action,
 		"enabled":  true,
 		"protocol": "all",
-		// The recording's shape: all eighty-three policies a migrated router
+		// The recording's shape: all eighty-six policies a migrated router
 		// ships carry `{mode: ALWAYS}` and no `time_all_day` at all. A seed that
 		// added the key would be a fixture stating something no policy anyone
 		// has read says, and it is exactly the key a Go bool invents.
 		"schedule": map[string]any{"mode": "ALWAYS"},
 		// True on every policy of both sites anyone has read, whatever its
-		// verdict: all eighty-three in the recording, of which thirty-one block,
-		// and all eighty-six live on 19 August 2026, of which thirty-four do.
+		// verdict: all eighty-six in the recording, of which thirty-four block.
+		// Those were two readings that disagreed on the count until the recording
+		// was refreshed for issue #41; they are now one site said twice.
 		// The Controller stores the request made at creation rather than a
 		// property of the policy, which is what a blocking policy carrying it
 		// says (ADR-0022). A seed without it would be a policy neither site has,
