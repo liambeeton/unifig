@@ -1,6 +1,6 @@
 [
   {
-    "_id": "6613a1f0c4b2d90a5e1f1010",
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f10052147483647",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -20,7 +20,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1011",
+    "origin_id": "6613a1f0c4b2d90a5e1f1010",
     "predefined": true,
     "protocol": "all",
     "schedule": {
@@ -34,7 +34,48 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1012",
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f100530000",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Isolated Networks",
+    "origin_id": "6613a1f0c4b2d90a5e1f1011",
+    "origin_type": "network_config",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "ips": [
+        "203.0.113.6/24"
+      ],
+      "match_mac": false,
+      "match_opposite_ips": false,
+      "match_opposite_ports": false,
+      "matching_target": "IP",
+      "matching_target_type": "SPECIFIC",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f10022147483647",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -46,16 +87,54 @@
       "zone_id": "6613a1f0c4b2d90a5e1f1002"
     },
     "enabled": true,
-    "hits": 33657,
+    "hits": 3878153,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
     "index": 2147483647,
     "ip_version": "BOTH",
-    "last_hit": 1786966158591,
+    "last_hit": 1787166145309,
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1012",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f100230000",
+    "action": "BLOCK",
+    "connection_state_type": "CUSTOM",
+    "connection_states": [
+      "INVALID"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "hits": 2765,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block Invalid Traffic",
     "origin_id": "6613a1f0c4b2d90a5e1f1013",
     "predefined": true,
     "protocol": "all",
@@ -70,44 +149,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1014",
-    "action": "BLOCK",
-    "connection_state_type": "CUSTOM",
-    "connection_states": [
-      "INVALID"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "hits": 14,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block Invalid Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1015",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1016",
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f10062147483647",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -119,17 +161,17 @@
       "zone_id": "6613a1f0c4b2d90a5e1f1006"
     },
     "enabled": true,
-    "hits": 1206234,
+    "hits": 824122,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
     "index": 2147483647,
     "ip_version": "BOTH",
-    "last_hit": 1786966158591,
+    "last_hit": 1787166145309,
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1017",
+    "origin_id": "6613a1f0c4b2d90a5e1f1014",
     "predefined": true,
     "protocol": "all",
     "schedule": {
@@ -143,7 +185,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1018",
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f100630000",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -162,17 +204,17 @@
       "zone_id": "6613a1f0c4b2d90a5e1f1006"
     },
     "enabled": true,
-    "hits": 1920,
+    "hits": 103256,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
     "index": 30000,
     "ip_version": "BOTH",
-    "last_hit": 1786966158591,
+    "last_hit": 1787166145309,
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow mDNS",
-    "origin_id": "6613a1f0c4b2d90a5e1f1019",
+    "origin_id": "6613a1f0c4b2d90a5e1f1015",
     "predefined": true,
     "protocol": "udp",
     "schedule": {
@@ -187,7 +229,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1020",
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f10072147483647",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -207,7 +249,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1021",
+    "origin_id": "6613a1f0c4b2d90a5e1f1016",
     "predefined": true,
     "protocol": "all",
     "schedule": {
@@ -221,7 +263,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1022",
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f10082147483647",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -241,7 +283,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1023",
+    "origin_id": "6613a1f0c4b2d90a5e1f1017",
     "predefined": true,
     "protocol": "all",
     "schedule": {
@@ -255,7 +297,48 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1024",
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f100830000",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Isolated Networks",
+    "origin_id": "6613a1f0c4b2d90a5e1f1018",
+    "origin_type": "network_config",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "ips": [
+        "203.0.113.6/24"
+      ],
+      "match_mac": false,
+      "match_opposite_ips": false,
+      "match_opposite_ports": false,
+      "matching_target": "IP",
+      "matching_target_type": "SPECIFIC",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f10092147483647",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -275,7 +358,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1025",
+    "origin_id": "6613a1f0c4b2d90a5e1f1019",
     "predefined": true,
     "protocol": "all",
     "schedule": {
@@ -289,7 +372,48 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1026",
+    "_id": "6613a1f0c4b2d90a5e1f10056613a1f0c4b2d90a5e1f100930000",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Isolated Networks",
+    "origin_id": "6613a1f0c4b2d90a5e1f1020",
+    "origin_type": "network_config",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "ips": [
+        "203.0.113.6/24"
+      ],
+      "match_mac": false,
+      "match_opposite_ips": false,
+      "match_opposite_ports": false,
+      "matching_target": "IP",
+      "matching_target_type": "SPECIFIC",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f10052147483647",
     "action": "BLOCK",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -305,6 +429,224 @@
     "icmp_v6_typename": "ANY",
     "index": 2147483647,
     "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1021",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100530000",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
+    "connection_states": [
+      "RELATED",
+      "ESTABLISHED"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    },
+    "enabled": true,
+    "hits": 8070472,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Return Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1022",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100530001",
+    "action": "BLOCK",
+    "connection_state_type": "CUSTOM",
+    "connection_states": [
+      "INVALID"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block Invalid Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1023",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f10022147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1024",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100230000",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
+    "connection_states": [
+      "RELATED",
+      "ESTABLISHED"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Return Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1025",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100230001",
+    "action": "BLOCK",
+    "connection_state_type": "CUSTOM",
+    "connection_states": [
+      "INVALID"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block Invalid Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1026",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f10062147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "hits": 27245,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
@@ -323,7 +665,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1028",
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100630000",
     "action": "ALLOW",
     "connection_state_type": "RESPOND_ONLY",
     "connection_states": [
@@ -335,19 +677,57 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
     },
     "enabled": true,
-    "hits": 22414,
+    "hits": 630693,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
     "index": 30000,
     "ip_version": "BOTH",
-    "last_hit": 1786966158591,
+    "last_hit": 1787166145309,
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow Return Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1028",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100630001",
+    "action": "BLOCK",
+    "connection_state_type": "CUSTOM",
+    "connection_states": [
+      "INVALID"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "hits": 2855,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block Invalid Traffic",
     "origin_id": "6613a1f0c4b2d90a5e1f1029",
     "predefined": true,
     "protocol": "all",
@@ -362,263 +742,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1030",
-    "action": "BLOCK",
-    "connection_state_type": "CUSTOM",
-    "connection_states": [
-      "INVALID"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30001,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block Invalid Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1031",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1032",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1033",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1034",
-    "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1035",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1036",
-    "action": "BLOCK",
-    "connection_state_type": "CUSTOM",
-    "connection_states": [
-      "INVALID"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30001,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block Invalid Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1037",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1038",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "hits": 32866,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1039",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1040",
-    "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "hits": 4129,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1041",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1042",
-    "action": "BLOCK",
-    "connection_state_type": "CUSTOM",
-    "connection_states": [
-      "INVALID"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "hits": 1074135,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30001,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block Invalid Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1043",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1044",
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100630002",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -639,7 +763,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow WireGuard VPNs",
-    "origin_id": "6613a1f0c4b2d90a5e1f1045",
+    "origin_id": "6613a1f0c4b2d90a5e1f1030",
     "predefined": true,
     "protocol": "udp",
     "schedule": {
@@ -653,7 +777,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1046",
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100630003",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -675,7 +799,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow Neighbor Solicitations",
-    "origin_id": "6613a1f0c4b2d90a5e1f1047",
+    "origin_id": "6613a1f0c4b2d90a5e1f1031",
     "predefined": true,
     "protocol": "icmpv6",
     "schedule": {
@@ -689,7 +813,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1048",
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100630004",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -709,7 +833,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow Neighbor Advertisements",
-    "origin_id": "6613a1f0c4b2d90a5e1f1049",
+    "origin_id": "6613a1f0c4b2d90a5e1f1032",
     "predefined": true,
     "protocol": "icmpv6",
     "schedule": {
@@ -723,7 +847,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1050",
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100630005",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -736,15 +860,17 @@
       "zone_id": "6613a1f0c4b2d90a5e1f1006"
     },
     "enabled": true,
+    "hits": 3,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
     "index": 30005,
     "ip_version": "IPV6",
+    "last_hit": 1787148437557,
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow Link-Local DHCPv6",
-    "origin_id": "6613a1f0c4b2d90a5e1f1051",
+    "origin_id": "6613a1f0c4b2d90a5e1f1033",
     "predefined": true,
     "protocol": "udp",
     "schedule": {
@@ -764,7 +890,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1052",
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100630006",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -785,7 +911,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow DHCPv6",
-    "origin_id": "6613a1f0c4b2d90a5e1f1053",
+    "origin_id": "6613a1f0c4b2d90a5e1f1034",
     "predefined": true,
     "protocol": "udp",
     "schedule": {
@@ -800,7 +926,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1054",
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100630007",
     "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -820,7 +946,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow Router Advertisements",
-    "origin_id": "6613a1f0c4b2d90a5e1f1055",
+    "origin_id": "6613a1f0c4b2d90a5e1f1035",
     "predefined": true,
     "protocol": "icmpv6",
     "schedule": {
@@ -834,7 +960,7 @@
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1056",
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f10072147483647",
     "action": "BLOCK",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -844,6 +970,746 @@
       "matching_target": "ANY",
       "port_matching_type": "ANY",
       "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1036",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100730000",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
+    "connection_states": [
+      "RELATED",
+      "ESTABLISHED"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Return Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1037",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100730001",
+    "action": "BLOCK",
+    "connection_state_type": "CUSTOM",
+    "connection_states": [
+      "INVALID"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block Invalid Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1038",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f10082147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1039",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100830000",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
+    "connection_states": [
+      "RELATED",
+      "ESTABLISHED"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    },
+    "enabled": true,
+    "hits": 658062,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Return Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1040",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100830001",
+    "action": "BLOCK",
+    "connection_state_type": "CUSTOM",
+    "connection_states": [
+      "INVALID"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block Invalid Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1041",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f10092147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1042",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100930000",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
+    "connection_states": [
+      "RELATED",
+      "ESTABLISHED"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Return Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1043",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10026613a1f0c4b2d90a5e1f100930001",
+    "action": "BLOCK",
+    "connection_state_type": "CUSTOM",
+    "connection_states": [
+      "INVALID"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block Invalid Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1044",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10066613a1f0c4b2d90a5e1f10052147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    },
+    "enabled": true,
+    "hits": 749191,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1045",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10066613a1f0c4b2d90a5e1f10022147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "hits": 700323,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1046",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10066613a1f0c4b2d90a5e1f10072147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1047",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10066613a1f0c4b2d90a5e1f10082147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    },
+    "enabled": true,
+    "hits": 188366,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1048",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10066613a1f0c4b2d90a5e1f10092147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    },
+    "enabled": true,
+    "hits": 1,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1049",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10076613a1f0c4b2d90a5e1f10052147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1050",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10076613a1f0c4b2d90a5e1f10022147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1051",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10076613a1f0c4b2d90a5e1f100230000",
+    "action": "BLOCK",
+    "connection_state_type": "CUSTOM",
+    "connection_states": [
+      "INVALID"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block Invalid Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1052",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10076613a1f0c4b2d90a5e1f10062147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1053",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10076613a1f0c4b2d90a5e1f10072147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1054",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10076613a1f0c4b2d90a5e1f10082147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1055",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10076613a1f0c4b2d90a5e1f10092147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1056",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f10052147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
     },
     "enabled": true,
     "icmp_typename": "ANY",
@@ -864,33 +1730,73 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1058",
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100530000",
     "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
+    "connection_state_type": "ALL",
+    "connection_states": [],
     "create_allow_respond": true,
     "destination": {
       "match_opposite_ports": false,
       "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+      "port": "53",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
     },
     "enabled": true,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
     "index": 30000,
-    "ip_version": "BOTH",
+    "ip_version": "IPV4",
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
+    "name": "Allow Public DNS",
+    "origin_id": "6613a1f0c4b2d90a5e1f1058",
+    "predefined": true,
+    "protocol": "tcp_udp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100530001",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "ips": [
+        "203.0.113.8/4",
+        "203.0.113.9/16",
+        "203.0.113.10/8",
+        "203.0.113.11/12"
+      ],
+      "match_opposite_ips": false,
+      "match_opposite_ports": false,
+      "matching_target": "IP",
+      "matching_target_type": "SPECIFIC",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "IPV4",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Post-Authorization Restrictions",
     "origin_id": "6613a1f0c4b2d90a5e1f1059",
     "predefined": true,
     "protocol": "all",
@@ -901,32 +1807,67 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1060",
-    "action": "BLOCK",
-    "connection_state_type": "CUSTOM",
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100530002",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
     "connection_states": [
-      "INVALID"
+      "RELATED",
+      "ESTABLISHED"
     ],
     "create_allow_respond": true,
     "destination": {
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
     },
     "enabled": true,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
-    "index": 30001,
+    "index": 30002,
     "ip_version": "BOTH",
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
-    "name": "Block Invalid Traffic",
+    "name": "Allow Return Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1060",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f10022147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
     "origin_id": "6613a1f0c4b2d90a5e1f1061",
     "predefined": true,
     "protocol": "all",
@@ -937,31 +1878,111 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1062",
-    "action": "BLOCK",
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100230000",
+    "action": "ALLOW",
     "connection_state_type": "ALL",
     "connection_states": [],
     "create_allow_respond": true,
     "destination": {
       "match_opposite_ports": false,
       "matching_target": "ANY",
+      "port": "53",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "hits": 22,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "IPV4",
+    "last_hit": 1787146655861,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Public DNS",
+    "origin_id": "6613a1f0c4b2d90a5e1f1062",
+    "predefined": true,
+    "protocol": "tcp_udp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
       "port_matching_type": "ANY",
       "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100230001",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "443",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
     },
     "enabled": true,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
+    "index": 30001,
+    "ip_version": "IPV4",
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
-    "name": "Block All Traffic",
+    "name": "Allow Hotspot Portal",
     "origin_id": "6613a1f0c4b2d90a5e1f1063",
+    "predefined": true,
+    "protocol": "tcp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100230002",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "ips": [
+        "203.0.113.8/4",
+        "203.0.113.9/16",
+        "203.0.113.10/8",
+        "203.0.113.11/12"
+      ],
+      "match_opposite_ips": false,
+      "match_opposite_ports": false,
+      "matching_target": "IP",
+      "matching_target_type": "SPECIFIC",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30002,
+    "ip_version": "IPV4",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Post-Authorization Restrictions",
+    "origin_id": "6613a1f0c4b2d90a5e1f1064",
     "predefined": true,
     "protocol": "all",
     "schedule": {
@@ -971,35 +1992,32 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1064",
-    "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100230003",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
     "create_allow_respond": true,
     "destination": {
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
     },
     "enabled": true,
-    "hits": 1959,
+    "hits": 382580,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
+    "index": 30003,
+    "ip_version": "IPV4",
+    "last_hit": 1787166145309,
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
+    "name": "Block Unauthorized Traffic",
     "origin_id": "6613a1f0c4b2d90a5e1f1065",
     "predefined": true,
     "protocol": "all",
@@ -1010,11 +2028,11 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1066",
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100230004",
     "action": "BLOCK",
     "connection_state_type": "CUSTOM",
     "connection_states": [
@@ -1025,17 +2043,53 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
     },
     "enabled": true,
     "icmp_typename": "ANY",
     "icmp_v6_typename": "ANY",
-    "index": 30001,
+    "index": 30004,
     "ip_version": "BOTH",
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Block Invalid Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1066",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f10062147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "hits": 21058,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
     "origin_id": "6613a1f0c4b2d90a5e1f1067",
     "predefined": true,
     "protocol": "all",
@@ -1046,11 +2100,608 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1068",
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100630000",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "ips": [
+        "203.0.113.7",
+        "2001:db8::3"
+      ],
+      "match_opposite_ips": false,
+      "match_opposite_ports": false,
+      "matching_target": "IP",
+      "matching_target_type": "SPECIFIC",
+      "port": "5353",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "hits": 112620,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow mDNS",
+    "origin_id": "6613a1f0c4b2d90a5e1f1068",
+    "predefined": true,
+    "protocol": "udp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "5353",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100630001",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "53",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "hits": 15658,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "BOTH",
+    "last_hit": 1787166145309,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow DNS",
+    "origin_id": "6613a1f0c4b2d90a5e1f1069",
+    "predefined": true,
+    "protocol": "tcp_udp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100630002",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30002,
+    "ip_version": "IPV4",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow ICMP",
+    "origin_id": "6613a1f0c4b2d90a5e1f1070",
+    "predefined": true,
+    "protocol": "icmp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100630003",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "67",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "hits": 56,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30003,
+    "ip_version": "IPV4",
+    "last_hit": 1787163104475,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow DHCP",
+    "origin_id": "6613a1f0c4b2d90a5e1f1071",
+    "predefined": true,
+    "protocol": "udp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "68",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100630004",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "ips": [
+        "203.0.113.5"
+      ],
+      "match_opposite_ips": false,
+      "match_opposite_ports": false,
+      "matching_target": "IP",
+      "matching_target_type": "SPECIFIC",
+      "port": "8880,8843",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "hits": 6,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30004,
+    "ip_version": "IPV4",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Hotspot Portal Authentication",
+    "origin_id": "6613a1f0c4b2d90a5e1f1072",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100630005",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "39080,39443",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "hits": 339,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30005,
+    "ip_version": "IPV4",
+    "last_hit": 1787081405440,
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Hotspot Portal Redirects",
+    "origin_id": "6613a1f0c4b2d90a5e1f1073",
+    "predefined": true,
+    "protocol": "tcp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100630006",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30006,
+    "ip_version": "IPV6",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow ICMPv6",
+    "origin_id": "6613a1f0c4b2d90a5e1f1074",
+    "predefined": true,
+    "protocol": "icmpv6",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100630007",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "547",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30007,
+    "ip_version": "IPV6",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow DHCPv6",
+    "origin_id": "6613a1f0c4b2d90a5e1f1075",
+    "predefined": true,
+    "protocol": "udp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "546",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100630008",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
+    "connection_states": [
+      "RELATED",
+      "ESTABLISHED"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30008,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Return Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1076",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f10072147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1077",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100730000",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "53",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "IPV4",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Public DNS",
+    "origin_id": "6613a1f0c4b2d90a5e1f1078",
+    "predefined": true,
+    "protocol": "tcp_udp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100730001",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "ips": [
+        "203.0.113.8/4",
+        "203.0.113.9/16",
+        "203.0.113.10/8",
+        "203.0.113.11/12"
+      ],
+      "match_opposite_ips": false,
+      "match_opposite_ports": false,
+      "matching_target": "IP",
+      "matching_target_type": "SPECIFIC",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "IPV4",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Post-Authorization Restrictions",
+    "origin_id": "6613a1f0c4b2d90a5e1f1079",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100730002",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
+    "connection_states": [
+      "RELATED",
+      "ESTABLISHED"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30002,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Return Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1080",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f10082147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1081",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100830000",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "53",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "IPV4",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Public DNS",
+    "origin_id": "6613a1f0c4b2d90a5e1f1082",
+    "predefined": true,
+    "protocol": "tcp_udp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100830001",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "ips": [
+        "203.0.113.8/4",
+        "203.0.113.9/16",
+        "203.0.113.10/8",
+        "203.0.113.11/12"
+      ],
+      "match_opposite_ips": false,
+      "match_opposite_ports": false,
+      "matching_target": "IP",
+      "matching_target_type": "SPECIFIC",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30001,
+    "ip_version": "IPV4",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Post-Authorization Restrictions",
+    "origin_id": "6613a1f0c4b2d90a5e1f1083",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f10092147483647",
     "action": "BLOCK",
     "connection_state_type": "ALL",
     "connection_states": [],
@@ -1070,7 +2721,7 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1069",
+    "origin_id": "6613a1f0c4b2d90a5e1f1084",
     "predefined": true,
     "protocol": "all",
     "schedule": {
@@ -1080,11 +2731,80 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1070",
+    "_id": "6613a1f0c4b2d90a5e1f10086613a1f0c4b2d90a5e1f100930000",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port": "53",
+      "port_matching_type": "SPECIFIC",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "IPV4",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Public DNS",
+    "origin_id": "6613a1f0c4b2d90a5e1f1085",
+    "predefined": true,
+    "protocol": "tcp_udp",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1008"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f10052147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1086",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f100530000",
     "action": "ALLOW",
     "connection_state_type": "RESPOND_ONLY",
     "connection_states": [
@@ -1096,7 +2816,7 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+      "zone_id": "6613a1f0c4b2d90a5e1f1005"
     },
     "enabled": true,
     "icmp_typename": "ANY",
@@ -1107,286 +2827,6 @@
     "match_ip_sec": false,
     "match_opposite_protocol": false,
     "name": "Allow Return Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1071",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1072",
-    "action": "BLOCK",
-    "connection_state_type": "CUSTOM",
-    "connection_states": [
-      "INVALID"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30001,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block Invalid Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1073",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1074",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    },
-    "enabled": true,
-    "hits": 11582,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1075",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1076",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "hits": 4593,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1077",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1078",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1079",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1080",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    },
-    "enabled": true,
-    "hits": 1109,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1081",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1082",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1083",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1084",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1085",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1086",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
     "origin_id": "6613a1f0c4b2d90a5e1f1087",
     "predefined": true,
     "protocol": "all",
@@ -1397,11 +2837,45 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1088",
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f10022147483647",
+    "action": "ALLOW",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1002"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1088",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f100230000",
     "action": "BLOCK",
     "connection_state_type": "CUSTOM",
     "connection_states": [
@@ -1433,12 +2907,12 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1090",
-    "action": "ALLOW",
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f10062147483647",
+    "action": "BLOCK",
     "connection_state_type": "ALL",
     "connection_states": [],
     "create_allow_respond": true,
@@ -1456,7 +2930,44 @@
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1090",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f100630000",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
+    "connection_states": [
+      "RELATED",
+      "ESTABLISHED"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1006"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Return Traffic",
     "origin_id": "6613a1f0c4b2d90a5e1f1091",
     "predefined": true,
     "protocol": "all",
@@ -1467,12 +2978,12 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1092",
-    "action": "ALLOW",
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f10072147483647",
+    "action": "BLOCK",
     "connection_state_type": "ALL",
     "connection_states": [],
     "create_allow_respond": true,
@@ -1490,7 +3001,44 @@
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1092",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f100730000",
+    "action": "ALLOW",
+    "connection_state_type": "RESPOND_ONLY",
+    "connection_states": [
+      "RELATED",
+      "ESTABLISHED"
+    ],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 30000,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Allow Return Traffic",
     "origin_id": "6613a1f0c4b2d90a5e1f1093",
     "predefined": true,
     "protocol": "all",
@@ -1501,12 +3049,12 @@
       "match_opposite_ports": false,
       "matching_target": "ANY",
       "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
     }
   },
   {
-    "_id": "6613a1f0c4b2d90a5e1f1094",
-    "action": "ALLOW",
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f10082147483647",
+    "action": "BLOCK",
     "connection_state_type": "ALL",
     "connection_states": [],
     "create_allow_respond": true,
@@ -1524,1462 +3072,42 @@
     "logging": false,
     "match_ip_sec": false,
     "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
+    "name": "Block All Traffic",
+    "origin_id": "6613a1f0c4b2d90a5e1f1094",
+    "predefined": true,
+    "protocol": "all",
+    "schedule": {
+      "mode": "ALWAYS"
+    },
+    "source": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    }
+  },
+  {
+    "_id": "6613a1f0c4b2d90a5e1f10096613a1f0c4b2d90a5e1f10092147483647",
+    "action": "BLOCK",
+    "connection_state_type": "ALL",
+    "connection_states": [],
+    "create_allow_respond": true,
+    "destination": {
+      "match_opposite_ports": false,
+      "matching_target": "ANY",
+      "port_matching_type": "ANY",
+      "zone_id": "6613a1f0c4b2d90a5e1f1009"
+    },
+    "enabled": true,
+    "icmp_typename": "ANY",
+    "icmp_v6_typename": "ANY",
+    "index": 2147483647,
+    "ip_version": "BOTH",
+    "logging": false,
+    "match_ip_sec": false,
+    "match_opposite_protocol": false,
+    "name": "Block All Traffic",
     "origin_id": "6613a1f0c4b2d90a5e1f1095",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1096",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1097",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1098",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1099",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1100",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "53",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Public DNS",
-    "origin_id": "6613a1f0c4b2d90a5e1f1101",
-    "predefined": true,
-    "protocol": "tcp_udp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1102",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "ips": [
-        "203.0.113.8/4",
-        "203.0.113.9/16",
-        "203.0.113.10/8",
-        "203.0.113.11/12"
-      ],
-      "match_opposite_ips": false,
-      "match_opposite_ports": false,
-      "matching_target": "IP",
-      "matching_target_type": "SPECIFIC",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30001,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Post-Authorization Restrictions",
-    "origin_id": "6613a1f0c4b2d90a5e1f1103",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1104",
-    "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30002,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1105",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1106",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1107",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1108",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "53",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Public DNS",
-    "origin_id": "6613a1f0c4b2d90a5e1f1109",
-    "predefined": true,
-    "protocol": "tcp_udp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1110",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "443",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30001,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Hotspot Portal",
-    "origin_id": "6613a1f0c4b2d90a5e1f1111",
-    "predefined": true,
-    "protocol": "tcp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1112",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "ips": [
-        "203.0.113.8/4",
-        "203.0.113.9/16",
-        "203.0.113.10/8",
-        "203.0.113.11/12"
-      ],
-      "match_opposite_ips": false,
-      "match_opposite_ports": false,
-      "matching_target": "IP",
-      "matching_target_type": "SPECIFIC",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30002,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Post-Authorization Restrictions",
-    "origin_id": "6613a1f0c4b2d90a5e1f1113",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1114",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "hits": 2009,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30003,
-    "ip_version": "IPV4",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block Unauthorized Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1115",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1116",
-    "action": "BLOCK",
-    "connection_state_type": "CUSTOM",
-    "connection_states": [
-      "INVALID"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30004,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block Invalid Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1117",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1118",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "hits": 108230,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1119",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1120",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "ips": [
-        "203.0.113.7",
-        "2001:db8::3"
-      ],
-      "match_opposite_ips": false,
-      "match_opposite_ports": false,
-      "matching_target": "IP",
-      "matching_target_type": "SPECIFIC",
-      "port": "5353",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "hits": 674,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow mDNS",
-    "origin_id": "6613a1f0c4b2d90a5e1f1121",
-    "predefined": true,
-    "protocol": "udp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "5353",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1122",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "53",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "hits": 49877,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30001,
-    "ip_version": "BOTH",
-    "last_hit": 1786966158591,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow DNS",
-    "origin_id": "6613a1f0c4b2d90a5e1f1123",
-    "predefined": true,
-    "protocol": "tcp_udp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1124",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30002,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow ICMP",
-    "origin_id": "6613a1f0c4b2d90a5e1f1125",
-    "predefined": true,
-    "protocol": "icmp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1126",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "67",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "hits": 84,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30003,
-    "ip_version": "IPV4",
-    "last_hit": 1786946361598,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow DHCP",
-    "origin_id": "6613a1f0c4b2d90a5e1f1127",
-    "predefined": true,
-    "protocol": "udp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "68",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1128",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "ips": [
-        "203.0.113.6"
-      ],
-      "match_opposite_ips": false,
-      "match_opposite_ports": false,
-      "matching_target": "IP",
-      "matching_target_type": "SPECIFIC",
-      "port": "8880,8843",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "hits": 23,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30004,
-    "ip_version": "IPV4",
-    "last_hit": 1786807133470,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Hotspot Portal Authentication",
-    "origin_id": "6613a1f0c4b2d90a5e1f1129",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1130",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "39080,39443",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "hits": 309,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30005,
-    "ip_version": "IPV4",
-    "last_hit": 1786807133470,
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Hotspot Portal Redirects",
-    "origin_id": "6613a1f0c4b2d90a5e1f1131",
-    "predefined": true,
-    "protocol": "tcp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1132",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30006,
-    "ip_version": "IPV6",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow ICMPv6",
-    "origin_id": "6613a1f0c4b2d90a5e1f1133",
-    "predefined": true,
-    "protocol": "icmpv6",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1134",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "547",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30007,
-    "ip_version": "IPV6",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow DHCPv6",
-    "origin_id": "6613a1f0c4b2d90a5e1f1135",
-    "predefined": true,
-    "protocol": "udp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "546",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1136",
-    "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30008,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1137",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1138",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1139",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1140",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "53",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Public DNS",
-    "origin_id": "6613a1f0c4b2d90a5e1f1141",
-    "predefined": true,
-    "protocol": "tcp_udp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1142",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "ips": [
-        "203.0.113.8/4",
-        "203.0.113.9/16",
-        "203.0.113.10/8",
-        "203.0.113.11/12"
-      ],
-      "match_opposite_ips": false,
-      "match_opposite_ports": false,
-      "matching_target": "IP",
-      "matching_target_type": "SPECIFIC",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30001,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Post-Authorization Restrictions",
-    "origin_id": "6613a1f0c4b2d90a5e1f1143",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1144",
-    "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30002,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1145",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1146",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1147",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1148",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "53",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Public DNS",
-    "origin_id": "6613a1f0c4b2d90a5e1f1149",
-    "predefined": true,
-    "protocol": "tcp_udp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1150",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "ips": [
-        "203.0.113.8/4",
-        "203.0.113.9/16",
-        "203.0.113.10/8",
-        "203.0.113.11/12"
-      ],
-      "match_opposite_ips": false,
-      "match_opposite_ports": false,
-      "matching_target": "IP",
-      "matching_target_type": "SPECIFIC",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30001,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Post-Authorization Restrictions",
-    "origin_id": "6613a1f0c4b2d90a5e1f1151",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1152",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1153",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1154",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port": "53",
-      "port_matching_type": "SPECIFIC",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "IPV4",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Public DNS",
-    "origin_id": "6613a1f0c4b2d90a5e1f1155",
-    "predefined": true,
-    "protocol": "tcp_udp",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1156",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1157",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1158",
-    "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1005"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1159",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1160",
-    "action": "ALLOW",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1161",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1162",
-    "action": "BLOCK",
-    "connection_state_type": "CUSTOM",
-    "connection_states": [
-      "INVALID"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1002"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block Invalid Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1163",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1164",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1165",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1166",
-    "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1006"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1167",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1168",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1169",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1170",
-    "action": "ALLOW",
-    "connection_state_type": "RESPOND_ONLY",
-    "connection_states": [
-      "RELATED",
-      "ESTABLISHED"
-    ],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1007"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 30000,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Allow Return Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1171",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1172",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1008"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1173",
-    "predefined": true,
-    "protocol": "all",
-    "schedule": {
-      "mode": "ALWAYS"
-    },
-    "source": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    }
-  },
-  {
-    "_id": "6613a1f0c4b2d90a5e1f1174",
-    "action": "BLOCK",
-    "connection_state_type": "ALL",
-    "connection_states": [],
-    "create_allow_respond": true,
-    "destination": {
-      "match_opposite_ports": false,
-      "matching_target": "ANY",
-      "port_matching_type": "ANY",
-      "zone_id": "6613a1f0c4b2d90a5e1f1009"
-    },
-    "enabled": true,
-    "icmp_typename": "ANY",
-    "icmp_v6_typename": "ANY",
-    "index": 2147483647,
-    "ip_version": "BOTH",
-    "logging": false,
-    "match_ip_sec": false,
-    "match_opposite_protocol": false,
-    "name": "Block All Traffic",
-    "origin_id": "6613a1f0c4b2d90a5e1f1175",
     "predefined": true,
     "protocol": "all",
     "schedule": {

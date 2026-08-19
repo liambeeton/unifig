@@ -28,8 +28,7 @@
       "ip_addrs": [
         "203.0.113.3",
         "203.0.113.4",
-        "203.0.113.5",
-        "203.0.113.6"
+        "203.0.113.5"
       ],
       "is_cloud_console": false,
       "live_chat": "super-only",
@@ -47,7 +46,7 @@
       "unsupported_device_list": [],
       "update_available": false,
       "update_downloaded": false,
-      "uptime": 163679,
+      "uptime": 363830,
       "version": "10.5.67"
     }
   ]
