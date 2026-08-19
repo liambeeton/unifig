@@ -155,6 +155,29 @@ send it, the live value back unchanged, and the Controller keeps it: no 400 and
 no reordering, measured in issue #35, which is why `batch-reorder` is not
 implicated in an ordinary update (ADR-0021).
 
+**A policy the Controller ships has no id to write to, and the recording has to
+say so.** Its `_id` is not a document handle but a description of where the
+policy came from — `source.zone_id + destination.zone_id + index`, concatenated,
+53 characters or 58 — and the Controller answers 404
+`api.err.FirewallPolicyNotFound` to it on GET and on PUT alike. Live hardware
+answered with eighty-six of those and not one plain id (ADR-0027, issue #41).
+
+**The files committed here do not carry it yet, and that is a debt rather than a
+decision.** The scrub used to map every `_id` through a 24-character placeholder,
+so this recording holds no composite id at all — all 83 policies below have a
+plain one — the replay stand-in had never been handed one, and every policy in the
+suite was addressable. That is how unifig came to plan an update it could not
+apply, on nineteen policies its own `unifig.yaml` names, with a green suite the
+whole time.
+
+`tools/record-udr/scrub.go` is fixed: it now takes a composite apart, replaces
+each identifier in it, and puts it back the way it came, so a re-recorded policy's
+`_id` equals its own scrubbed zone ids and index, and
+`TestScrubKeepsACompositeIdentifierComposite` is what holds it there. **The files
+themselves need one `make record-udr` to catch up** — until that runs, the tests
+that are about a policy the Controller generates seed their own with
+`seedGeneratedPolicy`, which is where the distinction is exercised.
+
 ## Re-recording from a real UDR
 
 One command, from the repo root, with `UNIFIG_HOST` and `UNIFIG_API_KEY`

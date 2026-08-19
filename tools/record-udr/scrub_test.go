@@ -739,14 +739,25 @@ const rawFirewallZones = `[
   }
 ]`
 
+// The policy shape here is the one a migrated UDR actually sends, and the `_id`
+// is the part of it this fixture used to guess wrong. A policy the Controller
+// ships is computed from the pair of zones rather than stored, and its `_id` is
+// the two zone ids and the index run together — never a document handle. Live
+// hardware answered with eighty-six of those and no plain one (issue #41).
+//
+// The operator's own policy keeps a plain twenty-four character id, because a
+// policy somebody created really is stored and really does have one. Both shapes
+// are here so the scrub is asked to tell them apart.
 const rawFirewallPolicies = `[
   {
-    "_id": "65f1c0a1d4e2b30af1c00c01",
+    "_id": "65f1c0a1d4e2b30af1c00b0165f1c0a1d4e2b30af1c00b022147483647",
     "site_id": "65f1c0a1d4e2b30af1c00000",
     "name": "Internal to External",
     "action": "ALLOW",
     "predefined": true,
     "enabled": true,
+    "index": 2147483647,
+    "origin_id": "65f1c0a1d4e2b30af1c00d01",
     "protocol": "all",
     "source": { "zone_id": "65f1c0a1d4e2b30af1c00b01", "matching_target": "ANY" },
     "destination": { "zone_id": "65f1c0a1d4e2b30af1c00b02", "matching_target": "ANY" }
@@ -757,6 +768,7 @@ const rawFirewallPolicies = `[
     "name": "Ollie off the internet at bedtime",
     "action": "BLOCK",
     "enabled": true,
+    "index": 20000,
     "protocol": "all",
     "source": { "zone_id": "65f1c0a1d4e2b30af1c00b03", "matching_target": "ANY" },
     "destination": { "zone_id": "65f1c0a1d4e2b30af1c00b02", "matching_target": "ANY" }
@@ -972,6 +984,69 @@ func TestScrubKeepsAPolicyPointingAtTheZonesItGoverns(t *testing.T) {
 	}
 	if got := zones[zoneEnd(policy, "destination")]; got != "External" {
 		t.Errorf("the policy's destination zone is %q, want External", got)
+	}
+}
+
+// The recording has to carry identifiers of the shape the Controller really
+// returns, and this is the test that says so.
+//
+// The scrub must anonymise an identifier — it names one console — and it must
+// not anonymise the *shape* of one, because the shape is the whole of what
+// distinguishes a policy unifig can write from one it cannot. The Controller
+// resolves a document handle and answers 404 to a composite (issue #41), so a
+// scrub that flattened every `_id` to twenty-four characters produced a
+// recording in which every policy looked writable and the replay stand-in had
+// never seen the other kind. That is how ADR-0019's rule — a stand-in that
+// accepts what hardware refuses is a fixture asserting the wrong guess — got in
+// through the recording rather than through the stand-in.
+func TestScrubKeepsACompositeIdentifierComposite(t *testing.T) {
+	out := scrubbed(t)
+
+	policy := out.policies[0]
+	id := idOf(policy)
+	if id == "65f1c0a1d4e2b30af1c00b0165f1c0a1d4e2b30af1c00b022147483647" {
+		t.Errorf("the policy's identifier came through unscrubbed: %s", id)
+	}
+	// The property that makes it a firewall rather than a list of strings: the
+	// composite still describes the pair of zones the recording holds.
+	want := zoneEnd(policy, "source") + zoneEnd(policy, "destination") + "2147483647"
+	if id != want {
+		t.Errorf("the policy's identifier is %q, want its own zone ids and index run together, %q", id, want)
+	}
+}
+
+// The other half of the same rule: a document handle stays a document handle.
+// Anonymising both shapes into one is the same defect from either side, and a
+// zone is where the plain shape is asserted because a zone really is stored.
+func TestScrubLeavesAStoredObjectsIdentifierAPlainOne(t *testing.T) {
+	out := scrubbed(t)
+
+	for _, zone := range out.zones {
+		if id := idOf(zone); !isObjectID(id) {
+			t.Errorf("the zone %q has identifier %q, want a plain twenty-four character one", zone["name"], id)
+		}
+	}
+}
+
+// Keeping the shape must not keep the values. Every component of a composite is
+// one of the console's own identifiers and every one of them has to go — which
+// `leaks` would also catch, said here as the thing rather than as a side effect.
+func TestScrubReplacesEveryComponentOfACompositeIdentifier(t *testing.T) {
+	out := scrubbed(t)
+
+	written, err := json.Marshal(out.policies)
+	if err != nil {
+		t.Fatalf("encoding the scrubbed policies: %v", err)
+	}
+	for _, component := range []string{
+		"65f1c0a1d4e2b30af1c00b01",
+		"65f1c0a1d4e2b30af1c00b02",
+		"65f1c0a1d4e2b30af1c00d01",
+	} {
+		if strings.Contains(string(written), component) {
+			t.Errorf("the recording still holds %q, an identifier of the console it was taken from:\n%s",
+				component, written)
+		}
 	}
 }
 

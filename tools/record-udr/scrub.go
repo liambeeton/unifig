@@ -591,6 +591,9 @@ func (s *scrubber) field(where, name string, value any) any {
 	switch v := value.(type) {
 	case string:
 		if named {
+			if k == shapeObjectID {
+				return s.identifier(where, v)
+			}
 			return s.replace(where, k, v)
 		}
 		return s.byShape(where, name, v)
@@ -630,11 +633,15 @@ func (s *scrubber) byShape(where, name, text string) string {
 	if _, err := net.ParseMAC(text); err == nil {
 		return s.replace(where, shapeMAC, text)
 	}
-	if isObjectID(text) {
-		return s.replace(where, shapeObjectID, text)
+	if isObjectID(text) || isCompositeID(text) {
+		return s.identifier(where, text)
 	}
 	return text
 }
+
+// objectIDLength is how long one of the Controller's identifiers is, named
+// because compositeID counts in them.
+const objectIDLength = 24
 
 // isObjectID reports whether a value is one of the Controller's own object
 // identifiers: twenty-four hex characters and nothing else.
@@ -646,7 +653,7 @@ func (s *scrubber) byShape(where, name, text string) string {
 // a build string or a version is not an identifier, and replacing one would
 // lose the fact the recording exists to state.
 func isObjectID(text string) bool {
-	if len(text) != 24 {
+	if len(text) != objectIDLength {
 		return false
 	}
 	for _, c := range text {
@@ -655,6 +662,75 @@ func isObjectID(text string) bool {
 		}
 	}
 	return true
+}
+
+// identifier is the substitution for a value that identifies something on the
+// Controller, and the whole of what this program knows about the shape of one.
+//
+// A field like `_id` does not always hold *one* identifier. The Controller's own
+// firewall policies are computed from a pair of zones rather than stored, and
+// their `_id` says so literally: the source zone id, the destination zone id and
+// the policy's index, concatenated. Live hardware answered with eighty-six of
+// them and not a single plain one (issue #41).
+//
+// Handing that value to `replace` would swap fifty-eight characters for a
+// twenty-four character placeholder, and the recording would then hold a
+// composite identifier rewritten into a document handle — which is precisely the
+// distinction unifig has to make, because the Controller resolves one and answers
+// 404 to the other. **A value's shape is not a thing this program may anonymise.**
+// The identifiers name one console, so they have to go; what has to survive is
+// that there were three of them run together.
+//
+// So a composite is scrubbed component by component and put back the way it came.
+// Each component goes through the same substitution table as every other
+// identifier, so the `_id` of a recorded policy still equals its own scrubbed
+// `source.zone_id` plus its `destination.zone_id` plus its index — the property
+// that makes the recording a firewall rather than a list of unrelated strings.
+func (s *scrubber) identifier(where, text string) string {
+	parts, tail, composite := compositeID(text)
+	if !composite {
+		return s.replace(where, shapeObjectID, text)
+	}
+	var built strings.Builder
+	for _, part := range parts {
+		built.WriteString(s.replace(where, shapeObjectID, part))
+	}
+	built.WriteString(tail)
+	return built.String()
+}
+
+// isCompositeID reports whether a value is several of the Controller's
+// identifiers run together, optionally followed by a decimal tail — the shape a
+// generated firewall policy's `_id` has.
+func isCompositeID(text string) bool {
+	_, _, ok := compositeID(text)
+	return ok
+}
+
+// compositeID splits such a value into its identifiers and whatever follows
+// them, and reports whether it is one at all.
+//
+// It is greedy over the identifiers and then insists the remainder is decimal,
+// which is what makes the split unambiguous on the one real example: an index
+// like `2147483647` is ten characters that are all hex digits too, so a reader
+// counting from the left has to know to stop taking identifiers once fewer than
+// twenty-four characters remain. Two identifiers are the minimum, because one on
+// its own is the ordinary case `isObjectID` already answers for.
+func compositeID(text string) (parts []string, tail string, ok bool) {
+	rest := text
+	for len(rest) >= objectIDLength && isObjectID(rest[:objectIDLength]) {
+		parts = append(parts, rest[:objectIDLength])
+		rest = rest[objectIDLength:]
+	}
+	if len(parts) < 2 {
+		return nil, "", false
+	}
+	for _, c := range rest {
+		if !strings.ContainsRune("0123456789", c) {
+			return nil, "", false
+		}
+	}
+	return parts, rest, true
 }
 
 func (s *scrubber) address(where, name string, addr netip.Addr, text string) string {
