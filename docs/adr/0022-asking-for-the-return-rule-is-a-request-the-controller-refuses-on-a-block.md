@@ -164,14 +164,16 @@ same standard ADR-0014 set: only what was measured. `block` was sent and refused
   PUT as well as the POST: `refusedByPolicyWrite` is the create's predicate,
   renamed for the second verb it was measured refusing, and putting the
   regression back fails the update tests as well as the create ones.
-- **An allow policy's shape depends on its history, and nothing shows it.** One
+- **An allow policy's shape depends on its history, and nothing showed it.** One
   created allow has a companion; one created blocking and later updated to allow
   does not. Two operators applying the same config file get different firewalls
   depending on what their policy used to be. Whether unifig should own the flag
   on the update path — re-deriving it when the verdict changes, so the companion
   follows the config rather than the history — is a real design question this ADR
   does not settle. Filed as **issue #40**, with the two readings that would
-  settle it and the options it would choose between.
+  settle it and the options it would choose between. ADR-0025 took the one option
+  that needs neither reading: the flag stays the create's, and the plan says
+  which of the two histories a policy is on.
 - `origin_type` has a second value. ADR-0021 recorded `network_config` on the
   policies a migrated router ships; a companion carries `custom_firewall_rule`.
   Both are back-references to whatever made the policy, and neither is

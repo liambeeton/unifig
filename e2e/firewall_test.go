@@ -1032,6 +1032,11 @@ func TestUpdatingAPolicyToAVerdictThatClosesAPathDoesNotAskForTheReturnRule(t *t
 // policy created `block` and later allowed is the row #40 exists to decide.
 // Carrying the stored value through is what ADR-0021 says an update does with
 // every field unifig does not own.
+//
+// ADR-0025 made that a decision rather than a deferral, and left this pin
+// exactly where it was: the flag stays the create's until somebody can watch a
+// Controller answer an update carrying it, and what changed is that the plan now
+// says which history the operator is on rather than the write inventing one.
 func TestUpdatingAPolicyToAnOpenVerdictLeavesTheReturnRuleRequestAsItWas(t *testing.T) {
 	r := startReplay(t)
 	// A policy created blocking, which is how the Controller records one that
@@ -1139,6 +1144,221 @@ func TestPlanSaysNothingAboutAReturnRuleForAPolicyThatBlocks(t *testing.T) {
 `)
 	if stdout := string(res.Stdout); strings.Contains(stdout, "Return") {
 		t.Errorf("the plan promises a return rule for a policy that blocks, which the Controller refuses to make:\n%s", stdout)
+	}
+}
+
+// The update path's half of the same sentence, and the silence issue #37 left
+// behind: an operator approving a one-word verdict change was deleting a second
+// policy with no warning at all.
+//
+// Measured on the live migrated UDR on 19 August 2026 (issue #37, ADR-0022). A
+// throwaway policy created `allow` took the site to 88 policies — its own and
+// the `(Return)` companion — and the apply that changed its verdict to `block`
+// left 87, the companion being the one gone. Which of the two things that
+// request carried did it — the cleared flag or the closed verdict — is not
+// separated, and does not need to be here: unifig only ever sends the two
+// together, because it clears the flag exactly when the verdict closes a path.
+// The plan states the outcome it was measured producing, not the mechanism
+// behind it (ADR-0025).
+//
+// The note is on the verdict for the create's reason: the verdict is what
+// decides it, and under this key an update can change nothing else.
+func TestPlanSaysTheControllerWillTakeTheReturnRuleWhenAPolicyStopsAllowing(t *testing.T) {
+	// Both verdicts that close a path, and only one of them was sent: `block`
+	// was measured taking the companion with it, `reject` never reached the
+	// wire. The note says the same thing about both, which ADR-0025 records as
+	// the reading across it is — this pins unifig's own behaviour, which is what
+	// a test here may do, rather than asserting what the Controller would answer.
+	for _, verdict := range []string{"block", "reject"} {
+		t.Run(verdict, func(t *testing.T) {
+			r := startReplay(t)
+			// A policy unifig created allowing, which is the only way a `<name>
+			// (Return)` comes to exist: the standing request, *and* the
+			// companion the Controller generated from it. The flag on its own is
+			// not this state — fifty-two shipped policies carry it with no
+			// companion at all — which is what the twin below pins.
+			r.seedPolicy(t, "Was Open", "ALLOW", "Internal", "External", nil)
+			// Named and marked the way ADR-0022 measured one: `RESPOND_ONLY`,
+			// predefined, on the reverse pair.
+			r.seedPolicy(t, "Was Open (Return)", "ALLOW", "External", "Internal", map[string]any{
+				"predefined":            true,
+				"connection_state_type": "RESPOND_ONLY",
+			})
+
+			res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Was Open
+    action: %s
+    source: Internal
+    destination: External
+`, verdict))
+			stdout := string(res.Stdout)
+			for _, fragment := range []string{`~ firewall-policy "Was Open"`, "delete", `"Was Open (Return)"`} {
+				if !strings.Contains(stdout, fragment) {
+					t.Errorf("the plan does not say the Controller will take the return rule away (%q missing):\n%s",
+						fragment, stdout)
+				}
+			}
+		})
+	}
+}
+
+// A policy that never asked for a companion loses nothing when it closes, and
+// the plan says nothing rather than announcing a deletion that will not happen.
+//
+// This is the row issue #40 is about, reached from the other side: a policy
+// created `block` and updated to `allow` carries `create_allow_respond: false`
+// and has no companion (ADR-0022), so closing it again removes nothing. The flag
+// is what the plan reads, because it is the Controller's own record of the
+// request made at creation and the only thing on the policy that answers the
+// question.
+func TestPlanSaysNothingAboutTheReturnRuleWhenTheClosingPolicyNeverAskedForOne(t *testing.T) {
+	// Both closing verdicts, for the reason its twin above gives, and both ways
+	// the Controller can say a policy never asked: the flag sent false, and no
+	// flag at all. The second is a policy neither site has — every one either
+	// holds carries the key — and it is pinned here because the note makes a
+	// positive claim in that state, and a claim resting on a Go zero for an
+	// absent field is the shape of ADR-0021's `time_all_day` defect. What is
+	// asserted is unifig's own output, not the Controller's behaviour, which is
+	// the side of the wire a fixture may speak for.
+	for _, verdict := range []string{"block", "reject"} {
+		for _, requested := range []any{false, nil} {
+			t.Run(fmt.Sprintf("%s/%v", verdict, requested), func(t *testing.T) {
+				r := startReplay(t)
+				r.seedPolicy(t, "Was Open", "ALLOW", "Internal", "External", map[string]any{
+					"create_allow_respond": requested,
+				})
+
+				res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Was Open
+    action: %s
+    source: Internal
+    destination: External
+`, verdict))
+				stdout := string(res.Stdout)
+				// The change has to be in the plan for its silence to mean
+				// anything: an assertion that a word is absent passes just as
+				// well on a plan with nothing in it at all.
+				if !strings.Contains(stdout, `~ firewall-policy "Was Open"`) {
+					t.Fatalf("the plan does not hold the update this asserts the silence of:\n%s", stdout)
+				}
+				if strings.Contains(stdout, "Return") {
+					t.Errorf("the plan promises to delete a return rule for a policy that never had one:\n%s", stdout)
+				}
+			})
+		}
+	}
+}
+
+// The flag is not a companion, and this is the policy that proves it.
+//
+// Every policy the Controller ships carries `create_allow_respond: true`,
+// including the fifty-two that allow — and not one of them has a `<name>
+// (Return)` beside it. The twelve companions a migrated router does hold are
+// called `Allow Return Traffic` and sit on reverse pairs, which is the
+// Controller's scheme for its own policies rather than the one it uses for a
+// policy unifig created (ADR-0022). So the flag records the request made at
+// creation, exactly as the ADR says, and reading it as proof that a companion
+// exists makes the plan promise to delete a policy that is not there.
+//
+// This seeds the shape the recording actually holds rather than asserting
+// anything about the Controller: an allow policy carrying the flag, with no
+// companion in the collection. What is pinned is unifig's own output.
+//
+// The change itself cannot be applied — a predefined policy's `_id` is a
+// composite the write endpoint answers 404 to (issue #41) — and this is about
+// the sentence the plan prints, which is wrong for a reason of its own.
+func TestPlanDoesNotPromiseToDeleteAReturnRuleThatIsNotThere(t *testing.T) {
+	r := startReplay(t)
+	// The flag true and no companion: the state fifty-two shipped policies are
+	// in, and the one the flag alone cannot tell from a real companion.
+	r.seedPolicy(t, "Shipped Allow", "ALLOW", "Internal", "External", nil)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Shipped Allow
+    action: block
+    source: Internal
+    destination: External
+`)
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `~ firewall-policy "Shipped Allow"`) {
+		t.Fatalf("the plan does not hold the update this asserts the silence of:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Return") {
+		t.Errorf("the plan promises to delete a companion the Controller does not have:\n%s", stdout)
+	}
+}
+
+// The asymmetry issue #40 was filed for, said out loud in the plan.
+//
+// A policy created blocking and later allowed comes out `ALLOW` with no
+// companion, where the same policy created allowing would have one — so two
+// operators applying the same config file get different firewalls, and until now
+// nothing in the plan showed it. unifig does not close that gap by setting the
+// flag, because what an update carrying it does is unmeasured (ADR-0025); it
+// says which of the two the operator is on.
+func TestPlanSaysAnAllowedPolicyGetsNoReturnRuleWhenItNeverAskedForOne(t *testing.T) {
+	// A flag sent false and no flag at all are one state of the policy, and the
+	// note speaks in it — so both are pinned rather than only the one every
+	// live policy happens to have. The write path keeps the two apart because
+	// inventing a field is a loss (ADR-0021); the plan does not, because neither
+	// is a standing request for a companion.
+	for _, requested := range []any{false, nil} {
+		t.Run(fmt.Sprintf("%v", requested), func(t *testing.T) {
+			planSaysAllowingMakesNoReturnRule(t, requested)
+		})
+	}
+}
+
+func planSaysAllowingMakesNoReturnRule(t *testing.T, requested any) {
+	t.Helper()
+	r := startReplay(t)
+	r.seedPolicy(t, "Was Shut", "BLOCK", "Internal", "External", map[string]any{
+		"create_allow_respond": requested,
+	})
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Was Shut
+    action: allow
+    source: Internal
+    destination: External
+`)
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{`~ firewall-policy "Was Shut"`, "makes no", `"Was Shut (Return)"`} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan does not say this policy will allow traffic with no return rule (%q missing):\n%s",
+				fragment, stdout)
+		}
+	}
+}
+
+// The third state, which is neither of issue #40's two rows and is the one
+// nobody has a reading for.
+//
+// A policy that blocks while carrying the request true is the ordinary shape on
+// hardware — all 86 the migrated router holds carry it, the 34 that block
+// included, because the flag records the request made at creation rather than
+// anything about the policy now (ADR-0022). Allowing one sends that standing
+// request back beside the new `ALLOW`, and whether the Controller acts on it
+// from an update is exactly the reading issue #40 still wants. The plan says so
+// rather than promising a companion or promising none, which is what a plan can
+// honestly say about a body whose answer nobody has watched.
+func TestPlanSaysItCannotTellWhetherAllowingAPolicyCarryingTheRequestMakesAReturnRule(t *testing.T) {
+	r := startReplay(t)
+	// seedPolicy's default, which is the shape of every policy on both sites.
+	r.seedPolicy(t, "Was Shut", "BLOCK", "Internal", "External", nil)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Was Shut
+    action: allow
+    source: Internal
+    destination: External
+`)
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{`~ firewall-policy "Was Shut"`, "not measured", `"Was Shut (Return)"`} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan does not say it cannot tell whether the Controller will make the return rule (%q missing):\n%s",
+				fragment, stdout)
+		}
 	}
 }
 
