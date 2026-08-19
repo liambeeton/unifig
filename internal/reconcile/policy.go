@@ -55,6 +55,19 @@ const gatewayRisk = "the Controller answers in the Gateway zone, and blocking tr
 // check asks what the verdict is changing *from* as well as to.
 var blockingActions = map[string]bool{"block": true, "reject": true}
 
+// opensAPath is whether a verdict lets traffic through, and it is the only
+// distinction the Controller's return-rule rule turns on: it generates the
+// companion on a create that allows, and refuses a body that asks for one beside
+// any other verdict (ADR-0022). Three places state that rule — the note a plan
+// puts on a create, the flag a create sends, and the flag an update has to take
+// back off — and they are one rule rather than three agreeing constants.
+//
+// It is deliberately not `blockingActions` below, which is a list of the
+// verdicts that close a path. The Controller's message names no verdict at all;
+// it objects to the request on anything that is not an allow, so a firmware that
+// ships a fourth verdict is covered here and would have to be added there.
+func opensAPath(action string) bool { return action == "allow" }
+
 var storedActions = map[string]string{
 	"allow":  "ALLOW",
 	"block":  "BLOCK",
@@ -558,7 +571,7 @@ func setPolicyFields(desired config.FirewallPolicy) []Field {
 // same thing a zone's membership note gives them about a network leaving another
 // zone (ADR-0020).
 func returnRuleNote(desired config.FirewallPolicy) []string {
-	if desired.Action != "allow" {
+	if !opensAPath(desired.Action) {
 		return nil
 	}
 	return []string{fmt.Sprintf(
@@ -644,13 +657,30 @@ type storedPolicy map[string]json.RawMessage
 // the plan was computed from, so a narrowing the operator made in the UI while
 // they were reading the plan is not reverted by approving it.
 //
-// What the write endpoint makes of those fields coming back is the one thing
-// #35 could not measure. The policy endpoint is known not to be the minimal DTO
-// the zone endpoint turned out to be — it took `predefined` in a create body and
-// the live `index` in an update body (ADR-0019) — and known is not measured. A
-// refusal would be a 400 naming the field, which stops the apply and reads
-// exactly like #27; dropping the field is the silent destruction that was
-// measured. Loud beats silent, and the reading that would settle it is issue #37.
+// Whether the write endpoint *refuses* those fields coming back was the one
+// thing #35 could not measure, and issue #37 measured it on the live migrated
+// UDR on 19 August 2026: it does not. A body carrying all six came back 200, no
+// field named, nothing like #27. So nothing has to be withheld, and the zone's
+// DTO — which refuses a field it has not heard of (ADR-0019) — really is the
+// other endpoint's shape rather than this one's. That was worth a reading rather
+// than a symmetry, which was the whole of the issue.
+//
+// What the same reading showed is that four of the six are not read off the body
+// at all: `origin_id`, `origin_type`, `hits` and `last_hit` were sent and were
+// absent from the stored policy afterwards, while `icmp_typename` and
+// `icmp_v6_typename` were kept — and those two are the operator's narrowing this
+// exists to carry, so the part that matters is the part that lands.
+//
+// It does not follow that a policy's existing `origin_id` survives an update,
+// and this deliberately does not claim it. The probe added those four to a
+// custom policy that had none, so what was measured is that the DTO does not
+// *take* them from a body — not that it leaves a generated policy's own values
+// alone. Only a policy the Controller generated carries them, and #37's probe was
+// scoped to a throwaway nothing rides. Sending them back is still the right side
+// to err on under a replace: a body that carries a field cannot be the reason it
+// was dropped.
+//
+// The field that did refuse was not one of the six. See clearReturnRuleRequest.
 func mergeIntoStoredPolicy(
 	ctx context.Context,
 	client unifi.Client,
@@ -734,6 +764,9 @@ func (p storedPolicy) id() string {
 // create, kept over the object the Controller sent rather than over the struct
 // go-unifi could read out of it. The four fields are the whole of what unifig
 // owns on a policy, and the other half of that list is up there.
+//
+// The fifth field it touches it does not own, and clears rather than sets. See
+// clearReturnRuleRequest.
 func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, bound bindings) error {
 	source, err := bound.zoneID(desired.Source)
 	if err != nil {
@@ -753,7 +786,75 @@ func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, bound bind
 	if err := p.setZone("source", source); err != nil {
 		return err
 	}
-	return p.setZone("destination", destination)
+	if err := p.setZone("destination", destination); err != nil {
+		return err
+	}
+	return p.clearReturnRuleRequest(desired)
+}
+
+// clearReturnRuleRequest takes the request for a companion return rule off any
+// policy this update leaves closing a path, because the Controller refuses that
+// body — and under ADR-0021's merge, it refuses it on every policy there is.
+//
+// "Leaves", not "changes to": an update runs whenever any managed field differs,
+// so a policy that blocked before and blocks after still goes back through here,
+// and thirty-four of the live eighty-six are policies that block while carrying
+// the flag true. Turning on the *change* would let those through untouched and
+// they are refused exactly as loudly.
+//
+// `create_allow_respond` asks the Controller to generate the companion at
+// creation (ADR-0022). unifig does not own it on an update, and an update sends
+// back whatever the Controller stored. What that meant was measured on the live
+// migrated UDR on 19 August 2026, as issue #37's probe: a throwaway policy
+// created `allow` — so stored with the flag true, which every policy the router
+// holds is — updated to `block` sends that true back beside `BLOCK`, and
+//
+//	400: Firewall policy create respond traffic not allowed
+//
+// The apply stops, nothing is written, and it is not an unlucky policy: all
+// eighty-six the migrated router ships carry the flag true, the thirty-four that
+// already block included. So every allow -> block update failed, in the
+// direction an operator tightens a firewall. It is the loud failure ADR-0021
+// accepted the risk of, arriving through a field that was not on its list.
+//
+// It only ever clears. Setting the flag when a verdict opens a path would make
+// the companion follow the config rather than the policy's history, which is a
+// real design question with two unmeasured readings behind it — whether an
+// update carrying it true generates a companion at all, and whether clearing it
+// removes one. That is issue #40, and this is not the place to answer it by
+// accident: on a verdict that opens a path the stored value goes back untouched,
+// the way every other field unifig does not own does.
+//
+// The condition is the create's condition, and is literally the create's
+// predicate: `opensAPath`, anything but `allow`, because that is the rule the
+// Controller's own message states rather than the list of verdicts anybody has
+// watched it refuse (`block` was sent; `reject` was not).
+//
+// It writes the key only where the Controller sent one carrying `true`, which is
+// the narrowest thing that makes the body legal. Writing `false` onto a policy
+// that carried no such key would be inventing a field on the object, and that is
+// the other half of ADR-0021 — the `schedule.time_all_day` defect, where a Go
+// zero became a stored value the operator never set. Every policy the migrated
+// router holds carries the field, so nothing on today's hardware reaches that
+// branch; it is kept narrow because what makes the write illegal is a `true`
+// specifically, and nothing else here needs saying to the Controller.
+func (p storedPolicy) clearReturnRuleRequest(desired config.FirewallPolicy) error {
+	if opensAPath(desired.Action) || !p.returnRuleRequested() {
+		return nil
+	}
+	return p.set("create_allow_respond", false)
+}
+
+// returnRuleRequested is whether the policy the Controller sent carries a
+// standing request for the companion return rule — false when the field is
+// absent, or is not a bool, both of which are a policy nobody has read and
+// neither of which is a request this has to take back.
+func (p storedPolicy) returnRuleRequested() bool {
+	var requested bool
+	if err := json.Unmarshal(p["create_allow_respond"], &requested); err != nil {
+		return false
+	}
+	return requested
 }
 
 // set writes one field of a stored policy.
@@ -880,7 +981,7 @@ func newFirewallPolicy(desired config.FirewallPolicy) unifi.FirewallZonePolicy {
 		// out false with every other non-allow verdict, which is what unifig sent
 		// on everything it created before any of this and what the Controller has
 		// always taken.
-		CreateAllowRespond: desired.Action == "allow",
+		CreateAllowRespond: opensAPath(desired.Action),
 		// The Controller rejects a policy with no schedule outright, so this is
 		// less a default than a field with one permitted value at creation. It
 		// is not parity either: all eighty-three policies the recording holds

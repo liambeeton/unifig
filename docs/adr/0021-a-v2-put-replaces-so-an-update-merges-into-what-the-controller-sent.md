@@ -100,22 +100,50 @@ and a different session — **issue #38**, with the reading that would settle it
   and letting `omitempty` drop them. That is the rule ADR-0019 and both marker
   tests already stated; what changed is that merging into the Controller's own
   object would otherwise send back a marker the library has never heard of.
-- **unifig now sends back fields no one has watched a policy PUT accept** —
-  `origin_id`, `origin_type`, `icmp_v6_typename`, `hits`, `last_hit`. The policy
-  endpoint is known not to be the minimal DTO the zone endpoint is: it took
-  `predefined` in a create body (ADR-0019) and `index` in an update body (above).
-  That is evidence, not an answer, and the two failure modes are not equal — a
-  refusal is a 400 naming the field, which fails the apply loudly and reads
-  exactly like #27, while dropping the field is the measured silent destruction
-  this ADR exists to stop. Confirming it is one apply on hardware, and is filed
-  as **issue #37** rather than assumed.
-- `hits` and `last_hit` go back at the value the read a moment earlier returned.
-  That is reasoning rather than a measurement, and it rests on the same replace
-  the rest of this rests on: if the Controller stores them on the policy, not
-  sending them loses them outright and sending them costs at most the increments
-  of the window between the read and the write. If it keeps them somewhere else,
-  neither the loss nor the staleness was ever real. Nobody has looked, which is
-  part of issue #37.
+- **The policy write DTO takes all six fields back, and stores four of them
+  nowhere.** This was the open question, filed as issue #37, and it was measured
+  on the live migrated UDR on 19 August 2026 rather than reasoned about. A
+  throwaway `Dmz` -> `Dmz` policy was PUT back carrying `origin_id`,
+  `origin_type`, `icmp_typename`, `icmp_v6_typename`, `hits` and `last_hit`
+  together, and the answer was **200** — no 400, no field named, nothing like
+  #27. Read back, four of the six were simply absent from the stored object:
+  `origin_id`, `origin_type`, `hits` and `last_hit` were sent, accepted and
+  dropped. They are the Controller's own to write, and a body carrying them is
+  neither refused nor believed. `icmp_typename` and `icmp_v6_typename` are
+  stored, which is the point — those are the operator's narrowing, and carrying
+  them is what this ADR exists for.
+
+  So the loud failure this ADR accepted the risk of does not happen on these six,
+  and nothing has to be withheld. The zone endpoint remains the reason that was
+  worth measuring rather than assuming: two v2 collections, two DTOs, and only
+  one of them refuses what it has not heard of.
+
+  **What this does not say is that a generated policy's `origin_id` survives an
+  update.** The probe added the four to a custom policy that never had them, so
+  the reading is that the DTO does not *take* them from a body — not that it
+  leaves the Controller's own values where they are. The two are different
+  claims, and only a policy the Controller generated carries the fields to tell
+  them apart. #37's probe was deliberately scoped to a throwaway policy nothing
+  rides, so that reading was not taken and is not inferred here. Sending the
+  fields back remains the right side to err on: under a replace, a body that
+  carries a field cannot be the reason it went missing.
+- `hits` and `last_hit` were the part of that reasoned about rather than
+  measured, and the reasoning turned out to be moot rather than wrong: the
+  Controller does not take either from the body at all. Sending them a moment
+  stale costs nothing, because sending them does nothing. That the counters are
+  therefore untouched by any update — rather than merely untouched by this one —
+  is inference from the same reading: a field the DTO does not bind on one policy
+  is not a field it binds on another.
+- **A seventh field was refused, and it was not on anyone's list.** The same
+  probe found that an ordinary allow -> block update fails outright, because the
+  merge puts the stored `create_allow_respond: true` back beside the new `BLOCK`
+  and the Controller refuses that pair (ADR-0022). Every policy the migrated
+  router holds carries the flag true, so this was every allow -> block update
+  there is. It is the failure mode this ADR named — loud, a 400, the apply
+  stopped, nothing written — arriving through a field the issue's table did not
+  have, which is the argument for measuring rather than enumerating, made once
+  more at unifig's expense. `overwriteManaged` now clears the request on a
+  verdict that closes a path, and only clears it: see `clearReturnRuleRequest`.
 - The replay stand-in's replace-semantics stops being an assumption. Its comment
   now cites this measurement, which is what ADR-0014's objection to fixtures that
   assert guesses asked for.

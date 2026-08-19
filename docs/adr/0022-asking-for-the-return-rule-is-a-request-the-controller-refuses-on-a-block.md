@@ -64,11 +64,52 @@ An apply with a `block` and a `reject` policy to create applied **neither**, and
 said so. There is no traffic to return for a policy that blocks, and the
 Controller does not treat the request as merely redundant — it rejects the body.
 
-**The update path neither refuses nor generates.** A policy created `block` and
-then updated to `allow` ends up allow, carrying `create_allow_respond: false`,
-with no companion and no error. `mergeIntoStoredPolicy` sends back the stored
-object with only the four fields unifig owns overwritten (ADR-0021), and this is
-not one of them.
+**The update path did not refuse the pair it was handed.** A policy created
+`block` and then updated to `allow` ends up allow, carrying
+`create_allow_respond: false`, with no companion and no error.
+`mergeIntoStoredPolicy` sends back the stored object with only the four fields
+unifig owns overwritten (ADR-0021), and this is not one of them.
+
+That is the half of the mirror this session ran, and the sentence it first
+carried — that the update path neither refuses nor generates — said more than
+the reading did. The other half is below.
+
+## The other half of the mirror, measured a day later
+
+The reading above was taken on a policy that carried the flag **false**, because
+it had been created `block`. Nothing had put the pair the Controller actually
+objects to through an update, and the sentence written from it generalised to a
+path that had not been walked.
+
+Issue #37's probe walked it, on the live migrated UDR on 19 August 2026. A
+throwaway `Dmz` -> `Dmz` policy was created `allow`, so the Controller stored it
+with `create_allow_respond: true`, and then `unifig apply` changed one managed
+field — `action`, allow -> block. Under ADR-0021 the merge puts the stored object
+back whole, so the body carried that `true` beside the new `BLOCK`:
+
+```
+400: Firewall policy create respond traffic not allowed
+```
+
+The same refusal, the same wording, reached through the update rather than the
+create. The endpoint is one endpoint and the rule is about the body, not about
+which verb carried it.
+
+**It was every update of its kind, not an unlucky one.** All eighty-six policies
+the migrated router holds carry `create_allow_respond: true` — the thirty-four
+that already block included, which is the clearest statement available that the
+field records the request made at creation rather than anything about the policy
+now. So under the merge, every allow -> block and allow -> reject update failed
+outright, and those are the changes an operator makes to *tighten* a firewall.
+The apply stopped, nothing was written, and the next plan still showed the
+change pending.
+
+**The companion goes when the request does.** After the create the site held 88
+policies, unifig's and its `(Return)`; after the update to block it held 87, and
+the companion was the one missing. Two things changed in that one request — the
+flag was cleared and the verdict closed — so which of them the Controller acted
+on is not separated here, and this does not close issue #40's second box. It
+does say the companion is not left orphaned, which was the shape of the worry.
 
 ## The bug this found was unifig's own, and hours old
 
@@ -91,7 +132,7 @@ and pinned.
 
 The zone endpoint's refusal is a field it has never heard of, so
 `refusedByZoneWrite` names fields. This one is a **combination** the Controller
-understands perfectly well, so `refusedByPolicyCreate` is a predicate over the
+understands perfectly well, so `refusedByPolicyWrite` is a predicate over the
 body. It is the policy endpoint's first measured refusal, and it is here on the
 same standard ADR-0014 set: only what was measured. `block` was sent and refused;
 `reject` never reached the wire, because the apply stopped at the first failure.
@@ -115,6 +156,14 @@ same standard ADR-0014 set: only what was measured. `block` was sent and refused
   happen — and it is the defect #32 fixed for zone membership, in a new place.
   The companion is predictable enough to state exactly: named `<name> (Return)`,
   generated on an allow, reclaimed with its parent.
+- **`create_allow_respond` is cleared on an update whose verdict closes a path,
+  and never set.** `overwriteManaged` calls `clearReturnRuleRequest`, which is
+  the create's own rule — anything but `allow` — kept over the object the merge
+  puts back. It only ever clears, because clearing is what the Controller demands
+  and setting is what issue #40 has to decide. The stand-in enforces it on the
+  PUT as well as the POST: `refusedByPolicyWrite` is the create's predicate,
+  renamed for the second verb it was measured refusing, and putting the
+  regression back fails the update tests as well as the create ones.
 - **An allow policy's shape depends on its history, and nothing shows it.** One
   created allow has a companion; one created blocking and later updated to allow
   does not. Two operators applying the same config file get different firewalls
@@ -127,7 +176,7 @@ same standard ADR-0014 set: only what was measured. `block` was sent and refused
   policies a migrated router ships; a companion carries `custom_firewall_rule`.
   Both are back-references to whatever made the policy, and neither is
   documented by Ubiquiti.
-- **The stand-in can refuse a policy create.** `refusedByPolicyCreate` reproduces
+- **The stand-in can refuse a policy write.** `refusedByPolicyWrite` reproduces
   the 400 exactly, and putting the regression back fails three tests that pass
   with the fix. The refusal list stays as narrow as the measurement.
 - What none of this says is what the companion does to packets. Nobody has sent

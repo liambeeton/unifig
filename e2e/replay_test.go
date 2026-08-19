@@ -140,12 +140,12 @@ type sentRequest struct {
 // asserted here as the Controller's.
 var refusedByZoneWrite = []string{"attr_no_edit", "cloud_template"}
 
-// refusedByPolicyCreate is the one refusal the policy write endpoint has been
-// measured making, and it is not shaped like the zone's. The zone endpoint
-// refuses a field it has never heard of, so naming the field is enough; this one
-// refuses a *combination* it understands perfectly well — asking it to generate
-// the companion return rule for a policy that blocks, which there would be no
-// traffic to return.
+// refusedByPolicyWrite is the one refusal the policy write endpoint has been
+// measured making, on both of the writes that can reach it, and it is not shaped
+// like the zone's. The zone endpoint refuses a field it has never heard of, so
+// naming the field is enough; this one refuses a *combination* it understands
+// perfectly well — asking it to generate the companion return rule for a policy
+// that blocks, which there would be no traffic to return.
 //
 // Measured on the live migrated UDR on 18 August 2026 (issue #36, ADR-0022). An
 // apply creating a `block` policy with `create_allow_respond: true` came back
@@ -165,7 +165,17 @@ var refusedByZoneWrite = []string{"attr_no_edit", "cloud_template"}
 // The predicate therefore turns on the Controller's own spelling of the verdict
 // being anything but `ALLOW`, which is the shape of the rule the message states
 // rather than the list of verdicts anybody watched it apply.
-func refusedByPolicyCreate(sent map[string]any) string {
+//
+// It covers the update as well as the create, and that is a second measurement
+// rather than a symmetry. ADR-0022 had only ever seen the update carry the pair
+// the Controller accepts — a policy created `block`, so carrying the flag false,
+// updated to `allow` — and wrote down that "the update path neither refuses nor
+// generates". Issue #37's probe ran the mirror on the live migrated UDR on 19
+// August 2026: a policy created `allow`, so carrying it true, updated to `block`
+// puts the stored true back beside `BLOCK` and is refused with this same
+// message. The endpoint is one endpoint and the rule is about the body, not
+// about which verb carried it.
+func refusedByPolicyWrite(sent map[string]any) string {
 	respond, _ := sent["create_allow_respond"].(bool)
 	action, _ := sent["action"].(string)
 	if respond && action != "ALLOW" {
@@ -240,11 +250,20 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 	case req.URL.Path == zonePath || strings.HasPrefix(req.URL.Path, zonePath+"/"):
 		r.collectionV2(w, req, zonePath, &r.zones, refusedByZoneWrite, nil)
 	case req.URL.Path == policyPath || strings.HasPrefix(req.URL.Path, policyPath+"/"):
-		// Nothing is refused here: no policy in the recording carries a marker
-		// of this kind, and no write to one has been seen refused. A list
-		// invented for symmetry would be this stand-in asserting a guess about
-		// a DTO nobody has read.
-		r.collectionV2(w, req, policyPath, &r.policies, nil, refusedByPolicyCreate)
+		// No field is refused here, and that empty list is now a reading rather
+		// than an absence. Issue #37 put a policy back to the live migrated UDR
+		// carrying every field this DTO had never been watched accept —
+		// `origin_id`, `origin_type`, `icmp_typename`, `icmp_v6_typename`,
+		// `hits`, `last_hit` — and got 200. It refuses none of them; it stores
+		// four of them nowhere, which is a thing a round-trip test would see and
+		// not a payload this stand-in has to cover for. The zone's list is
+		// populated because that DTO really does refuse what it has not heard of
+		// (ADR-0019), and the difference between the two collections is measured
+		// on both sides now rather than assumed on either.
+		//
+		// What this endpoint refuses is a combination, and that is the predicate
+		// beside the list.
+		r.collectionV2(w, req, policyPath, &r.policies, nil, refusedByPolicyWrite)
 	default:
 		r.t.Errorf("unifig asked the Controller for something the recording does not have: %s %s",
 			req.Method, req.URL.Path)
@@ -372,6 +391,32 @@ func (r *replay) setDoH(w http.ResponseWriter, req *http.Request) {
 // zones or the firewall policies — with the whole lifecycle unifig uses on them:
 // list, create, update, delete.
 //
+// refusedWrite is every way this stand-in's write endpoints have been measured
+// answering 400, asked once so the create and the update cannot drift apart —
+// which is not hypothetical tidiness: the refusal issue #36 measured on a create
+// is the one issue #37 met on an update, and a stand-in that guarded only the
+// verb it was first written for is the stand-in that missed it.
+//
+// The two are different shapes of refusal, which is why both are here rather
+// than one covering the other: a field the DTO has never heard of (the zone's,
+// ADR-0019) and a combination it understands and rejects (the policy's,
+// ADR-0022). It reports whether it answered, so a caller stops.
+func (r *replay) refusedWrite(
+	w http.ResponseWriter,
+	sent map[string]any,
+	refuses []string,
+	refuseBody func(map[string]any) string,
+) bool {
+	if r.unrecognisedField(w, sent, refuses) {
+		return true
+	}
+	if refusal := refuseBody(sent); refusal != "" {
+		r.refuse(w, refusal)
+		return true
+	}
+	return false
+}
+
 // It is the first stand-in here that creates and deletes rather than only
 // updating, because zones and policies are the first Resources tested this way
 // rather than Settings. That difference is the whole point of these tests: an ID
@@ -384,19 +429,22 @@ func (r *replay) setDoH(w http.ResponseWriter, req *http.Request) {
 //
 // refuses names the fields this collection's write endpoint answers 400 to, so
 // that a payload the Controller would not parse is not one this stand-in
-// quietly stores (see refusedByZoneWrite). Every write is kept whether it was
-// refused or not, because what a test about the request needs is what unifig
-// sent rather than what survived.
+// quietly stores (see refusedByZoneWrite). refuseBody is the same cover for a
+// refusal that is about a combination rather than a field, and it guards the
+// create and the update alike, because the endpoint that refused issue #36's
+// create refused issue #37's update on the same body (see refusedByPolicyWrite).
+// Every write is kept whether it was refused or not, because what a test about
+// the request needs is what unifig sent rather than what survived.
 func (r *replay) collectionV2(
 	w http.ResponseWriter,
 	req *http.Request,
 	base string,
 	held *[]map[string]any,
 	refuses []string,
-	refuseCreate func(map[string]any) string,
+	refuseBody func(map[string]any) string,
 ) {
-	if refuseCreate == nil {
-		refuseCreate = func(map[string]any) string { return "" }
+	if refuseBody == nil {
+		refuseBody = func(map[string]any) string { return "" }
 	}
 	id := strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, base), "/")
 
@@ -416,11 +464,7 @@ func (r *replay) collectionV2(
 		// below: a record that aliased it would be the stored object wearing the
 		// request's name, and the fields it gained would be unfalsifiable.
 		r.written = append(r.written, sentRequest{path: req.URL.Path, body: maps.Clone(sent)})
-		if r.unrecognisedField(w, sent, refuses) {
-			return
-		}
-		if refusal := refuseCreate(sent); refusal != "" {
-			r.refuse(w, refusal)
+		if r.refusedWrite(w, sent, refuses, refuseBody) {
 			return
 		}
 		r.issued++
@@ -438,7 +482,7 @@ func (r *replay) collectionV2(
 		// below: a record that aliased it would be the stored object wearing the
 		// request's name, and the fields it gained would be unfalsifiable.
 		r.written = append(r.written, sentRequest{path: req.URL.Path, body: maps.Clone(sent)})
-		if r.unrecognisedField(w, sent, refuses) {
+		if r.refusedWrite(w, sent, refuses, refuseBody) {
 			return
 		}
 		for i, entry := range *held {
@@ -1198,12 +1242,30 @@ func (r *replay) seedPolicy(t *testing.T, name, action, source, destination stri
 		// ships carry `{mode: ALWAYS}` and no `time_all_day` at all. A seed that
 		// added the key would be a fixture stating something no policy anyone
 		// has read says, and it is exactly the key a Go bool invents.
-		"schedule":    map[string]any{"mode": "ALWAYS"},
-		"source":      map[string]any{"zone_id": zones[source], "matching_target": "ANY"},
-		"destination": map[string]any{"zone_id": zones[destination], "matching_target": "ANY"},
-		"site_id":     "6613a1f0c4b2d90a5e1f0000",
+		"schedule": map[string]any{"mode": "ALWAYS"},
+		// True on every policy of both sites anyone has read, whatever its
+		// verdict: all eighty-three in the recording, of which thirty-one block,
+		// and all eighty-six live on 19 August 2026, of which thirty-four do.
+		// The Controller stores the request made at creation rather than a
+		// property of the policy, which is what a blocking policy carrying it
+		// says (ADR-0022). A seed without it would be a policy neither site has,
+		// and the one shape that hides the refusal issue #37 measured on the
+		// update path.
+		"create_allow_respond": true,
+		"source":               map[string]any{"zone_id": zones[source], "matching_target": "ANY"},
+		"destination":          map[string]any{"zone_id": zones[destination], "matching_target": "ANY"},
+		"site_id":              "6613a1f0c4b2d90a5e1f0000",
 	}
 	for field, value := range fields {
+		// A nil says the Controller sent no such field at all, which is a thing
+		// a seed has to be able to state: the recording's policies carry no
+		// `time_all_day` and no `description`, and a field's absence is half of
+		// what ADR-0021 is about — unifig may not invent one any more than it
+		// may drop one.
+		if value == nil {
+			delete(policy, field)
+			continue
+		}
 		policy[field] = value
 	}
 	r.policies = append(r.policies, policy)

@@ -799,7 +799,7 @@ func TestCreatingAnAllowPolicyAsksTheControllerForTheReturnRule(t *testing.T) {
 // at all in that window.
 //
 // This asserts the request rather than the refusal, for ADR-0019's reason, and
-// the stand-in asserts the refusal separately in refusedByPolicyCreate — so a
+// the stand-in asserts the refusal separately in refusedByPolicyWrite — so a
 // unifig that sent the pair again would fail here on the body it built and there
 // on the answer it got, which is the pairing the marker tests use.
 func TestCreatingABlockingPolicyDoesNotAskForAReturnRule(t *testing.T) {
@@ -826,6 +826,134 @@ func TestCreatingABlockingPolicyDoesNotAskForAReturnRule(t *testing.T) {
 					verdict, sent)
 			}
 		})
+	}
+}
+
+// The same refusal on the update path, where it breaks not an unlucky policy
+// but every one of them.
+//
+// ADR-0022 measured a policy created `block` and updated to `allow` — the body
+// carried `create_allow_respond: false` alongside `ALLOW`, which the Controller
+// took, and the ADR wrote down that "the update path neither refuses nor
+// generates". That was the half of the mirror the probe happened to run. The
+// other half was measured on the live migrated UDR on 19 August 2026 (issue
+// #37): a policy created `allow` and updated to `block` sends the stored `true`
+// back alongside `BLOCK`, and the Controller answers
+//
+//	400: Firewall policy create respond traffic not allowed
+//
+// which is the same refusal `refusedByPolicyWrite` was written for, reached
+// through the update rather than the create. It is not a narrow case. Every one
+// of the 86 policies the migrated router holds carries the flag true — the 34
+// that already block included — so under ADR-0021's merge, *every* allow -> block
+// update fails, and it fails in the direction an operator tightens a firewall.
+//
+// The fix is the rule the create already keeps, applied to the object the merge
+// puts back: the request goes out true only on a verdict that leaves a path
+// open. What it deliberately does not do is set the flag true when the verdict
+// becomes `allow`. Whether unifig should own the flag that way — so a companion
+// follows the config rather than the policy's history — is issue #40's question,
+// and answering it here would be answering it by accident.
+func TestUpdatingAPolicyToAVerdictThatClosesAPathDoesNotAskForTheReturnRule(t *testing.T) {
+	// Both verdicts that close a path, for the reason the create's twin gives:
+	// only `block` reached the wire on hardware, and the rule the Controller
+	// states is about the verdict rather than about that one word.
+	for _, verdict := range []string{"block", "reject"} {
+		t.Run(verdict, func(t *testing.T) {
+			r := startReplay(t)
+			// The shape every policy the Controller ships has, which is what
+			// seedPolicy gives a policy unless a test says otherwise.
+			r.seedPolicy(t, "Was Open", "ALLOW", "Internal", "External", nil)
+
+			applyFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Was Open
+    action: %s
+    source: Internal
+    destination: External
+`, verdict))
+
+			sent := r.onlyPolicyWrite(t)
+			respond, carried := sent["create_allow_respond"]
+			if !carried {
+				t.Fatalf("the update carries no %q at all, and the policy it merged into had one: %v",
+					"create_allow_respond", sent)
+			}
+			if respond != false {
+				t.Errorf("unifig put the stored request for a return rule back on a policy that now %ss, and the Controller refuses that pair 400: %v",
+					verdict, sent)
+			}
+		})
+	}
+}
+
+// The other side of the same edit: a policy whose verdict stays open keeps the
+// flag exactly as the Controller had it.
+//
+// This is the assertion that stops the fix above from becoming issue #40's
+// answer. unifig clears the request on a verdict that closes a path, because the
+// Controller refuses that body; it does not set it on one that opens a path,
+// because nothing has measured what an update carrying it true does, and a
+// policy created `block` and later allowed is the row #40 exists to decide.
+// Carrying the stored value through is what ADR-0021 says an update does with
+// every field unifig does not own.
+func TestUpdatingAPolicyToAnOpenVerdictLeavesTheReturnRuleRequestAsItWas(t *testing.T) {
+	r := startReplay(t)
+	// A policy created blocking, which is how the Controller records one that
+	// never asked for a companion (ADR-0022, issue #40).
+	r.seedPolicy(t, "Was Shut", "BLOCK", "Internal", "External", map[string]any{
+		"create_allow_respond": false,
+	})
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: Was Shut
+    action: allow
+    source: Internal
+    destination: External
+`)
+
+	sent := r.onlyPolicyWrite(t)
+	if respond := sent["create_allow_respond"]; respond != false {
+		t.Errorf("the update changed %q to %v on a verdict the Controller accepts either way, which is issue #40's question rather than this one's: %v",
+			"create_allow_respond", respond, sent)
+	}
+}
+
+// Clearing the request is not the same as writing a `false` onto a policy that
+// never carried the key, and this is the half of that distinction ADR-0021 cares
+// about.
+//
+// Every policy either site holds carries `create_allow_respond`, so this seeds a
+// policy neither the recording nor the router has, and seedPolicy's own comment
+// says as much. That is not the fixture-asserting-a-guess ADR-0014 objects to,
+// and the difference is which side of the wire the claim is on: this states
+// nothing about how the Controller behaves — it hands unifig an input and pins
+// what **unifig** puts on the wire. The stand-in's refusal lists are the ones
+// that may only hold measurements, because those speak for the Controller.
+//
+// It is worth pinning precisely because no reading covers it: a field absent
+// from every policy anyone has read is the state in which a fix stops being
+// covered by its own measurement, and the next firmware to drop the key would
+// find out through an invented one. A stored `false` where the Controller sent
+// no key is the `schedule.time_all_day` defect of ADR-0021 in a second place — a
+// Go value becoming an operator's stored value — and the Controller only ever
+// objected to a `true`.
+func TestUpdatingAPolicyTheControllerSentNoReturnRuleRequestForInventsNoField(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "No Such Field", "ALLOW", "Internal", "External", map[string]any{
+		"create_allow_respond": nil,
+	})
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: No Such Field
+    action: block
+    source: Internal
+    destination: External
+`)
+
+	sent := r.onlyPolicyWrite(t)
+	if invented, carried := sent["create_allow_respond"]; carried {
+		t.Errorf("the update invented %q as %v on a policy the Controller sent none for: %v",
+			"create_allow_respond", invented, sent)
 	}
 }
 
