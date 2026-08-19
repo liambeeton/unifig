@@ -552,12 +552,7 @@ zones:
       - %q
 `, lan, lan))
 
-	writes := r.zoneWrites(t)
-	if len(writes) != 1 {
-		t.Fatalf("unifig made %d writes to the zone collection, want the one update this config asks for: %v",
-			len(writes), writes)
-	}
-	sent := writes[0]
+	sent := r.onlyZoneWrite(t)
 
 	for field := range sent {
 		if strings.HasPrefix(field, "attr_") {
@@ -570,6 +565,145 @@ zones:
 		if _, carried := sent[needed]; !carried {
 			t.Errorf("the update carries no %q: %v", needed, sent)
 		}
+	}
+}
+
+// The whole of what a zone update puts on the wire, asserted as an exact set
+// rather than as a list of things that must not be in it.
+//
+// The negative tests beside this one — no `attr_*`, none of the fields the
+// Controller sent — each name what they are looking for, so each is blind to the
+// field nobody thought to name. That is not hypothetical: `site_id` was on the
+// wire for the whole of this repository's history and no test saw it. go-unifi
+// models it as `json:"site_id,omitempty"` and no zone GET has ever returned one,
+// so the value stayed empty and `omitempty` kept it home — the same accident as
+// `attr_no_edit`, which went out exactly when it was true, with the sign
+// flipped. Issue #38 sent one and the Controller answered
+// `400 Unrecognized field "site_id"` like all the rest (ADR-0024).
+//
+// So the cover is the one ADR-0019 said it had to be — an assertion about the
+// request, because a stand-in that stores what it is handed reads any payload
+// back as a success — and it is stated as an exact set rather than as a list of
+// names.
+//
+// That last part is what this test is for, and it is worth being exact about,
+// because `site_id` itself is no longer the field it would catch: it is on
+// refusedByZoneWrite now, so the stand-in answers 400 and the apply fails before
+// these assertions run. What an exact set catches is the field nobody has
+// thought of — the three `attr_*` siblings deliberately left off that list
+// because no hardware has refused them, and whatever the next go-unifi models
+// without `omitempty`. Every other assertion here has to be told a name first.
+// This one does not, which is the only reason it is a separate test and not
+// three more lines in the one below.
+//
+// The three are the measured accepted set rather than a preference: `_id`,
+// `name` and `network_ids` are what this DTO takes, and every other field a
+// zone GET returns is a 400.
+func TestTheZoneUnifigWritesBackCarriesOnlyTheThreeFieldsItsDTOTakes(t *testing.T) {
+	r := startReplay(t)
+	lan := r.aNetwork(t)
+	// Seeded with the read shape of a live custom zone. `seedZone` stamps a
+	// `site_id` of its own besides, which is the field this test exists for:
+	// no Controller has been seen sending one, and unifig sent it anyway.
+	r.seedZone(t, "Whole", nil, map[string]any{
+		"external_id":    "28a563df-4bdc-4f9f-b795-76b4ea54dbf1",
+		"zone_key":       nil,
+		"default_zone":   false,
+		"cloud_template": nil,
+	})
+
+	applyFirewall(t, r, fmt.Sprintf(`networks:
+  - name: %q
+zones:
+  - name: Whole
+    networks:
+      - %q
+`, lan, lan))
+
+	sent := r.onlyZoneWrite(t)
+	takenByTheDTO := []string{"_id", "name", "network_ids"}
+	for _, field := range takenByTheDTO {
+		if _, carried := sent[field]; !carried {
+			t.Errorf("the update carries no %q, which this DTO needs: %v", field, sent)
+		}
+	}
+	for field := range sent {
+		if !slices.Contains(takenByTheDTO, field) {
+			t.Errorf("the update carries %q, which this DTO answers 400 to: %v", field, sent)
+		}
+	}
+}
+
+// What the Controller sent a zone with survives an apply, and unifig sends none
+// of it back — which on this endpoint is not a contradiction but the mechanism.
+//
+// The policy endpoint replaces, so carrying the operator's fields back is the
+// only way to keep them — ADR-0021, and
+// TestUpdatingAPolicySendsBackEveryFieldTheControllerSent below.
+// Reading the same rule onto a zone would have been the
+// obvious move and would have broken every zone update there is: this DTO takes
+// `_id`, `name` and `network_ids` and answers 400 to every other field a zone
+// GET returns, so the merge that saved the policies is not a request a zone can
+// even make. It does not have to. Issue #38 put a mutating PUT of exactly this
+// three-field shape to a throwaway custom zone on the live migrated UDR on 19
+// August 2026, and the `external_id` the body did not carry — a UUID on a custom
+// zone, which the Controller cannot regenerate the way it can a built-in's
+// `zone_key` — was still there on an independent read afterwards. **A v2 zone
+// PUT merges** (ADR-0024).
+//
+// Both halves are asserted, and they are not the same kind of claim. The
+// request loop is about unifig: it may not send these, and a body carrying one
+// is a 400. The read-back is about the **stand-in** — with those fields refused,
+// unifig cannot send them, so nothing here could make them vanish except the
+// fixture deciding they do. That is exactly the assertion worth having: this
+// stand-in replaced on zones until ADR-0024, on a guess its own comment owned
+// up to, and this is what fails if anyone flips it back.
+func TestUpdatingAZoneLeavesTheFieldsTheControllerSentAlone(t *testing.T) {
+	r := startReplay(t)
+	lan := r.aNetwork(t)
+	// The read shape of a custom zone as the live router answers with it: a
+	// `zone_key` and a `default_zone` the Controller could regenerate, and an
+	// `external_id` it could not, which is why #38 needed a custom zone to be
+	// able to tell a merge from a replace at all.
+	sentByTheController := map[string]any{
+		"external_id":    "28a563df-4bdc-4f9f-b795-76b4ea54dbf1",
+		"cloud_template": nil,
+		"zone_key":       nil,
+		"default_zone":   false,
+	}
+	r.seedZone(t, "Probe", nil, sentByTheController)
+
+	applyFirewall(t, r, fmt.Sprintf(`networks:
+  - name: %q
+zones:
+  - name: Probe
+    networks:
+      - %q
+`, lan, lan))
+
+	sent := r.onlyZoneWrite(t)
+	for field := range sentByTheController {
+		if _, carried := sent[field]; carried {
+			t.Errorf("the update carries %q, which this endpoint answers 400 to: %v", field, sent)
+		}
+	}
+
+	held := r.zoneNamed(t, "Probe")
+	for field, want := range sentByTheController {
+		got, kept := held[field]
+		if !kept {
+			t.Errorf("the zone lost %q over an apply that could not have sent it: %v", field, held)
+			continue
+		}
+		if got != want {
+			t.Errorf("the zone holds %q as %v after the apply, and the Controller had it as %v", field, got, want)
+		}
+	}
+
+	// And the change the operator did ask for still happened, so "nothing was
+	// lost" cannot be met by an update that did nothing.
+	if members, _ := held["network_ids"].([]any); len(members) != 1 {
+		t.Errorf("the zone holds %d networks after an apply that puts one in it: %v", len(members), held)
 	}
 }
 
@@ -640,12 +774,14 @@ func TestThePolicyUnifigWritesBackCarriesNoneOfTheControllersReadOnlyMarkers(t *
 // hold: a policy an operator narrowed in the Controller's UI, and an apply that
 // means to change the verdict and nothing else.
 //
-// A v2 PUT replaces the object rather than merging into it. That was the guess
-// this stand-in encoded and it is now a measurement: on 18 August 2026 unifig
+// The **policy** endpoint replaces rather than merging into the object. That was
+// the guess this stand-in encoded and it is now a measurement: on 18 August 2026 unifig
 // changed one live policy's `action` on a migrated UDR and reverted its
 // `icmp_typename` from `ECHO_REQUEST` to `ANY` in the same request, silently
 // (ADR-0021). So a field missing from the body is a field the operator loses,
-// and what the body carries is the whole of what survives.
+// and what the body carries is the whole of what survives. It is the endpoint
+// that behaves this way rather than the API version: the zone collection beside
+// it was measured merging (ADR-0024).
 //
 // The four fields seeded here are the losses that probe found, by the two
 // mechanisms it found them by, and every one of them is invisible in the plan:

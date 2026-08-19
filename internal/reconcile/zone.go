@@ -354,11 +354,21 @@ func updateZone(desired config.Zone, live unifi.FirewallZone, bound bindings, pl
 		Name:   desired.Name,
 		Fields: fields,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
-			// The live object goes back with only unifig's own fields changed,
-			// so what the zone carries beside them survives an apply — as far
-			// as it can: a field go-unifi does not model was dropped at
-			// unmarshal, and a field the write endpoint refuses to be told
-			// about is cleared here rather than sent.
+			// The live object goes back with only unifig's own fields
+			// changed, so what the zone carries beside them survives an apply.
+			// That used to be hedged here — a field go-unifi does not model was
+			// dropped at unmarshal, and one the endpoint refuses is cleared
+			// rather than sent, so the promise was only as good as what the
+			// body could carry. Issue #38 measured what the endpoint does with
+			// the rest, and the hedge comes off: **a v2 zone PUT merges**, so
+			// the fields this body cannot carry are the Controller's to keep
+			// and it keeps them (ADR-0024).
+			//
+			// The sister endpoint answered the opposite (ADR-0021), and a
+			// policy update reads its stored JSON and carries every field back
+			// because of it. Doing that here would 400: this DTO takes `_id`,
+			// `name` and `network_ids` and refuses the rest by name. The two
+			// were measured separately for exactly this reason.
 			updated := writableZone(live)
 			if err := overwriteManagedZone(&updated, desired, bound); err != nil {
 				return err
@@ -520,7 +530,9 @@ func overwriteManagedZone(zone *unifi.FirewallZone, desired config.Zone, bound b
 }
 
 // writableZone is a live zone as the Controller's write endpoint will take it:
-// the read-only markers it sends on a GET and refuses on a PUT, cleared.
+// every field that endpoint refuses, cleared. Most of them are the read-only
+// markers it sends on a GET and refuses on a PUT; one of them it never sends at
+// all.
 //
 // A zone's read shape is not its write shape, and nothing in the type says so.
 // The Controller answers a body carrying `attr_no_edit` with
@@ -538,11 +550,24 @@ func overwriteManagedZone(zone *unifi.FirewallZone, desired config.Zone, bound b
 // the same shape with the same `omitempty`, so a firmware that starts putting
 // `attr_hidden` on a zone reproduces this exactly — and would take a second
 // hardware session to find out why, on a different zone.
+//
+// `site_id` goes with them, and it is the one that was already on the wire.
+// Issue #38 asked the endpoint which fields it takes, one field per PUT, and the
+// answer is that it takes `_id`, `name` and `network_ids` and refuses everything
+// else by name — `site_id` included, with the same 400 (ADR-0024). No GET this
+// repository has ever seen returns it, on the live router or in the recording,
+// which is the only reason `omitempty` has been eliding it and the only reason
+// zone updates work at all. That is `attr_no_edit` again with the sign flipped:
+// there the field went out exactly when it was true, here it stays home exactly
+// while the Controller stays silent about it. A firmware that answers with a
+// `site_id` would 400 every zone update unifig makes, and the fix belongs here
+// rather than in whatever session went looking for it.
 func writableZone(live unifi.FirewallZone) unifi.FirewallZone {
 	live.Hidden = false
 	live.HiddenID = ""
 	live.NoDelete = false
 	live.NoEdit = false
+	live.SiteID = ""
 	return live
 }
 

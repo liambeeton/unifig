@@ -21,8 +21,11 @@ import (
 // That is the opposite conclusion to the v2 firewall-policy endpoint's, and the
 // opposite code: there a PUT replaces, so an update has to read the stored
 // object and carry every field of it back (mergeIntoStoredPolicy, ADR-0021).
-// Two endpoints, two measurements, two shapes. Neither was inferred from the
-// other and neither should be.
+// The v2 zone endpoint is a third answer and agrees with neither's reasoning —
+// it merges like these do, while refusing all but three fields, so it reaches
+// the same place by having nothing else it could accept (ADR-0024,
+// writableZone). Three endpoints, three measurements, and the version in the
+// path predicts none of it. Nothing here was inferred from anything there.
 //
 // What it replaced was a go-unifi struct handed straight back, which was wrong
 // in the direction nobody was watching. Nothing was dropped, because the

@@ -104,9 +104,19 @@ reason rather than known to. A zone's read shape is not
 its write shape — `cloud_template`, which all six carry and `go-unifi` does not
 model, is refused the same way — and nothing in the type system says so. That is
 issue #27: the fix clears the read-only markers before the write, and the
-stand-in now answers both measured fields with the 400 a UDR answered, so a
+stand-in answers every measured field with the 400 a UDR answered, so a
 payload the Controller would not parse is no longer one the suite stores and
 reads back (ADR-0014).
+
+There turned out to be more of them than the two this paragraph was written
+about. Issue #38 asked the endpoint field by field on a custom zone and it takes
+`_id`, `name` and `network_ids` and refuses everything else a zone GET returns —
+`external_id`, `zone_key`, `default_zone` and `cloud_template` — plus `site_id`,
+which a zone GET does *not* return and `go-unifi` models with `omitempty`, so it
+had been eliding by luck rather than by rule (ADR-0024). `attr_no_edit` is
+refused sent as `false` too, so the DTO refuses the field rather than the value,
+and the correlation with the marked zones was `omitempty`'s doing from the
+start.
 
 **Which zones does a UDR ship? Six, not the five that were guessed:** `Internal`,
 `External`, `Gateway`, `Vpn`, `Hotspot`, `Dmz`. The guess had no `Dmz` and

@@ -70,6 +70,17 @@ Controller can regenerate for a **built-in** zone. Settling it wants a custom
 zone, whose `external_id` cannot be regenerated, and that is a different endpoint
 and a different session — **issue #38**, with the reading that would settle it.
 
+**Settled there on 19 August 2026, and the other way**
+(`docs/adr/0024-a-v2-zone-put-merges-and-its-write-dto-takes-three-fields.md`).
+A mutating PUT to a throwaway custom zone left the `external_id` it did not carry
+exactly where it was: **a v2 zone PUT merges.** So the refusal to reason from
+this endpoint to that one was worth what it cost — the symmetry would have been
+wrong, and the fix it implied is one the zone endpoint refuses outright, since
+its write DTO takes `_id`, `name` and `network_ids` and answers 400 to every
+other field a zone GET returns. "A v2 PUT replaces" is a fact about the
+firewall-policy endpoint and this ADR's title is that endpoint's, not the API
+version's.
+
 ## Considered Options
 
 - **Change the comment and leave the code.** Cheap, and available: issue #35's

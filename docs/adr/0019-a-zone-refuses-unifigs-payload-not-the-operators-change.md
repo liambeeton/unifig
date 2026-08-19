@@ -172,6 +172,16 @@ policies as #21 confirmed it for zones.
   defect on exactly the zones most sites can test against, the cover for it has
   to be a request-shape assertion rather than a round-trip through a stand-in
   that stores whatever it is handed.
+
+  **"At minimum" was carrying more than it looked.** Issue #38 asked the endpoint
+  field by field on a custom zone and the accepted set is `_id`, `name` and
+  `network_ids`: `default_zone`, `external_id`, `zone_key` and `site_id` are
+  refused with the same 400, and `attr_no_edit` is refused sent as `false`, so
+  the DTO refuses the field rather than the value and the correlation with marked
+  zones was `omitempty`'s doing all along (ADR-0024). One of those was on the
+  wire — `site_id`, which go-unifi models with `omitempty` and which no GET here
+  has ever returned, eliding by luck rather than by rule. `writableZone` clears
+  it now.
 - ADR-0014's zone hold-back should narrow to operator-authored policies, which is
   what issue #22 originally specified; a policy the Controller marks `predefined`
   stops holding its zone back. That is a decision this ADR supports rather than

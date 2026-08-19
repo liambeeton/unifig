@@ -19,10 +19,15 @@
 //     settings — survives an apply rather than being reset to the zero values
 //     of a struct unifig built. A modelled field the file omits is unmanaged on
 //     the same terms, never a request to empty it. How an update keeps that
-//     promise is the endpoint's answer rather than one rule: the v1 verbs merge,
-//     so an update sends its own fields and the Controller puts the object back
-//     (ADR-0023), while a v2 PUT replaces, so an update carries back the whole
-//     object the Controller sent (ADR-0021). Both were measured.
+//     promise is the endpoint's answer rather than one rule, and three of them
+//     have answered: the v1 verbs merge, so an update sends its own fields and
+//     the Controller puts the object back (ADR-0023); the v2 firewall-policy
+//     endpoint replaces, so an update carries back the whole object the
+//     Controller sent (ADR-0021); and the v2 zone endpoint merges while
+//     refusing all but three fields, so an update sends those three and could
+//     not carry anything else if it wanted to (ADR-0024). All three were
+//     measured, and the version in the path predicts none of it — the two v2
+//     collections answer oppositely.
 //   - Nothing is destroyed unless it was asked for. A Resource missing from
 //     the config is unmanaged, not condemned; deleting it takes Options.Prune,
 //     and even then the Controller's own undeletable objects are exempt, a

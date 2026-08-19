@@ -121,24 +121,123 @@ type sentRequest struct {
 	body map[string]any
 }
 
+// writeSemantics is what a collection's PUT does with a field the body leaves
+// out. It is per endpoint rather than per API version, which is the whole of why
+// it is a parameter here and not a rule: both of the v2 collections this
+// stand-in serves were asked the question on the same live migrated UDR a day
+// apart, and they gave opposite answers. The policy endpoint replaces
+// (ADR-0021), the zone endpoint merges (ADR-0024), and neither was inferable
+// from the other — the guess that they matched is the one the zone's comment
+// below used to carry.
+type writeSemantics int
+
+const (
+	replaces writeSemantics = iota
+	merges
+)
+
+// writeContract is one v2 collection's write endpoint as this stand-in models
+// it: what it refuses, and what it does with a field the body leaves out.
+//
+// The three travel together because they are one endpoint's answer, and every
+// one of them was measured on the same router in the same session as the others
+// — so a collection served without one of them is a collection this stand-in
+// has an unstated opinion about. They used to be three parameters, which meant
+// each call site passed a nil for the part of its endpoint nobody had asked
+// about yet, and "nil" read as "nothing to say" whether that was measured or
+// merely untried.
+type writeContract struct {
+	// refuses names the fields this endpoint answers 400 to by name, so a
+	// payload the Controller would not parse is not one this stand-in quietly
+	// stores. Empty is a claim: see the policy collection, where it is a reading
+	// (issue #37) rather than an absence.
+	refuses []string
+	// refusesBody is the same cover for a refusal about a combination the
+	// endpoint understands rather than a field it has never heard of. It guards
+	// the create and the update alike, because the endpoint that refused issue
+	// #36's create refused issue #37's update on the same body.
+	refusesBody func(map[string]any) string
+	// semantics is what a PUT here does with a field the body leaves out.
+	semantics writeSemantics
+}
+
+// The two contracts, one per collection. Neither was inferred from the other:
+// the zone's semantics were measured a day after the policy's and came back the
+// opposite way (ADR-0021, ADR-0024).
+var (
+	zoneWriteContract = writeContract{
+		refuses:   refusedByZoneWrite,
+		semantics: merges,
+	}
+	policyWriteContract = writeContract{
+		refusesBody: refusedByPolicyWrite,
+		semantics:   replaces,
+	}
+)
+
+// refused is every way this contract's endpoint has been measured answering
+// 400, asked once so the create and the update cannot drift apart — which is not
+// hypothetical tidiness: the refusal issue #36 measured on a create is the one
+// issue #37 met on an update, and a stand-in that guarded only the verb it was
+// first written for is the stand-in that missed it.
+//
+// The two shapes are both here rather than one covering the other: a field the
+// DTO has never heard of (the zone's, ADR-0019) and a combination it understands
+// and rejects (the policy's, ADR-0022). It reports whether it answered, so a
+// caller stops.
+func (c writeContract) refused(r *replay, w http.ResponseWriter, sent map[string]any) bool {
+	if r.unrecognisedField(w, sent, c.refuses) {
+		return true
+	}
+	if c.refusesBody == nil {
+		return false
+	}
+	if refusal := c.refusesBody(sent); refusal != "" {
+		r.refuse(w, refusal)
+		return true
+	}
+	return false
+}
+
 // refusedByZoneWrite names the fields the Controller's zone write endpoint has
 // been seen to refuse. Its DTO rejects any field it has not heard of, with a
-// 400 naming the first one it reaches, and these are the two a real UDR was
-// measured refusing (ADR-0019): `attr_no_edit`, which the Controller puts on
-// three of its own zones and go-unifi models, and `cloud_template`, which it
-// puts on all six and go-unifi does not — so no payload can carry the second
-// today. It is here because what makes a field refusable is the Controller's
-// DTO rather than the library's struct, and the day go-unifi models one more of
-// them is the day that stops being true.
+// 400 naming the first one it reaches, and this is the list a real UDR was
+// measured refusing one field at a time (ADR-0019, ADR-0024).
 //
-// Only what was measured is here, and the sibling markers are deliberately not
-// — ADR-0014's objection to a fixture that asserts a guess still stands. What
-// dissolved is only that this refusal is no longer one: it was reproduced on
-// hardware, and it belongs to the request unifig builds rather than to any rule
-// about which zones may be edited. That a payload carries no sibling marker
-// either is unifig's own rule, and is asserted against the request rather than
-// asserted here as the Controller's.
-var refusedByZoneWrite = []string{"attr_no_edit", "cloud_template"}
+// It grew from two to six when issue #38 asked the endpoint the question
+// directly instead of inferring it. Each of these was PUT on its own, on top of
+// the three-field body unifig already sends, to a throwaway custom zone on the
+// live migrated UDR on 19 August 2026, and each came back
+//
+//	400: JSON parse error: Unrecognized field "<name>"
+//	     (class com.ubnt.g.c.t.AWSXjrFfvsFZsv), not marked as ignorable
+//
+// So this DTO takes `_id`, `name` and `network_ids` and nothing else — every
+// other field a zone GET returns is refused by name, whatever its value.
+// `attr_no_edit` was refused sent as `false`, which is the value `omitempty`
+// hides today, so the field is refused rather than the value.
+//
+// `site_id` is the one on this list that is not in a zone's read shape at all —
+// no GET on the live router returns it, and neither does the recording — and it
+// is here because go-unifi models it as `json:"site_id,omitempty"`. That is the
+// exact shape of the defect ADR-0019 was written about: a field that escapes
+// only because the value happens to be empty, on a library struct unifig writes
+// whole. A firmware that starts answering with it would put it on the wire and
+// 400 every zone update, which is why `writableZone` clears it rather than
+// trusting the read to keep being silent.
+//
+// The three sibling markers are still deliberately absent. Nobody has sent
+// `attr_hidden`, `attr_hidden_id` or `attr_no_delete` to this endpoint, and
+// ADR-0014's objection to a fixture that asserts a guess still stands — the rule
+// that unifig sends no marker back is asserted against the request instead.
+var refusedByZoneWrite = []string{
+	"attr_no_edit",
+	"cloud_template",
+	"default_zone",
+	"external_id",
+	"site_id",
+	"zone_key",
+}
 
 // refusedByPolicyWrite is the one refusal the policy write endpoint has been
 // measured making, on both of the writes that can reach it, and it is not shaped
@@ -248,7 +347,7 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 	case req.Method == http.MethodPut && req.URL.Path == setDoHPath:
 		r.setDoH(w, req)
 	case req.URL.Path == zonePath || strings.HasPrefix(req.URL.Path, zonePath+"/"):
-		r.collectionV2(w, req, zonePath, &r.zones, refusedByZoneWrite, nil)
+		r.collectionV2(w, req, zonePath, &r.zones, zoneWriteContract)
 	case req.URL.Path == policyPath || strings.HasPrefix(req.URL.Path, policyPath+"/"):
 		// No field is refused here, and that empty list is now a reading rather
 		// than an absence. Issue #37 put a policy back to the live migrated UDR
@@ -263,7 +362,7 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 		//
 		// What this endpoint refuses is a combination, and that is the predicate
 		// beside the list.
-		r.collectionV2(w, req, policyPath, &r.policies, nil, refusedByPolicyWrite)
+		r.collectionV2(w, req, policyPath, &r.policies, policyWriteContract)
 	default:
 		r.t.Errorf("unifig asked the Controller for something the recording does not have: %s %s",
 			req.Method, req.URL.Path)
@@ -391,32 +490,6 @@ func (r *replay) setDoH(w http.ResponseWriter, req *http.Request) {
 // zones or the firewall policies — with the whole lifecycle unifig uses on them:
 // list, create, update, delete.
 //
-// refusedWrite is every way this stand-in's write endpoints have been measured
-// answering 400, asked once so the create and the update cannot drift apart —
-// which is not hypothetical tidiness: the refusal issue #36 measured on a create
-// is the one issue #37 met on an update, and a stand-in that guarded only the
-// verb it was first written for is the stand-in that missed it.
-//
-// The two are different shapes of refusal, which is why both are here rather
-// than one covering the other: a field the DTO has never heard of (the zone's,
-// ADR-0019) and a combination it understands and rejects (the policy's,
-// ADR-0022). It reports whether it answered, so a caller stops.
-func (r *replay) refusedWrite(
-	w http.ResponseWriter,
-	sent map[string]any,
-	refuses []string,
-	refuseBody func(map[string]any) string,
-) bool {
-	if r.unrecognisedField(w, sent, refuses) {
-		return true
-	}
-	if refusal := refuseBody(sent); refusal != "" {
-		r.refuse(w, refusal)
-		return true
-	}
-	return false
-}
-
 // It is the first stand-in here that creates and deletes rather than only
 // updating, because zones and policies are the first Resources tested this way
 // rather than Settings. That difference is the whole point of these tests: an ID
@@ -427,25 +500,17 @@ func (r *replay) refusedWrite(
 // Responses are bare, with no {meta, data} envelope, because that is what the
 // Controller's v2 API answers with.
 //
-// refuses names the fields this collection's write endpoint answers 400 to, so
-// that a payload the Controller would not parse is not one this stand-in
-// quietly stores (see refusedByZoneWrite). refuseBody is the same cover for a
-// refusal that is about a combination rather than a field, and it guards the
-// create and the update alike, because the endpoint that refused issue #36's
-// create refused issue #37's update on the same body (see refusedByPolicyWrite).
-// Every write is kept whether it was refused or not, because what a test about
-// the request needs is what unifig sent rather than what survived.
+// contract is what this collection's write endpoint refuses and what its PUT
+// does with a field the body leaves out — see writeContract, and the two values
+// beside it. Every write is kept whether it was refused or not, because what a
+// test about the request needs is what unifig sent rather than what survived.
 func (r *replay) collectionV2(
 	w http.ResponseWriter,
 	req *http.Request,
 	base string,
 	held *[]map[string]any,
-	refuses []string,
-	refuseBody func(map[string]any) string,
+	contract writeContract,
 ) {
-	if refuseBody == nil {
-		refuseBody = func(map[string]any) string { return "" }
-	}
 	id := strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, base), "/")
 
 	r.mu.Lock()
@@ -464,7 +529,7 @@ func (r *replay) collectionV2(
 		// below: a record that aliased it would be the stored object wearing the
 		// request's name, and the fields it gained would be unfalsifiable.
 		r.written = append(r.written, sentRequest{path: req.URL.Path, body: maps.Clone(sent)})
-		if r.refusedWrite(w, sent, refuses, refuseBody) {
+		if contract.refused(r, w, sent) {
 			return
 		}
 		r.issued++
@@ -482,32 +547,38 @@ func (r *replay) collectionV2(
 		// below: a record that aliased it would be the stored object wearing the
 		// request's name, and the fields it gained would be unfalsifiable.
 		r.written = append(r.written, sentRequest{path: req.URL.Path, body: maps.Clone(sent)})
-		if r.refusedWrite(w, sent, refuses, refuseBody) {
+		if contract.refused(r, w, sent) {
 			return
 		}
 		for i, entry := range *held {
 			if entry["_id"] != id {
 				continue
 			}
-			// Replaced rather than merged, the way a real v2 endpoint was
-			// measured replacing — an apply that changed one live policy's
-			// verdict on a migrated UDR reverted the ICMP type an operator had
-			// narrowed it to, in the same request (ADR-0021, issue #35). This
-			// used to be the guess that made "unifig writes the whole object
-			// back" checkable here, held to a lower standard than
-			// refusedByZoneWrite beside it; it is now the measurement.
+			// Replace or merge as the endpoint itself was measured behaving.
+			// Both answers are measurements now, taken a day apart on the same
+			// live migrated UDR, and they disagree: an apply that changed one
+			// policy's verdict reverted the ICMP type an operator had narrowed
+			// it to in the same request (ADR-0021, issue #35), while a mutating
+			// PUT to a custom zone left the `external_id` it did not carry
+			// exactly where it was (ADR-0024, issue #38).
 			//
-			// For a **zone** it is still the guess. #35 measured the policy
-			// endpoint and deliberately did not claim the other one, whose only
-			// read looks like a merge (issue #38). It stays a replace here
-			// rather than being softened to match: a stand-in that merged would
-			// store what unifig failed to send and read it back as a success,
-			// which is the direction that hides a defect rather than finds one.
-			// So this is deliberately stricter than the zone endpoint may turn
-			// out to be, and says so rather than being taken for a measurement.
+			// The zone's half used to be a deliberate over-strictness, on the
+			// argument that a stand-in which merged would store what unifig
+			// failed to send and read it back as a success. That argument does
+			// not survive the measurement, and it was pointing at the wrong
+			// risk: what keeps a zone honest is refusedByZoneWrite, which now
+			// answers 400 to every field this DTO does not take, so there is no
+			// payload a merge here could quietly launder.
 			sent["_id"] = id
-			(*held)[i] = sent
-			r.writeJSON(w, sent)
+			if contract.semantics == replaces {
+				(*held)[i] = sent
+				r.writeJSON(w, sent)
+				return
+			}
+			for field, value := range sent {
+				(*held)[i][field] = value
+			}
+			r.writeJSON(w, (*held)[i])
 			return
 		}
 		r.t.Errorf("unifig updated something at %s the Controller does not have: %s", base, id)
@@ -1046,19 +1117,31 @@ func (r *replay) policyWrites(t *testing.T) []map[string]any {
 	return r.writesTo(policyPath)
 }
 
-// onlyPolicyWrite is the one body unifig sent to the policy collection, for the
-// request-shape tests whose config asks for exactly one change to one policy.
+// onlyZoneWrite and onlyPolicyWrite are the one body unifig sent to each
+// collection, for the request-shape tests whose config asks for exactly one
+// change to one Resource.
 //
 // The count is checked rather than the last write taken, because these tests are
 // about what unifig put on the wire: a second write nobody expected is a
 // different apply than the one being described, and reading field names out of
 // whichever body happened to be last would report on it as though it were.
+// theOnlyWriteTo is where that check lives, so the two cannot drift into
+// disagreeing about what "only" means.
+func (r *replay) onlyZoneWrite(t *testing.T) map[string]any {
+	t.Helper()
+	return theOnlyWriteTo(t, r.zoneWrites(t), "zone")
+}
+
 func (r *replay) onlyPolicyWrite(t *testing.T) map[string]any {
 	t.Helper()
-	writes := r.policyWrites(t)
+	return theOnlyWriteTo(t, r.policyWrites(t), "policy")
+}
+
+func theOnlyWriteTo(t *testing.T, writes []map[string]any, collection string) map[string]any {
+	t.Helper()
 	if len(writes) != 1 {
-		t.Fatalf("unifig made %d writes to the policy collection, want the one this config asks for: %v",
-			len(writes), writes)
+		t.Fatalf("unifig made %d writes to the %s collection, want the one this config asks for: %v",
+			len(writes), collection, writes)
 	}
 	return writes[0]
 }
