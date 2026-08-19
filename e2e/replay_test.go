@@ -166,6 +166,10 @@ type writeContract struct {
 	// asks for a companion is not idempotent here: the next plan would still see
 	// one missing, which is a real failure this stand-in would otherwise hide.
 	companions bool
+	// notFoundCode is what this collection answers when the id in the path is
+	// not one it resolves, and empty for a collection nobody has asked. See
+	// writeContract.unresolvable.
+	notFoundCode string
 }
 
 // The two contracts, one per collection. Neither was inferred from the other:
@@ -177,9 +181,10 @@ var (
 		semantics: merges,
 	}
 	policyWriteContract = writeContract{
-		refusesBody: refusedByPolicyWrite,
-		semantics:   replaces,
-		companions:  true,
+		notFoundCode: "api.err.FirewallPolicyNotFound",
+		refusesBody:  refusedByPolicyWrite,
+		semantics:    replaces,
+		companions:   true,
 	}
 )
 
@@ -622,6 +627,9 @@ func (r *replay) collectionV2(
 		// below: a record that aliased it would be the stored object wearing the
 		// request's name, and the fields it gained would be unfalsifiable.
 		r.written = append(r.written, sentRequest{path: req.URL.Path, body: maps.Clone(sent)})
+		if contract.unresolvable(r, w, id) {
+			return
+		}
 		if contract.refused(r, w, sent) {
 			return
 		}
@@ -663,6 +671,9 @@ func (r *replay) collectionV2(
 		http.NotFound(w, req)
 
 	case req.Method == http.MethodDelete && id != "":
+		if contract.unresolvable(r, w, id) {
+			return
+		}
 		for i, entry := range *held {
 			if entry["_id"] != id {
 				continue
@@ -686,6 +697,90 @@ func (r *replay) collectionV2(
 		r.t.Errorf("unifig made a request the recording does not have: %s %s", req.Method, req.URL.Path)
 		http.NotFound(w, req)
 	}
+}
+
+// unresolvable answers the way the Controller does when the id in the path is
+// not one it can resolve — and reports whether it answered, so a caller stops.
+//
+// The Controller addresses an object it stores by a document handle: twenty-four
+// hex characters. It also *lists* objects it never stored, whose `_id` is a
+// description of where they came from rather than a handle — a policy it
+// generates for a pair of zones is `source zone + destination zone + index`
+// concatenated — and it resolves none of those. Measured on the live migrated
+// UDR on 19 August 2026: eighty-six of eighty-six shipped policies carried such
+// an id and every one answered 404 `api.err.FirewallPolicyNotFound` on GET and
+// on PUT (ADR-0027, issue #41).
+//
+// **This is the half of that measurement a recording could not carry.** The
+// scrub used to map every `_id` through a twenty-four character placeholder, so
+// the recording held no composite id at all and the stand-in had never been
+// handed one. Every policy in the suite was addressable and every update passed
+// — ADR-0019's rule (a stand-in that accepts what hardware refuses is a fixture
+// asserting the wrong guess) arriving through the recording rather than through
+// the stand-in.
+//
+// It runs **before** the body is looked at, which is also measured rather than
+// assumed. The same probe sent one body the Controller refuses to three ids: a
+// real handle answered 400 naming the refusal, an absent handle answered 404, and
+// a composite answered 404. So the lookup happens first, and a 404 here is the id
+// rather than the payload.
+//
+// **It hangs off the contract because the answer is one endpoint's.** The code
+// and the message are the firewall policy collection's own, measured there; the
+// zone collection shares this function and has never been asked the question, so
+// its contract names no code and this does nothing for it. A stand-in answering a
+// zone with `api.err.FirewallPolicyNotFound` would be inventing a reading, which
+// is the defect ADR-0019 is about, in miniature and on the error path.
+//
+// **GET and PUT were measured; DELETE is inferred**, and the inference is named
+// rather than hidden: the three verbs share one `{id}` path segment, the 404 body
+// is a lookup failure by its own wording, and the calibration showed the lookup
+// runs before anything else. Nobody sent a DELETE to a composite id, because the
+// success branch of that request would have deleted one of the Controller's own
+// policies. Prune spares a generated policy on its `predefined` marker anyway, so
+// unifig has no path to that request.
+//
+// It fails the test as well as answering, because unifig must never send one:
+// the plan holds back a change to a Generated Policy rather than promising it
+// (ADR-0027). A PUT arriving here is that hold-back having regressed, and the
+// point of the stand-in is that it says so out loud.
+func (c writeContract) unresolvable(r *replay, w http.ResponseWriter, id string) bool {
+	if c.notFoundCode == "" || isDocumentHandle(id) {
+		return false
+	}
+	r.t.Errorf("unifig wrote to %q, which is not an id the Controller resolves: "+
+		"a policy it generates for a pair of zones has no document handle and cannot be written to", id)
+	body, err := json.Marshal(map[string]any{
+		"code":      c.notFoundCode,
+		"details":   map[string]any{"_id": id},
+		"errorCode": 404,
+		"message":   "Firewall policy not found",
+	})
+	if err != nil {
+		r.t.Errorf("encoding the Controller's 404: %v", err)
+		return true
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	if _, err := w.Write(body); err != nil {
+		r.t.Errorf("writing the Controller's 404: %v", err)
+	}
+	return true
+}
+
+// isDocumentHandle is the shape of an id the Controller resolves, stated here
+// rather than imported because the stand-in is a Controller rather than a reader
+// of unifig's opinions about one.
+func isDocumentHandle(id string) bool {
+	if len(id) != 24 {
+		return false
+	}
+	for _, c := range id {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
 }
 
 // unrecognisedField answers the way the Controller does when a body carries a
@@ -1452,6 +1547,38 @@ func (r *replay) seedPolicy(t *testing.T, name, action, source, destination stri
 		policy[field] = value
 	}
 	r.policies = append(r.policies, policy)
+}
+
+// seedGeneratedPolicy seeds a policy of the Controller's own: one it computes for
+// a pair of zones rather than storing, carrying the composite `_id` that shape
+// really has and no document handle anywhere on it.
+//
+// It is a seed rather than something read out of the recording, for the reason
+// seedPolicy is: a test that says what unifig does about a Generated Policy
+// should state the policy it is about, not depend on the recording happening to
+// hold one of the right shape on the right pair. The recording carries eighty-odd
+// of them and every one is somebody else's subject.
+//
+// It is seedPolicy with the `_id` replaced, because that is the only difference
+// that matters: everything else about a generated policy is a policy.
+func (r *replay) seedGeneratedPolicy(t *testing.T, name, action, source, destination string, index int) {
+	t.Helper()
+	// Read before seedPolicy is called rather than inside it, because that takes
+	// the same lock this would.
+	from, _ := r.zoneNamed(t, source)["_id"].(string)
+	to, _ := r.zoneNamed(t, destination)["_id"].(string)
+
+	r.seedPolicy(t, name, action, source, destination, map[string]any{
+		// The whole of what makes it generated: not a document handle but a
+		// description of where the policy came from.
+		"_id":   fmt.Sprintf("%s%s%d", from, to, index),
+		"index": index,
+		// Along for the ride because the Controller sends both on every one of
+		// the eighty-six a migrated router holds, and because prune's exemption
+		// reads the first. Neither is what makes it unwritable.
+		"predefined": true,
+		"origin_id":  fmt.Sprintf("6613a1f0c4b2d90a5e1f8%03d", len(r.livePolicies(t))),
+	})
 }
 
 // zoneEnds names the zones a policy governs, translated out of the IDs it stores

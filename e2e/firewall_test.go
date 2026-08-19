@@ -2320,3 +2320,286 @@ func TestAPlanThatBlocksNothingSaysNothingAboutTheGateway(t *testing.T) {
 		t.Errorf("a plan with nothing blocking in it carried the gateway caveat:\n%s", res.Stdout)
 	}
 }
+
+// A Generated Policy is one the Controller computes for a pair of zones rather
+// than storing, and unifig cannot write to it: its `_id` is the two zone ids and
+// the index run together, which the write endpoint answers 404 to (ADR-0027,
+// issue #41).
+//
+// This is the case the whole issue is about, and `unifig.yaml` in this repo is
+// the reason it matters: it names nineteen `Allow All Traffic` policies and every
+// one of them is generated. Changing the verdict of one — the single edit the
+// config models — used to plan cleanly and then fail on apply. A plan is a
+// statement about what will happen (ADR-0014), so the change is not planned at
+// all, and the operator is told why rather than told nothing.
+func TestPlanWillNotPromiseAChangeToAPolicyTheControllerGenerates(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Allow All Traffic
+    action: block
+    source: Dmz
+    destination: Dmz
+`)
+
+	if res.ExitCode != exitNoChanges {
+		t.Fatalf("plan exited %d, want %d — there is nothing unifig can do here\nstdout: %s",
+			res.ExitCode, exitNoChanges, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	if strings.Contains(stdout, `~ firewall-policy "Allow All Traffic"`) {
+		t.Errorf("the plan promised a change to a policy the Controller generates:\n%s", stdout)
+	}
+	// Named by its whole key, because a migrated router ships nineteen of that
+	// name and a sentence about one has to say which (ADR-0001).
+	for _, fragment := range []string{
+		`"Allow All Traffic" (Dmz to Dmz)`,
+		"will not be changed",
+		"no endpoint can edit it",
+		"takes precedence over it",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan does not say why the change cannot be made (%q missing):\n%s", fragment, stdout)
+		}
+	}
+}
+
+// The caveat is said about a change, not about a policy. Every one of the
+// nineteen `Allow All Traffic` policies a migrated router ships is generated, so
+// a caveat per generated policy would put nineteen lines under every firewall
+// plan and an operator would read past all of them by the third run — the same
+// argument unreadableGateway is gated on.
+func TestAPolicyTheControllerGeneratesAndTheFileAgreesWithIsQuiet(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Allow All Traffic
+    action: allow
+    source: Dmz
+    destination: Dmz
+`)
+
+	if res.ExitCode != exitNoChanges {
+		t.Fatalf("plan exited %d, want %d\nstdout: %s", res.ExitCode, exitNoChanges, res.Stdout)
+	}
+	if strings.Contains(string(res.Stdout), "will not be changed") {
+		t.Errorf("a policy the file agrees with was reported as one unifig could not change:\n%s", res.Stdout)
+	}
+}
+
+// The plan's promise is only worth what apply does, so this is the same sentence
+// checked at the seam where it used to break: nothing is written at all.
+//
+// Without the hold-back the stand-in fails this loudly of its own accord — a PUT
+// to a composite id is a request the Controller answers 404 to, and it says so
+// (see unresolvable). That is the guard, and this is the statement.
+func TestApplyWritesNothingForAPolicyTheControllerGenerates(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+
+	res := applyFirewall(t, r, `firewall-policies:
+  - name: Allow All Traffic
+    action: block
+    source: Dmz
+    destination: Dmz
+`, "--auto-approve")
+
+	if res.ExitCode != 0 {
+		t.Fatalf("apply exited %d, want 0\nstderr: %s", res.ExitCode, res.Stderr)
+	}
+	if writes := r.policyWrites(t); len(writes) != 0 {
+		t.Errorf("apply made %d write(s) to a policy the Controller generates, want none: %v", len(writes), writes)
+	}
+	// Found by its pair rather than by its name: the recording ships nineteen
+	// more of that name, which is the whole reason a policy's key is not its name.
+	dmz, _ := r.zoneNamed(t, "Dmz")["_id"].(string)
+	for _, policy := range r.livePolicies(t) {
+		source, _ := policy["source"].(map[string]any)
+		destination, _ := policy["destination"].(map[string]any)
+		if policy["name"] != "Allow All Traffic" || source["zone_id"] != dmz || destination["zone_id"] != dmz {
+			continue
+		}
+		if policy["action"] != "ALLOW" {
+			t.Errorf("the Controller's own policy is %v, want it left exactly as it was", policy["action"])
+		}
+	}
+}
+
+// Issue #41's last box, and the one that reaches back into ADR-0018.
+//
+// The Risky mark exists for the change that can lock an operator out, and the
+// example the ADR led with was the Controller's own `Allow All Traffic` from
+// Internal to Gateway turned to block: "a predefined policy is matchable and
+// updatable like any other". The second half of that is false. Marking the
+// change would stop an operator to confirm something that then cannot happen,
+// which is worse than not marking it — a confirmation for a non-event is how a
+// prompt stops being read (ADR-0012).
+//
+// So the mark goes with the change. What does not go is the warning: the caveat
+// tells the operator to write their own policy on the pair instead, and on this
+// pair that is precisely the create ADR-0018 marks Risky. Advice to go and do the
+// dangerous thing, with the danger left out, would be a worse outcome than the
+// mark that was removed — so the words travel from one to the other.
+func TestAGeneratedPolicyBlockingTheGatewayWarnsWithoutMarkingAChangeRisky(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", gateway, 2147483647)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Allow All Traffic
+    action: block
+    source: Dmz
+    destination: %s
+`, gateway))
+
+	// No change at all, so nothing for apply to stop and ask about.
+	if res.ExitCode != exitNoChanges {
+		t.Fatalf("plan exited %d, want %d\nstdout: %s", res.ExitCode, exitNoChanges, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	if strings.Contains(stdout, `~ firewall-policy "Allow All Traffic"`) {
+		t.Errorf("a change that cannot be applied was planned:\n%s", stdout)
+	}
+	// The warning survives the mark, in the sentence that suggests the create it
+	// is about.
+	for _, fragment := range []string{"will not be changed", "takes precedence over it", riskOfBlockingTheGateway} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the caveat should carry the way out and what it costs (%q missing):\n%s", fragment, stdout)
+		}
+	}
+}
+
+// The same policy on a pair that is not the gateway's gets the way out and no
+// warning, because there is nothing there to warn about. This is what says the
+// warning is computed from the change rather than pasted onto every caveat —
+// ADR-0012's rule that a warning on everything is a warning read past.
+func TestTheWayOutOfAnUnwritablePolicyCarriesNoWarningWhereThereIsNoDanger(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Allow All Traffic
+    action: block
+    source: Dmz
+    destination: Dmz
+`)
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, "takes precedence over it") {
+		t.Errorf("the caveat should still say the way out:\n%s", stdout)
+	}
+	if strings.Contains(stdout, riskOfBlockingTheGateway) {
+		t.Errorf("a policy nowhere near the gateway was warned about:\n%s", stdout)
+	}
+}
+
+// The other side of that reconciliation, and the reason the mark still earns its
+// place: the lockout is still one line of config away, as a create rather than an
+// edit. The Controller's own allow on that pair sits at `index: 2147483647`, the
+// lowest precedence there is, so a policy written over it takes effect
+// (ADR-0018). This is the same rule as
+// TestCreatingAPolicyThatBlocksTheGatewayIsRisky, stated where the generated
+// policy it has to out-rank is actually present.
+func TestCreatingAPolicyOverAGeneratedOneThatBlocksTheGatewayIsStillRisky(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", gateway, 2147483647)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Lock the gateway
+    action: block
+    source: Dmz
+    destination: %s
+`, gateway))
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `+ firewall-policy "Lock the gateway"`) ||
+		!strings.Contains(stdout, riskOfBlockingTheGateway) {
+		t.Errorf("a created policy blocking the gateway is still the change that can lock an operator out:\n%s", stdout)
+	}
+}
+
+// A pipeline reads the caveats out of the JSON rather than out of the prose, and
+// this is the first caveat about a change an operator explicitly asked for — the
+// others are about deletions unifig proposed itself.
+func TestPlanJSONCarriesTheCaveatAboutAPolicyItCannotChange(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Allow All Traffic
+    action: block
+    source: Dmz
+    destination: Dmz
+`, "--json")
+
+	var plan struct {
+		Changes []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"changes"`
+		Caveats []struct {
+			Kind   string `json:"kind"`
+			Reason string `json:"reason"`
+		} `json:"caveats"`
+	}
+	if err := json.Unmarshal(res.Stdout, &plan); err != nil {
+		t.Fatalf("decoding the plan JSON: %v\n%s", err, res.Stdout)
+	}
+	if len(plan.Changes) != 0 {
+		t.Errorf("plan --json carries %d change(s) for a policy that cannot be written, want none", len(plan.Changes))
+	}
+	if len(plan.Caveats) != 1 {
+		t.Fatalf("plan --json carries %d caveat(s), want exactly 1: %+v", len(plan.Caveats), plan.Caveats)
+	}
+	if plan.Caveats[0].Kind != "firewall-policy" {
+		t.Errorf("the caveat is about kind %q, want firewall-policy", plan.Caveats[0].Kind)
+	}
+	if !strings.Contains(plan.Caveats[0].Reason, `"Allow All Traffic" (Dmz to Dmz)`) {
+		t.Errorf("the caveat does not name the policy it is about: %q", plan.Caveats[0].Reason)
+	}
+}
+
+// An empty plan that is quiet because there was nothing to do and an empty plan
+// that is quiet because unifig could not do it are different states, and the
+// headline used to claim the first for both. Here the Controller emphatically
+// does not match the config — the file says `block` and the site says `allow` —
+// and the only reason nothing is planned is that the policy cannot be addressed.
+func TestAnEmptyPlanWithACaveatDoesNotClaimTheControllerMatches(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Allow All Traffic
+    action: block
+    source: Dmz
+    destination: Dmz
+`)
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, "No changes") {
+		t.Errorf("the plan should still say there is nothing it will do:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "already matches the config") {
+		t.Errorf("the plan claims the Controller matches a config it disagrees with:\n%s", stdout)
+	}
+}
+
+// The other side of it: a plan with nothing to say keeps the sentence, because
+// there the claim is true and it is the whole of what an operator wants to read.
+func TestAnEmptyPlanWithNothingToSayStillSaysTheControllerMatches(t *testing.T) {
+	r := startReplay(t)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Allow All Traffic
+    action: allow
+    source: Internal
+    destination: External
+`)
+
+	if !strings.Contains(string(res.Stdout), "already matches the config") {
+		t.Errorf("a plan with nothing to say should say so plainly:\n%s", res.Stdout)
+	}
+}

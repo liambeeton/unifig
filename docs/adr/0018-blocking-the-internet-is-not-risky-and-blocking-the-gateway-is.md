@@ -1,5 +1,20 @@
 # Blocking the internet is not a Risky change, and blocking the Gateway zone is
 
+> **Amended by ADR-0027 on one premise, not on its decision.** This ADR argues in
+> two places that the lockout is a one-line *edit* to `Allow All Traffic` from
+> Internal to Gateway, "because a predefined policy is matchable and updatable
+> like any other". It is not updatable: the Controller generates its own policies
+> for a pair of zones rather than storing them, and the composite `_id` that
+> results is one it answers 404 to (issue #41). unifig holds such a change back at
+> plan time now, so the mark below never reaches one.
+>
+> **The rule and its scope are unchanged**, because this ADR's other argument
+> carries them on its own: the Controller's policy on a pair sits at `index:
+> 2147483647`, so a policy the operator *creates* over it takes effect. The
+> lockout is still one line of config; it is a create rather than an edit. What
+> also survives is the warning — the caveat about the unwritable policy suggests
+> exactly that create, so it carries this ADR's own risk sentence with it.
+
 `Change.Risk` was set in one place in the codebase — the WAN planner — so no Zone
 or Firewall Policy change ever carried one, and a firewall edit was planned,
 approved and applied as an ordinary change (issue #26). Issue #1's story 24 asks
@@ -170,6 +185,9 @@ written, not a verdict on what the firewall will do with it.
   predefined policy is matchable and updatable like any other — only prune exempts
   it. The lockout is not a hypothetical requiring an unusual config; it is a
   one-line edit to a policy the Controller ships.
+  _(ADR-0027: it is **not** updatable, and the rejection stands on the create
+  instead — a policy written over the Controller's own takes effect, so the
+  lockout is still one line of config.)_
 - **Match the gateway by the name `"Gateway"`** — rejected, as above. Zero
   requests and no ADR-0005 collision, at the price of a construct that has already
   cost this project two bugs and whose failure mode here is silence.

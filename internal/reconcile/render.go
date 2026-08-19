@@ -14,7 +14,21 @@ func (p Plan) Write(out io.Writer) error {
 		// A plan with nothing in it still has to carry its caveats, and this is
 		// the case they exist for: without them "No changes" is indistinguishable
 		// from a site where prune was asked for and quietly did nothing.
-		_, err := io.WriteString(out, "No changes. The Controller already matches the config.\n"+p.caveats())
+		//
+		// The second sentence is dropped when there is a caveat, because a caveat
+		// is a place where the plan is narrower than what was asked and the
+		// sentence claims the opposite. It was merely redundant while every
+		// caveat was about a deletion unifig had proposed to itself; it became
+		// false when one could be about a change the operator wrote down — the
+		// config says `block`, the Controller says `allow`, and unifig cannot
+		// address the policy to do anything about it (ADR-0027). "No changes"
+		// and "no changes I was willing to make" are different sentences, and so
+		// are "no changes" and "nothing to change".
+		matches := " The Controller already matches the config."
+		if len(p.Caveats) > 0 {
+			matches = ""
+		}
+		_, err := io.WriteString(out, "No changes."+matches+"\n"+p.caveats())
 		return err
 	}
 

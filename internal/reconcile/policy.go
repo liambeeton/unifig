@@ -130,6 +130,7 @@ func planFirewallPolicies(
 	// Whether this plan holds a change the gateway check would have looked at,
 	// which is what decides if an unreadable gateway is worth a caveat.
 	blocking := false
+	var caveats []Caveat
 	for _, desired := range cfg.FirewallPolicies {
 		named[keyOfDesiredPolicy(desired)] = true
 		for _, zone := range []string{desired.Source, desired.Destination} {
@@ -144,13 +145,24 @@ func planFirewallPolicies(
 			changes = append(changes, createFirewallPolicy(desired, facts, bound))
 			continue
 		}
+		stated, _ := fromLivePolicy(current, bound)
 		if change, differs := updateFirewallPolicy(desired, current, facts, bound, held); differs {
-			stated, _ := fromLivePolicy(current, bound)
+			// A Generated Policy is matchable and is not writable, so the
+			// difference is real and the change is not one this plan may promise
+			// (ADR-0027). The caveat is said only where something differs: the
+			// nineteen `Allow All Traffic` policies a migrated router ships are
+			// generated too, and a file stating the verdict they already have
+			// has asked for nothing.
+			if generated(current) {
+				caveats = append(caveats,
+					unwritablePolicy(keyOfDesiredPolicy(desired), closesTheGateway(stated, desired, facts)))
+				continue
+			}
 			blocking = blocking || becomesBlocking(stated, desired)
 			changes = append(changes, change)
 		}
 	}
-	caveats := unreadableGateway(blocking, facts)
+	caveats = append(caveats, unreadableGateway(blocking, facts)...)
 	if !opts.Prune {
 		return changes, live, caveats, nil
 	}
@@ -202,6 +214,93 @@ func unreadableGateway(blocking bool, facts zoneFacts) []Caveat {
 		Reason: "no firewall policy is marked as a Risky change: unifig could not read which zone the Controller " +
 			"answers in, so it cannot tell whether a policy in this plan would block the path this site is managed over",
 	}}
+}
+
+// generated is whether the Controller computed this policy for a pair of zones
+// rather than storing it — a Generated Policy — which is the whole of whether
+// unifig can write to it at all.
+//
+// It is asked of the `_id`, because the `_id` is what fails. A stored policy's
+// is a document handle: twenty-four hex characters, handed out on create, and
+// the thing the write endpoint resolves. A generated policy's is the source zone
+// id, the destination zone id and the index concatenated — not a handle but a
+// description of where the policy came from, and the Controller answers 404
+// `api.err.FirewallPolicyNotFound` to it on GET and on PUT alike (ADR-0027).
+//
+// **`predefined` is not what this reads, and the difference is deliberate.** The
+// two agree on every policy anyone has measured: all eighty-six a migrated router
+// holds are `predefined: true` and every one carries a composite id, while the
+// custom policy the probe created was `predefined: false` with a handle. But they
+// are different claims — one says who made the policy, the other says whether
+// there is anything to write to — and reading the marker to decide what a write
+// can do is the mistake issue #34 already corrected once: `attr_no_edit` was
+// taken for a statement about which zones may be edited, and it turned out to
+// mark nothing of the kind (ADR-0019). A firmware that stores its own policies
+// properly would be followed by this and refused forever by the marker.
+//
+// Note that this is not the built-in exemption and does not replace it.
+// `pruneFirewallPolicies` still spares on `predefined` (ADR-0005), because what
+// prune asks is whose object it is.
+func generated(policy unifi.FirewallZonePolicy) bool { return !isDocumentHandle(policy.ID) }
+
+// documentHandleLength and isDocumentHandle are the shape of an id the Controller
+// resolves: twenty-four lowercase hex characters, which is what every object it
+// stores is addressed by and what a create hands back.
+const documentHandleLength = 24
+
+func isDocumentHandle(id string) bool {
+	if len(id) != documentHandleLength {
+		return false
+	}
+	for _, c := range id {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+
+// unwritablePolicy is the Caveat for a change to a Generated Policy: the config
+// asks for something the Controller has no way to be asked, so the plan says so
+// instead of promising it (ADR-0014, ADR-0027).
+//
+// It is a Caveat rather than an error, on the reasoning the type gives: the run
+// is still correct and the rest of the file still applies. It is a Caveat rather
+// than a silence for the sharper half of that reasoning — an operator who edits
+// the verdict of `Allow All Traffic` and reads "No changes" has been told a lie
+// about their own file.
+//
+// The policy is named by its whole key rather than by its name, because a
+// migrated router ships nineteen called `Allow All Traffic` and a sentence about
+// one of them has to say which (ADR-0001, issue #24).
+//
+// It ends with the way out rather than with the refusal, and the way out is a
+// measured fact rather than advice: the Controller's own policy on a pair sits at
+// `index: 2147483647`, the lowest precedence there is, so a policy of the
+// operator's own on the same pair is one that takes effect over it (ADR-0018).
+// That is a policy unifig creates, owns and can change afterwards.
+//
+// `closing` is whether the change being held back was one that would have closed
+// the path to the Gateway zone, and it is here because otherwise this sentence
+// tells an operator to go and do the one thing unifig stops to confirm. The mark
+// is gone from the change — there is no change — and the danger is not: writing
+// your own blocking policy over the Controller's `Allow All Traffic` to the
+// Gateway is exactly the create ADR-0018 marks Risky, and it is what this
+// paragraph would otherwise be recommending in passing. So the way out carries
+// the same words the mark does, and an operator meets them here rather than
+// discovering them at the confirmation prompt.
+func unwritablePolicy(key policyKey, closing bool) Caveat {
+	way := "a policy of your own on the same pair takes precedence over it"
+	if closing {
+		// Named as a Risky change rather than only described, because that is the
+		// word an operator already knows from every plan that carries one, and
+		// because writing this policy is the change that would carry it.
+		way += " — and that would be a Risky change here: " + gatewayRisk
+	}
+	return Caveat{Kind: FirewallPolicy, Reason: fmt.Sprintf(
+		"the %s %s will not be changed: the Controller generates its own policy for a pair of zones "+
+			"rather than storing one, so it has no id to write to and no endpoint can edit it; %s",
+		kinds[FirewallPolicy].one, key, way)}
 }
 
 // zonesInUse names the zones a policy this plan leaves in place still governs,
@@ -443,19 +542,24 @@ func updateFirewallPolicy(
 		return Change{}, false
 	}
 
-	// The Controller's own policy on this pair is matchable like any other, and
-	// only prune exempts it (ADR-0005) — so `Allow All Traffic` from Internal to
-	// Gateway is a one-line edit away from being the rule that locks the operator
-	// out. That is the change this mark exists for.
+	// The mark's subject used to be the Controller's own `Allow All Traffic` from
+	// Internal to Gateway, "a one-line edit away from being the rule that locks
+	// the operator out" — which was the leading argument in ADR-0018 for the
+	// firewall carrying a risk at all. That policy is a Generated Policy and the
+	// edit cannot be made: its `_id` is a composite the write endpoint answers 404
+	// to, measured on the live migrated UDR (ADR-0027, issue #41). This still runs
+	// for one — the caller asks whether there is a difference before it asks
+	// whether the policy can be written, because a caveat is only worth saying
+	// where something differs — and the Change it marks is then dropped rather
+	// than planned. The mark an operator sees for that policy is the one in the
+	// caveat's way out, which is where the danger actually is.
 	//
-	// It is not updatable, though, and this mark currently guards a change that
-	// cannot be applied. A policy the Controller ships has no addressable `_id`
-	// — it is a composite of both zone ids and the index, which the write
-	// endpoint answers 404 to — so the PUT below has nowhere to land, while the
-	// collection read it merges into succeeds. Measured on the live migrated UDR
-	// on 19 August 2026, off the back of #37, and filed as issue #41 with the
-	// reading that would confirm it. Nothing is changed here for it: what a plan
-	// should say about a policy it cannot write is that issue's to decide.
+	// What the mark now guards is every change that can still happen on that pair,
+	// and ADR-0018's other argument is the one carrying it: a policy the operator
+	// *creates* over the Controller's own takes effect, because the Controller's
+	// sits at `index: 2147483647`, the lowest precedence there is. So the lockout
+	// is still one line of config — it is a `+` rather than a `~`, and an update
+	// to a policy unifig made is the same rule a second time.
 	risk := ""
 	if closesTheGateway(current, desired, facts) {
 		risk = gatewayRisk
@@ -501,6 +605,15 @@ func updateFirewallPolicy(
 // reason it survived (ADR-0014). A policy with no key is spared too: unifig
 // cannot describe it, so it was never prune's to delete, and it governs zones
 // unifig cannot name so it holds nothing back either.
+//
+// It is `predefined` that is read here and not the `_id` test the update path
+// uses (ADR-0027), and the two questions really are different: whose object it
+// is, and whether there is an object at all. They have the same answer on every
+// policy anyone has measured, so a second clause would be inert — and prune's
+// question is the first one, which is what ADR-0005 settled. A firmware that
+// generated a policy without marking it `predefined` would have prune proposing
+// a deletion that answers 404; that is a real gap and it belongs to whoever
+// meets it, with a measurement in hand.
 //
 // Spared is not the same list as holds-a-zone-back, and `predefined` is where the
 // two part company: the Controller deletes its own generated policies along with
