@@ -249,6 +249,38 @@ func generated(policy unifi.FirewallZonePolicy) bool { return !isDocumentHandle(
 // stores is addressed by and what a create hands back.
 const documentHandleLength = 24
 
+// returnRule is whether this policy is the companion the Controller generates
+// for the reply traffic of a policy created allowing — a Return Rule.
+//
+// It is asked of `connection_state_type`, **deliberately not of the id shape**.
+// What disqualifies a companion from the config is not that it cannot be written
+// to; it is that it is not a Resource at all. unifig never creates, names or
+// deletes one: the config states its arrival and departure as a field of its
+// parent's change (ADR-0026), so an entry of its own would be a second,
+// competing statement about the same object. A test on the id would exclude the
+// right policies for the wrong reason, and would go on excluding them only for
+// as long as the id happened to fall that way.
+//
+// The id does fall that way on everything measured, and this does not lean on
+// it. All twelve Return Rules the recording holds carry a composite id, and
+// ADR-0026's write session read one off a companion whose parent was custom —
+// unifig's own — and found the same shape, which is what makes the `_id` scheme
+// a property of generated policies rather than of shipped ones. So `generated`
+// would catch every companion anyone has seen. It is still the wrong question to
+// ask about one.
+//
+// What actually links a companion to its parent is `origin_id`, which `go-unifi`
+// v2.3.0 does not model (ADR-0021), so this is the strongest thing the struct
+// can say — and strong enough for what it decides, which is only whether the
+// config gets a line of its own.
+func returnRule(policy unifi.FirewallZonePolicy) bool {
+	return policy.ConnectionStateType == respondOnly
+}
+
+// respondOnly is the Controller's word for a policy that matches only the reply
+// half of a conversation, which is the whole of what a Return Rule is for.
+const respondOnly = "RESPOND_ONLY"
+
 func isDocumentHandle(id string) bool {
 	if len(id) != documentHandleLength {
 		return false
@@ -456,28 +488,61 @@ func uniquelyKeyed(live []unifi.FirewallZonePolicy, bound bindings) error {
 }
 
 // projectFirewallPolicies projects the site's policies into the config that
-// would describe them, and names the ones it could not describe at all.
+// would describe them, names the ones it could not describe at all, and counts
+// the ones it could describe and left out anyway.
 //
-// A policy is left out when a zone on either end of it is one unifig cannot name
-// or when its verdict is one unifig does not model — the whole of a policy is
-// its name, its verdict and its pair of zones, so a policy missing any of them
-// is not a policy the config has a way to write. That is listWLANs' rule rather
-// than fromLiveZone's: a zone can be described in part because its membership is
-// a list, and a policy cannot, because every field it has is required.
-func projectFirewallPolicies(ctx context.Context, client unifi.Client, site string, bound bindings) ([]config.FirewallPolicy, []string, error) {
+// **Three policies never reach the file, and the order they are tested in is the
+// order of the reasons.**
+//
+// A **Generated Policy** goes first and is counted. unifig can word one
+// perfectly well — the plan prints one every time it holds a change back — but
+// an entry naming it is a line no plan may ever act on, so a file carrying one
+// claims to manage what it cannot change (ADR-0028). It is asked before
+// describability because the two can both be true of one policy, and this is the
+// truer thing to say: a policy with no id to write to is out whether or not its
+// zones have names, and blaming the zones would send an operator looking for a
+// shortfall that is not the one they have.
+//
+// A **Return Rule** goes second and is not counted. It is left out for a
+// different reason — it is not a Resource, and the config already states it as
+// the verdict of its parent (ADR-0026) — and it is not counted because a
+// companion left out is fully determined by a policy that is in the file, which
+// is the opposite of unmanaged. Counting it would put a number in the notice
+// that no line of the config accounts for.
+//
+// A policy unifig **cannot word** goes last and is named. That happens when a
+// zone on either end of it is one unifig cannot name or when its verdict is one
+// unifig does not model — the whole of a policy is its name, its verdict and its
+// pair of zones, so a policy missing any of them is not a policy the config has a
+// way to write. That is listWLANs' rule rather than fromLiveZone's: a zone can be
+// described in part because its membership is a list, and a policy cannot,
+// because every field it has is required.
+//
+// The count is what export prints. It is a count rather than a list because a
+// migrated router ships eighty-six of these under names it reuses across them,
+// and the notice nobody reads protects nobody (ADR-0012, ADR-0028).
+func projectFirewallPolicies(ctx context.Context, client unifi.Client, site string, bound bindings) ([]config.FirewallPolicy, []string, int, error) {
 	live, err := listFirewallPolicies(ctx, client, site)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 	// Export matches too, in the sense that matters here: a file describing two
 	// policies unifig cannot tell apart is a file it cannot plan afterwards.
 	if err := uniquelyKeyed(live, bound); err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 
 	policies := make([]config.FirewallPolicy, 0, len(live))
 	var indescribable []string
+	var generatedCount int
 	for _, policy := range live {
+		if generated(policy) {
+			generatedCount++
+			continue
+		}
+		if returnRule(policy) {
+			continue
+		}
 		described, ok := fromLivePolicy(policy, bound)
 		if !ok {
 			indescribable = append(indescribable, policy.Name)
@@ -487,7 +552,16 @@ func projectFirewallPolicies(ctx context.Context, client unifi.Client, site stri
 	}
 	slices.SortFunc(policies, func(a, b config.FirewallPolicy) int { return strings.Compare(a.Name, b.Name) })
 	slices.Sort(indescribable)
-	return policies, indescribable, nil
+
+	// Nil rather than empty when nothing survived, so the `firewall-policies:`
+	// key disappears instead of appearing as `[]`. The two are different
+	// statements to prune — absent is unmanaged, empty says there should be none
+	// — and a site whose every policy is the Controller's own is the first one
+	// that makes the difference visible (ADR-0006, ADR-0028).
+	if len(policies) == 0 {
+		policies = nil
+	}
+	return policies, indescribable, generatedCount, nil
 }
 
 // fromLivePolicy projects a live policy into the config that would describe it,

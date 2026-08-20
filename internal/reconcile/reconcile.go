@@ -684,7 +684,7 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 	bound.bindZones(liveZones)
 	zones, partialZones := projectZones(liveZones, bound)
 
-	policies, indescribablePolicies, err := projectFirewallPolicies(ctx, client, site, bound)
+	policies, indescribablePolicies, generatedPolicies, err := projectFirewallPolicies(ctx, client, site, bound)
 	if err != nil {
 		return config.Config{}, Notices{}, err
 	}
@@ -723,6 +723,7 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 			IndescribableWLANs:        indescribable,
 			PartialZones:              partialZones,
 			IndescribablePolicies:     indescribablePolicies,
+			GeneratedPolicies:         generatedPolicies,
 			IndescribablePortForwards: indescribableForwards,
 			PartialWANSlots:           partial,
 			NoEncryptedDNS:            dns == nil,
@@ -750,6 +751,20 @@ type Notices struct {
 	// IndescribablePolicies names the firewall policies left out of the config
 	// entirely, because a zone on one end of them is one unifig cannot name.
 	IndescribablePolicies []string
+	// GeneratedPolicies counts the firewall policies left out of the config
+	// because the Controller computes them for a pair of zones rather than
+	// storing one, so there is no id to write to and no plan could ever act on
+	// an entry naming them (ADR-0028).
+	//
+	// It is the second kind of notice, and the only one of either kind whose
+	// subject the operator can do something about: the rest say unifig could not
+	// describe the object, this one says unifig could and chose not to.
+	//
+	// A count rather than a list, because a migrated router ships eighty-six of
+	// them under names it reuses across them. The companion Return Rules export
+	// also leaves out are not in it — one of those is fully determined by a
+	// parent that is in the file, which is the opposite of unmanaged.
+	GeneratedPolicies int
 	// IndescribablePortForwards names the port forwards left out of the config
 	// entirely, because a port of theirs is a range or a list rather than the
 	// single port unifig models.

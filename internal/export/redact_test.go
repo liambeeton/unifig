@@ -329,6 +329,70 @@ func TestNoPartialSlotsMeansNoNotice(t *testing.T) {
 	}
 }
 
+// The Controller's own policies are the one thing export leaves out that it
+// could have worded, and the one whose subject an operator can do something
+// about — so this notice says why they went and how to overrule one, where the
+// notices above it only say what is missing (ADR-0028).
+func TestTheGeneratedPolicyNoticeCountsThemAndSaysWhyTheyWentAndHowToOverruleOne(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WriteGeneratedPolicies(&notice, 86); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+
+	written := notice.String()
+	for _, fragment := range []string{
+		"86 firewall policies",
+		// Why, rather than only what: no id to write to.
+		"no id to write to",
+		"--prune",
+		// The way out, and the rename in it — an entry under the generated
+		// policy's own name has that policy's key, so it would be matched
+		// rather than created and the advice would loop (issue #43).
+		"a policy of your own on the same pair",
+		"under a name of your own",
+		"lowest precedence",
+	} {
+		if !strings.Contains(written, fragment) {
+			t.Errorf("the notice should mention %q, got:\n%s", fragment, written)
+		}
+	}
+}
+
+// It counts rather than names, because a migrated router ships eighty-six of
+// these under twenty-two names it reuses across them — nineteen of them the same
+// string — and a paragraph of quoted duplicates is the message that teaches an
+// operator to skip the notices around it (ADR-0012, ADR-0028).
+func TestTheGeneratedPolicyNoticeNamesNoneOfThem(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WriteGeneratedPolicies(&notice, 19); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+	if strings.Contains(notice.String(), `"`) {
+		t.Errorf("the notice quotes a policy name where it should give a count, got:\n%s", notice.String())
+	}
+}
+
+// One of them reads as one of them, the way every other notice here does.
+func TestOneGeneratedPolicyIsCountedInTheSingular(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WriteGeneratedPolicies(&notice, 1); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+	if !strings.Contains(notice.String(), "1 firewall policy the Controller generates") {
+		t.Errorf("the notice should count one in the singular, got:\n%s", notice.String())
+	}
+}
+
+func TestNoGeneratedPoliciesMeansNoNotice(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WriteGeneratedPolicies(&notice, 0); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+	if notice.Len() != 0 {
+		t.Errorf("a site whose every policy is one unifig could write should say nothing, got:\n%s", notice.String())
+	}
+}
+
 // The whole point, stated on its own: after redaction the secret is not in the
 // document anywhere.
 func TestNoSecretSurvivesRedaction(t *testing.T) {

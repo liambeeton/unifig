@@ -1958,6 +1958,216 @@ func TestExportWritesTheFirewallAndItPlansClean(t *testing.T) {
 	}
 }
 
+// exportFirewall runs an export against the stand-in and fails the test if it
+// did not finish. Every test below reads both streams, because the whole of what
+// export does about a Generated Policy is split across them: the file says
+// nothing and stderr says why.
+func exportFirewall(t *testing.T, r *replay) result {
+	t.Helper()
+	exported := testRig.runUnifig(t, []string{"export"}, r.env())
+	if exported.ExitCode != 0 {
+		t.Fatalf("unifig export exited %d\nstderr: %s", exported.ExitCode, exported.Stderr)
+	}
+	return exported
+}
+
+// The file a migrated router adopts as, which is the whole of ADR-0028: every
+// one of its policies is one the Controller computes rather than stores, so the
+// section is not short — it is not there.
+//
+// The count is asked of the recording rather than written down as 86, for the
+// reason gatewayZone is asked rather than named: a refreshed recording is not a
+// reason for this test to fail. What it asserts is the two halves agreeing —
+// nothing survived, and the notice accounts for everything that did not.
+func TestExportLeavesOutThePoliciesTheControllerGeneratesAndSaysHowMany(t *testing.T) {
+	r := startReplay(t)
+	live := r.livePolicies(t)
+
+	exported := exportFirewall(t, r)
+
+	// The key goes rather than going empty. Nil and empty are two different
+	// statements in this file — an absent section is unmanaged, an empty one
+	// says there should be none and prune acts on it (ADR-0006) — so `[]` here
+	// would be unifig asserting a claim the operator never made.
+	if stdout := string(exported.Stdout); strings.Contains(stdout, "firewall-policies") {
+		t.Errorf("export wrote a firewall-policies key on a site whose every policy is the Controller's own:\n%s", stdout)
+	}
+	if policies := exportedYAML(t, exported.Stdout).FirewallPolicies; policies != nil {
+		t.Errorf("the exported config carries %d firewall policies, want none at all", len(policies))
+	}
+
+	stderr := string(exported.Stderr)
+	for _, fragment := range []string{
+		fmt.Sprintf("Left out %d firewall policies the Controller generates rather than stores", len(live)),
+		// The reason, which no other notice carries: this is the one whose
+		// subject an operator can act on.
+		"no id to write to",
+		"`--prune` will not delete them",
+		// And the way out, rename and all (issue #43).
+		"a policy of your own on the same pair under a name of your own",
+		"lowest precedence",
+	} {
+		if !strings.Contains(stderr, fragment) {
+			t.Errorf("export should say why the policies went and what to do about it, looking for %q:\n%s", fragment, stderr)
+		}
+	}
+}
+
+// The notice goes to stderr and nowhere else, because `unifig export >
+// unifig.yaml` has to leave stdout carrying nothing but YAML.
+func TestTheGeneratedPolicyNoticeStaysOffStdout(t *testing.T) {
+	r := startReplay(t)
+
+	exported := exportFirewall(t, r)
+
+	if stdout := string(exported.Stdout); strings.Contains(stdout, "Left out") {
+		t.Errorf("the notice reached stdout, so the file is not YAML:\n%s", stdout)
+	}
+}
+
+// A stored policy of the operator's own is written exactly as it always was.
+// The exclusion is about what the Controller generates, and a file that lost the
+// operator's own policies along with them would be a worse adoption path than
+// the one ADR-0028 replaced.
+func TestExportStillWritesAPolicyTheControllerReallyStores(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Mine", "BLOCK", "Internal", "External", nil)
+
+	cfg := exportedYAML(t, exportFirewall(t, r).Stdout)
+
+	if len(cfg.FirewallPolicies) != 1 {
+		t.Fatalf("export wrote %+v, want the operator's own policy and nothing else", cfg.FirewallPolicies)
+	}
+	if want := (exportedFirewallPolicy{
+		Name: "Mine", Action: "block", Source: "Internal", Destination: "External",
+	}); cfg.FirewallPolicies[0] != want {
+		t.Errorf("the exported policy is %+v, want %+v", cfg.FirewallPolicies[0], want)
+	}
+}
+
+// The second exclusion, and its own reason: a Return Rule is not a Resource.
+// unifig never creates, names or deletes one — the config states its arrival and
+// departure as a field of its parent's change (ADR-0026) — so an entry of its
+// own would be a second, competing statement about the same object.
+//
+// It is a live trap rather than noise. Flip the parent to `block`, the Controller
+// reclaims the companion, and the next plan proposes creating `X (Return)` —
+// which would generate `X (Return) (Return)`.
+func TestExportWritesAPolicyAndNotTheReturnRuleBesideIt(t *testing.T) {
+	r := startReplay(t)
+	const body = `firewall-policies:
+  - name: Let them answer
+    action: allow
+    source: Internal
+    destination: External
+`
+	// Applied rather than seeded, so the companion is the one the stand-in
+	// generates on the terms hardware was measured on (ADR-0026) rather than one
+	// this test drew itself.
+	applyFirewall(t, r, body)
+	const companion = "Let them answer (Return)"
+	if !r.hasPolicyNamed(t, companion) {
+		t.Fatalf("the Controller generated no %q, so there is nothing here to leave out", companion)
+	}
+
+	exported := exportFirewall(t, r)
+	cfg := exportedYAML(t, exported.Stdout)
+
+	var parent, written bool
+	for _, policy := range cfg.FirewallPolicies {
+		switch policy.Name {
+		case "Let them answer":
+			parent = true
+		case companion:
+			written = true
+		}
+	}
+	if !parent {
+		t.Errorf("export left out the policy the operator wrote:\n%s", exported.Stdout)
+	}
+	if written {
+		t.Errorf("export wrote %q, which unifig can neither create nor delete:\n%s", companion, exported.Stdout)
+	}
+
+	// And the file it wrote is a file that plans clean, which is what says the
+	// omission is not a difference the next run would try to close.
+	if res := planExportedConfig(t, r, exported.Stdout); res.ExitCode != exitNoChanges {
+		t.Fatalf("plan of a freshly exported config exited %d, want %d\nexported:\n%s\nplan:\n%s",
+			res.ExitCode, exitNoChanges, exported.Stdout, res.Stdout)
+	}
+}
+
+// The exclusion rides `connection_state_type` rather than the id shape, and this
+// is the arrangement in which the two can be told apart: a companion carrying a
+// document handle, which only the first test excludes.
+//
+// Every companion anyone has read carries the composite id of a generated policy
+// instead — the twelve a migrated router ships, and the one ADR-0026 watched the
+// Controller make from a custom parent — so this is a shape hardware has not
+// shown and the fixture says so rather than implying otherwise. It is here
+// because what disqualifies a companion is that it is not a Resource, which is
+// true whichever way its id falls, and a test resting on the id would be
+// asserting the wrong reason.
+//
+// It is also where the counting rule shows: the companion is left out and not
+// counted, because a companion is fully determined by the parent that is in the
+// file, which is the opposite of unmanaged.
+func TestExportLeavesOutAReturnRuleThatCarriesADocumentHandle(t *testing.T) {
+	r := startReplay(t)
+	const companion = "Was Open (Return)"
+	generated := len(r.livePolicies(t))
+	r.seedPolicy(t, "Was Open", "ALLOW", "Internal", "External", nil)
+	r.seedPolicy(t, companion, "ALLOW", "External", "Internal", map[string]any{
+		"predefined":            true,
+		"connection_state_type": "RESPOND_ONLY",
+	})
+
+	exported := exportFirewall(t, r)
+	cfg := exportedYAML(t, exported.Stdout)
+
+	for _, policy := range cfg.FirewallPolicies {
+		if policy.Name == companion {
+			t.Errorf("export wrote the return rule of a policy it also wrote:\n%s", exported.Stdout)
+		}
+	}
+	if want := fmt.Sprintf("Left out %d firewall policies the Controller generates", generated); !strings.Contains(string(exported.Stderr), want) {
+		t.Errorf("the notice should count only the Controller's own, looking for %q:\n%s", want, exported.Stderr)
+	}
+}
+
+// The two notices meet on one policy each, on the same unnameable end, so that
+// the only thing separating them is which of them unifig put the policy in.
+//
+// A Generated Policy is left out for having no id to write to, whether or not
+// its zones have names — so counting it is the true statement and calling it
+// indescribable would blame the wrong thing.
+func TestAGeneratedPolicyOnAnUnnameableZoneIsCountedRatherThanCalledIndescribable(t *testing.T) {
+	r := startReplay(t)
+	internal, _ := r.zoneNamed(t, "Internal")["_id"].(string)
+	live := len(r.livePolicies(t))
+
+	r.seedPolicyOnAZoneItCannotName(t, "Stored And Unwordable", nil)
+	r.seedPolicyOnAZoneItCannotName(t, "Generated And Unwordable", map[string]any{
+		"_id":        fmt.Sprintf("%s%s%d", internal, unnameableZone, 3),
+		"index":      3,
+		"predefined": true,
+	})
+
+	stderr := string(exportFirewall(t, r).Stderr)
+
+	if !strings.Contains(stderr, `"Stored And Unwordable"`) {
+		t.Errorf("export should name the stored policy it could not word:\n%s", stderr)
+	}
+	if strings.Contains(stderr, `"Generated And Unwordable"`) {
+		t.Errorf("export blamed the zones for a policy it could not have written to anyway:\n%s", stderr)
+	}
+	// The recording's own plus the generated one this test added; the stored one
+	// is the only policy on the site the count leaves out.
+	if want := fmt.Sprintf("Left out %d firewall policies the Controller generates", live+1); !strings.Contains(stderr, want) {
+		t.Errorf("the notice should count the generated policy on the unnameable zone, looking for %q:\n%s", want, stderr)
+	}
+}
+
 // A zone holding something the config cannot name is written with the part it
 // can — and export says so, because a file that came back short says why.
 func TestExportSaysWhichZonesItCouldOnlyDescribeInPart(t *testing.T) {

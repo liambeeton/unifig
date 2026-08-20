@@ -405,6 +405,9 @@ func runExport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := export.WriteIndescribablePolicies(stderr, notices.IndescribablePolicies); err != nil {
 		return err
 	}
+	if err := export.WriteGeneratedPolicies(stderr, notices.GeneratedPolicies); err != nil {
+		return err
+	}
 	if err := export.WriteIndescribablePortForwards(stderr, notices.IndescribablePortForwards); err != nil {
 		return err
 	}

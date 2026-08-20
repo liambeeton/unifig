@@ -434,7 +434,7 @@ Six things `--prune` will not do:
   The way to delete both is to put both at stake: a file with `networks:` and `wlans: []` deletes the WLAN and then the network under it, in that order.
 
   The Controller's own policies are the exception, and they have to be: it generates one for every pair of zones that holds a member, so a zone you create is governed by policies you never wrote and cannot put at stake. Those do not hold a zone back. Deleting such a zone on a real router returns `204` and the Controller reclaims the policies it generated for it — measured rather than assumed (see `docs/adr/0019-a-zone-refuses-unifigs-payload-not-the-operators-change.md`).
-- **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, so unifig updates them and never deletes one, whether or not your file names them. Nor does prune see a WLAN attached to something that isn't one of your LANs, or a port forward whose ports are a range — unifig has no way to write either one in config, so neither can be exported — and the two halves go together on purpose: what an adoption couldn't describe is not something prune may delete.
+- **Touch anything unifig does not manage.** WAN slots share a collection with your LANs; they are Settings, not Resources, so unifig updates them and never deletes one, whether or not your file names them. Nor does prune see a WLAN attached to something that isn't one of your LANs, or a port forward whose ports are a range — unifig has no way to write either one in config, so neither can be exported — and the two halves go together on purpose: what an adoption didn't write down is not something prune may delete. That covers what unifig couldn't describe and what it described and left out anyway: it words a policy your Controller generates every time it prints one in a caveat, and it still keeps that policy out of the file and out of prune's reach.
 - **Delete more of a thing than the section names.** A DHCP reservation is two fields of the client record your Controller keeps, so pruning one gives the fixed address up and leaves that record — its name, its note, its group — exactly where it was. Forgetting the device is a bigger request than deleting a line of YAML, and unifig will not read the second as the first (see [DHCP reservations](#dhcp-reservations)).
 - **Persist.** The flag applies to the run you passed it to. There is no state file, so nothing remembers it.
 
@@ -479,6 +479,21 @@ Each gives a port as a range or a list rather than as a single port, which
 unifig does not model. It manages nothing about them, and `--prune` will not
 delete them.
 ```
+
+The firewall policies your Controller generates for itself are the one thing export leaves out that it *could* have written down. It computes one for every pair of zones rather than storing it, so there is no id to write to and no endpoint can edit it — an entry naming one would be a line no plan could ever act on. On a router migrated to the zone-based firewall that is every policy on the site, and the `firewall-policies:` key does not appear at all:
+
+```
+Left out 86 firewall policies the Controller generates rather than stores.
+Each is computed from the pair of zones it governs, so it has no id to write to
+and no endpoint can edit it. unifig manages nothing about them, and `--prune`
+will not delete them.
+To override one, write a policy of your own on the same pair under a name of
+your own — the Controller's sits at the lowest precedence there is.
+```
+
+The name has to be yours. A policy is matched by its name *together with* the pair of zones it governs, so an entry keeping the Controller's name on the Controller's pair is that policy, and unifig matches it rather than creating one. Your own name is a key of your own, which is the create the way out promises. The return rules the Controller generates beside your allow policies are left out too, and are not in that count — one of those follows the policy it belongs to, which is already in the file.
+
+A file you already have that names them all keeps working exactly as it did, and gets no warning: plan is silent when the file and the Controller agree, and a notice firing once per policy on a file that is working is how you learn to read past the ones that matter. Re-exporting is how you get the shorter file.
 
 A WAN slot that connects in a way unifig does not model gets the other half of the same promise: the slot is in the file so you can see it exists, with nothing under it and a notice saying why.
 

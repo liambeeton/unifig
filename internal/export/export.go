@@ -177,6 +177,57 @@ func WriteIndescribablePolicies(w io.Writer, policies []string) error {
 	return err
 }
 
+// WriteGeneratedPolicies says how many firewall policies export left out
+// because the Controller generates them rather than storing one — the notices'
+// second kind, and the only one whose subject the operator can act on
+// (ADR-0028).
+//
+// Every notice above says unifig could not describe the object. This one says
+// unifig could and chose not to: a Generated Policy words perfectly well — the
+// plan prints one every time it holds a change back — but an entry naming it is
+// a line no plan may ever act on, so the file that claims to manage it is
+// claiming what it cannot change.
+//
+// **It counts where the others name.** A migrated router ships eighty-six of
+// these under twenty-two names it reuses across them, nineteen of them the same
+// `Allow All Traffic`, and a policy's name is not its key (ADR-0001, issue #24)
+// so there is nothing shorter to print. A paragraph of quoted duplicates is what
+// teaches an operator to read past the notices above it, which is ADR-0012's
+// standing objection to a message that fires every time.
+//
+// **And it ends in a way out, where the others end in a consequence.** The other
+// notices' subjects are not actionable — an operator can do nothing about a WLAN
+// on a non-LAN network — and this one's is: a policy of their own on the same
+// pair takes precedence, because the Controller's own sits at `index:
+// 2147483647`, the lowest there is (ADR-0018).
+//
+// The rename in that sentence is load-bearing rather than stylistic, and it is
+// the same sentence the plan's caveat carries for the same reason: a policy's
+// key is its name together with its pair of zones, so an entry keeping the
+// generated policy's name on its pair has that policy's key, and unifig matches
+// it rather than creating it. The operator loops (issue #43). It matters more
+// here than there — an operator overruling a policy this notice is about has no
+// exported line to copy, so the name in front of them is the one on the UniFi UI,
+// which is exactly the name this sentence has to talk them out of.
+//
+// It stops short of the plan's gateway warning. A notice about eighty-six
+// policies cannot know which one the operator meant to overrule, and the Risky
+// mark still fires at the plan when they write it (ADR-0018).
+func WriteGeneratedPolicies(w io.Writer, generated int) error {
+	if generated == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nLeft out %s the Controller generates rather than stores.\n",
+		countOf(generated, "firewall policy", "firewall policies"))
+	b.WriteString("Each is computed from the pair of zones it governs, so it has no id to write to and no endpoint can edit it. unifig manages nothing about them, and `--prune` will not delete them.\n")
+	b.WriteString("To override one, write a policy of your own on the same pair under a name of your own — the Controller's sits at the lowest precedence there is.\n")
+
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
 // WriteIndescribablePortForwards names the port forwards export left out
 // entirely, on the same promise as WriteOmissions: a file that came back short
 // says so.

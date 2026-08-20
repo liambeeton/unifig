@@ -9,6 +9,19 @@
 > policy of your own on the same pair, **under a name of your own**. Everything
 > else here stands, the gateway half included.
 
+> **Amended by issue #45 on where its evidence lives, not on its decision.**
+> The paragraph below opened on `unifig.yaml` in this repository naming nineteen
+> `Allow All Traffic` policies. Export no longer writes a Generated Policy into
+> the file it hands over (ADR-0028), and the maintainer's own file was re-exported
+> to match, so that sentence no longer describes a file anyone can open — and it
+> never described a committed one, since `/unifig.yaml` is gitignored and there is
+> no history of it to point at either. The nineteen are still in the repository,
+> in the recording the whole suite runs against:
+> `e2e/testdata/udr/firewallpolicy.json`, nineteen of its eighty-six entries named
+> `Allow All Traffic` and every one of the eighty-six carrying a composite `_id`.
+> That is the better pointer regardless — it is the reading itself rather than a
+> file generated from one. What it is evidence of has not moved.
+
 `updateFirewallPolicy` could not land a change on any of the eighty-six Firewall
 Policies a migrated UDR ships, and `internal/reconcile/policy.go` said the
 opposite in as many words — ADR-0018 rested an argument on it:
@@ -16,10 +29,11 @@ opposite in as many words — ADR-0018 rested an argument on it:
 > a predefined policy is matchable and **updatable** like any other — only prune
 > exempts it (ADR-0005)
 
-Matchable, yes. Updatable, no. `unifig.yaml` in this repository names nineteen
-`Allow All Traffic` policies, all of them the Controller's own; changing the
-verdict of one — the single edit the config models — planned cleanly and then
-failed on apply.
+Matchable, yes. Updatable, no. The maintainer's `unifig.yaml` named nineteen
+`Allow All Traffic` policies at the time of writing — the nineteen
+`e2e/testdata/udr/firewallpolicy.json` still holds — all of them the Controller's
+own; changing the verdict of one, the single edit the config models, planned
+cleanly and then failed on apply.
 
 ## What was measured
 

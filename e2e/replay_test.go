@@ -204,6 +204,19 @@ var (
 // and it holds no zone back (ADR-0019) — and carrying `origin_id` back to the
 // policy that caused it. Its ends are the reverse pair, which is where the
 // twelve `Allow Return Traffic` policies a migrated router ships sit.
+//
+// Its `_id` is a composite rather than a document handle, which is the same
+// session's reading: ADR-0026 recorded `<source zone id><destination zone
+// id>30000` off the companion of a *custom* parent, which is what says the
+// composite scheme belongs to generated policies rather than to shipped ones.
+// This stand-in asserted a handle here until issue #45, which was a fixture
+// stating a guess hardware had already refuted (ADR-0019).
+//
+// The zone ids are the companion's own ends rather than its parent's, and the
+// reading cannot separate the two: the policy it was read from ran `Dmz` ->
+// `Dmz`, so the pair and its reverse are the same two ids. The companion's own
+// is the reading that makes the id a description of where *this* policy sits,
+// which is what a composite id is (ADR-0027).
 func (r *replay) reconcileCompanion(held *[]map[string]any, parent map[string]any) {
 	name, _ := parent["name"].(string)
 	requested, _ := parent["create_allow_respond"].(bool)
@@ -219,11 +232,14 @@ func (r *replay) reconcileCompanion(held *[]map[string]any, parent map[string]an
 			return
 		}
 	}
-	r.issued++
 	source, _ := parent["source"].(map[string]any)
 	destination, _ := parent["destination"].(map[string]any)
+	from, _ := destination["zone_id"].(string)
+	to, _ := source["zone_id"].(string)
 	*held = append(*held, map[string]any{
-		"_id":                   fmt.Sprintf("6613a1f0c4b2d90a5e1fc%03d", r.issued),
+		// companionIndex is the index the composite ends in, taken from the
+		// same reading rather than invented alongside it.
+		"_id":                   fmt.Sprintf("%s%s%d", from, to, companionIndex),
 		"name":                  companion,
 		"action":                "ALLOW",
 		"enabled":               true,
@@ -238,6 +254,10 @@ func (r *replay) reconcileCompanion(held *[]map[string]any, parent map[string]an
 		"site_id":     "6613a1f0c4b2d90a5e1f0000",
 	})
 }
+
+// companionIndex is the index the companion's composite `_id` ends in, read off
+// the router in ADR-0026's write session.
+const companionIndex = 30000
 
 // dropCompanion removes the companion of the named policy, if it has one. It is
 // how the Controller was measured answering both a cleared request and a deleted
@@ -1600,6 +1620,31 @@ func (r *replay) seedUnmarkedGeneratedPolicy(t *testing.T, name, action, source,
 		"_id":   r.generatedPolicyID(t, source, destination, index),
 		"index": index,
 	})
+}
+
+// unnameableZone is a zone id no zone on this site carries. A policy with it on
+// one end is one unifig has no name to write there, which is the whole of what
+// makes a policy indescribable: a policy is its name, its verdict and its pair
+// of zones, and there is no partial way to write one down.
+//
+// It is an id rather than a zone a test deletes, because that is the state the
+// projection actually meets — the zones are read once, and an end naming
+// something that is not among them has no name however it got that way.
+const unnameableZone = "6613a1f0c4b2d90a5e1fdead"
+
+// seedPolicyOnAZoneItCannotName seeds a policy with that id on one end.
+//
+// `fields` is seedPolicy's, so the same fixture states both policies a test
+// about the two notices needs: hand it a composite `_id` and the policy is one
+// the Controller generated on an end unifig cannot name, which is the case where
+// the notices could disagree about whose fault the omission is.
+func (r *replay) seedPolicyOnAZoneItCannotName(t *testing.T, name string, fields map[string]any) {
+	t.Helper()
+	all := map[string]any{
+		"destination": map[string]any{"zone_id": unnameableZone, "matching_target": "ANY"},
+	}
+	maps.Copy(all, fields)
+	r.seedPolicy(t, name, "ALLOW", "Internal", "Internal", all)
 }
 
 // generatedPolicyID is the id a Generated Policy carries: the source zone id,
