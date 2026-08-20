@@ -503,12 +503,11 @@ func uniquelyKeyed(live []unifi.FirewallZonePolicy, bound bindings) error {
 // zones have names, and blaming the zones would send an operator looking for a
 // shortfall that is not the one they have.
 //
-// A **Return Rule** goes second and is not counted. It is left out for a
-// different reason — it is not a Resource, and the config already states it as
-// the verdict of its parent (ADR-0026) — and it is not counted because a
-// companion left out is fully determined by a policy that is in the file, which
-// is the opposite of unmanaged. Counting it would put a number in the notice
-// that no line of the config accounts for.
+// A **Return Rule** goes out beside it, for a reason of its own: it is not a
+// Resource, and the config already states it as the verdict of its parent
+// (ADR-0026), so an entry of its own would be a second, competing statement
+// about the same object. That is true whatever its `_id` turns out to be, which
+// is why the test is `connection_state_type` and not the id shape.
 //
 // A policy unifig **cannot word** goes last and is named. That happens when a
 // zone on either end of it is one unifig cannot name or when its verdict is one
@@ -518,9 +517,11 @@ func uniquelyKeyed(live []unifi.FirewallZonePolicy, bound bindings) error {
 // described in part because its membership is a list, and a policy cannot,
 // because every field it has is required.
 //
-// The count is what export prints. It is a count rather than a list because a
-// migrated router ships eighty-six of these under names it reuses across them,
-// and the notice nobody reads protects nobody (ADR-0012, ADR-0028).
+// **What the count counts is a narrower question than what the loop excludes**,
+// which is why it is asked afterwards rather than tallied inside — see
+// unaccountedFor. It is a count rather than a list because a migrated router
+// ships eighty-six of these under names it reuses across them, and the notice
+// nobody reads protects nobody (ADR-0012, ADR-0028).
 func projectFirewallPolicies(ctx context.Context, client unifi.Client, site string, bound bindings) ([]config.FirewallPolicy, []string, int, error) {
 	live, err := listFirewallPolicies(ctx, client, site)
 	if err != nil {
@@ -534,13 +535,10 @@ func projectFirewallPolicies(ctx context.Context, client unifi.Client, site stri
 
 	policies := make([]config.FirewallPolicy, 0, len(live))
 	var indescribable []string
-	var generatedCount int
+	var left []unifi.FirewallZonePolicy
 	for _, policy := range live {
-		if generated(policy) {
-			generatedCount++
-			continue
-		}
-		if returnRule(policy) {
+		if generated(policy) || returnRule(policy) {
+			left = append(left, policy)
 			continue
 		}
 		described, ok := fromLivePolicy(policy, bound)
@@ -553,15 +551,76 @@ func projectFirewallPolicies(ctx context.Context, client unifi.Client, site stri
 	slices.SortFunc(policies, func(a, b config.FirewallPolicy) int { return strings.Compare(a.Name, b.Name) })
 	slices.Sort(indescribable)
 
-	// Nil rather than empty when nothing survived, so the `firewall-policies:`
-	// key disappears instead of appearing as `[]`. The two are different
-	// statements to prune — absent is unmanaged, empty says there should be none
-	// — and a site whose every policy is the Controller's own is the first one
-	// that makes the difference visible (ADR-0006, ADR-0028).
+	// Nil rather than empty when nothing survived. `omitempty` already keeps the
+	// `firewall-policies:` key out of the YAML either way (ADR-0028), so this is
+	// not what makes the key disappear — it is what keeps the Config itself
+	// honest. Nil and empty are two different statements in this type: an absent
+	// section is unmanaged, an empty one says there should be none and prune acts
+	// on it (ADR-0006). A projection handing back `[]` would be a Config that
+	// asks for every policy on the site to be deleted.
 	if len(policies) == 0 {
 		policies = nil
 	}
-	return policies, indescribable, generatedCount, nil
+	return policies, indescribable, unaccountedFor(left, writtenPolicyNames(policies)), nil
+}
+
+// unaccountedFor is how many of the policies export left out the notice has to
+// speak for: the ones that are gone from the file with nothing in the file to
+// explain them.
+//
+// **It is a narrower question than "what was left out", and the gap is the
+// companion.** Two things disqualify a policy from the config and they do not
+// answer the same question. Having no id to write to is a fact about the policy,
+// and it is what the notice is about — "the Controller generates rather than
+// stores", with no id and no endpoint that could edit it. Being a Return Rule is
+// a fact about the policy's *relationship*: it is left out because its parent
+// already states it, so where that parent is in the file, the file does account
+// for it. Counting it there would put a number in front of the operator that no
+// line of their config explains, under a sentence saying unifig manages nothing
+// about it — when unifig owns it exactly, through the request field on the
+// parent (ADR-0026).
+//
+// **The Controller's own companions are counted, and that is not an exception.**
+// The twelve a migrated router ships are named `Allow Return Traffic` rather than
+// `<parent> (Return)` — the Controller's scheme for its own policies is not the
+// one it uses for a policy unifig created, which is the same asymmetry
+// policyNames is built around — and their parents are generated policies, left
+// out too. Nothing in the file accounts for them, so the notice speaks for them
+// like any other. That is what keeps the count on a migrated router at
+// eighty-six rather than seventy-four.
+//
+// The parent is found by name, which is the strength policyNames already
+// settled for: `origin_id` is what actually links a companion to its parent and
+// `go-unifi` v2.3.0 does not model it (ADR-0021), so the name is what the struct
+// has. What is claimed is only ever "the file holds a policy by the name this
+// one is the companion of", which is exactly as strong as the omission it
+// excuses.
+func unaccountedFor(left []unifi.FirewallZonePolicy, written policyNameSet) int {
+	var count int
+	for _, policy := range left {
+		if !generated(policy) {
+			// Left out for being a companion, and carrying a handle: there is an
+			// id here, so "the Controller generates rather than stores" is not a
+			// true sentence about it and the notice may not claim it.
+			continue
+		}
+		if parent, named := parentOfReturnRule(policy.Name); returnRule(policy) && named && written[parent] {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+// writtenPolicyNames is policyNames asked of the config side: every policy that
+// made it into the file, by the name the Controller would build a companion's
+// out of.
+func writtenPolicyNames(policies []config.FirewallPolicy) policyNameSet {
+	written := make(policyNameSet, len(policies))
+	for _, policy := range policies {
+		written[policy.Name] = true
+	}
+	return written
 }
 
 // fromLivePolicy projects a live policy into the config that would describe it,
@@ -876,7 +935,26 @@ func policyNames(live []unifi.FirewallZonePolicy) policyNameSet {
 // promises a policy by this name and the update says what becomes of it. A
 // second spelling of the suffix would be two plans disagreeing about the name of
 // the same object.
-func returnRuleName(parent string) string { return parent + " (Return)" }
+func returnRuleName(parent string) string { return parent + returnRuleSuffix }
+
+// parentOfReturnRule is that rule read backwards: the policy a companion by this
+// name would belong to, and whether the name is one the Controller would have
+// built that way at all.
+//
+// It shares the suffix with returnRuleName rather than spelling it again, for
+// the reason that function is one function: a name unifig builds and a name it
+// takes apart disagreeing about the suffix is unifig failing to recognise its
+// own companion.
+//
+// The Controller's own companions are not named this way — the twelve a migrated
+// router ships are `Allow Return Traffic` — so this answers false for those,
+// which is correct rather than a miss: they belong to generated policies, not to
+// anything unifig wrote.
+func parentOfReturnRule(name string) (string, bool) {
+	return strings.CutSuffix(name, returnRuleSuffix)
+}
+
+const returnRuleSuffix = " (Return)"
 
 // returnRuleField is what an update does to the companion return rule, said as a
 // field of the change rather than as a note on one.

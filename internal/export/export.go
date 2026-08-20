@@ -202,7 +202,9 @@ func WriteIndescribablePolicies(w io.Writer, policies []string) error {
 // 2147483647`, the lowest there is (ADR-0018).
 //
 // The rename in that sentence is load-bearing rather than stylistic, and it is
-// the same sentence the plan's caveat carries for the same reason: a policy's
+// the plan's caveat's way out reordered — a notice about eighty-six policies
+// leads with what to do where a caveat about one leads with why. It is there for
+// the same reason in both places: a policy's
 // key is its name together with its pair of zones, so an entry keeping the
 // generated policy's name on its pair has that policy's key, and unifig matches
 // it rather than creating it. The operator loops (issue #43). It matters more

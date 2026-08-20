@@ -239,7 +239,7 @@ func (r *replay) reconcileCompanion(held *[]map[string]any, parent map[string]an
 	*held = append(*held, map[string]any{
 		// companionIndex is the index the composite ends in, taken from the
 		// same reading rather than invented alongside it.
-		"_id":                   fmt.Sprintf("%s%s%d", from, to, companionIndex),
+		"_id":                   compositePolicyID(from, to, companionIndex),
 		"name":                  companion,
 		"action":                "ALLOW",
 		"enabled":               true,
@@ -1647,9 +1647,10 @@ func (r *replay) seedPolicyOnAZoneItCannotName(t *testing.T, name string, fields
 	r.seedPolicy(t, name, "ALLOW", "Internal", "Internal", all)
 }
 
-// generatedPolicyID is the id a Generated Policy carries: the source zone id,
-// the destination zone id and the index run together — a description of where
-// the policy came from rather than a handle into anything (ADR-0027).
+// generatedPolicyID is the id a Generated Policy carries, asked in the zone
+// names a test reads: the source zone id, the destination zone id and the index
+// run together — a description of where the policy came from rather than a
+// handle into anything (ADR-0027).
 //
 // It is a function of its own so that both seeds state the shape once. Its zone
 // reads happen before seedPolicy is called rather than inside it, because that
@@ -1659,7 +1660,14 @@ func (r *replay) generatedPolicyID(t *testing.T, source, destination string, ind
 	t.Helper()
 	from, _ := r.zoneNamed(t, source)["_id"].(string)
 	to, _ := r.zoneNamed(t, destination)["_id"].(string)
-	return fmt.Sprintf("%s%s%d", from, to, index)
+	return compositePolicyID(from, to, index)
+}
+
+// compositePolicyID is that shape spelled once, for the callers that already
+// hold the ids: the stand-in generating a companion, which is inside the lock
+// the zone reads take, and a test whose end is an id no zone carries.
+func compositePolicyID(source, destination string, index int) string {
+	return fmt.Sprintf("%s%s%d", source, destination, index)
 }
 
 // zoneEnds names the zones a policy governs, translated out of the IDs it stores

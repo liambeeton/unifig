@@ -491,7 +491,9 @@ To override one, write a policy of your own on the same pair under a name of
 your own — the Controller's sits at the lowest precedence there is.
 ```
 
-The name has to be yours. A policy is matched by its name *together with* the pair of zones it governs, so an entry keeping the Controller's name on the Controller's pair is that policy, and unifig matches it rather than creating one. Your own name is a key of your own, which is the create the way out promises. The return rules the Controller generates beside your allow policies are left out too, and are not in that count — one of those follows the policy it belongs to, which is already in the file.
+The name has to be yours. A policy is matched by its name *together with* the pair of zones it governs, so an entry keeping the Controller's name on the Controller's pair is that policy, and unifig matches it rather than creating one. Your own name is a key of your own, which is the create the way out promises.
+
+The return rule the Controller generates beside each of your own allow policies is left out too, for its own reason: your file already states it, as the verdict of the policy it belongs to, so a `"<name> (Return)"` entry beside it would be a second line about the same thing — and one your next plan would try to create. Those are not in the count, because the count is what the file leaves unexplained and that one your file explains. The `Allow Return Traffic` policies a migrated router ships *are* in it: the policies they answer for are the Controller's own, and went out with the rest.
 
 A file you already have that names them all keeps working exactly as it did, and gets no warning: plan is silent when the file and the Controller agree, and a notice firing once per policy on a file that is working is how you learn to read past the ones that matter. Re-exporting is how you get the shorter file.
 

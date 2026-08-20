@@ -761,9 +761,14 @@ type Notices struct {
 	// describe the object, this one says unifig could and chose not to.
 	//
 	// A count rather than a list, because a migrated router ships eighty-six of
-	// them under names it reuses across them. The companion Return Rules export
-	// also leaves out are not in it — one of those is fully determined by a
-	// parent that is in the file, which is the opposite of unmanaged.
+	// them under names it reuses across them.
+	//
+	// It is not the number of policies export left out. A companion whose parent
+	// is in the file is left out and not counted, because the file does account
+	// for it — the parent's verdict is what puts it there (ADR-0026) — and the
+	// notice speaks only for what nothing in the file explains. The twelve
+	// companions a migrated router ships are counted, because their parents are
+	// generated policies and went out too. See unaccountedFor.
 	GeneratedPolicies int
 	// IndescribablePortForwards names the port forwards left out of the config
 	// entirely, because a port of theirs is a range or a list rather than the

@@ -1919,11 +1919,7 @@ func TestExportWritesTheFirewallAndItPlansClean(t *testing.T) {
 	r.seedZone(t, "Exported Zone", []string{lan}, nil)
 	r.seedPolicy(t, "Exported Policy", "BLOCK", "Exported Zone", "External", nil)
 
-	exported := testRig.runUnifig(t, []string{"export"}, r.env())
-	if exported.ExitCode != 0 {
-		t.Fatalf("unifig export exited %d\nstderr: %s", exported.ExitCode, exported.Stderr)
-	}
-
+	exported := exportFirewall(t, r)
 	cfg := exportedYAML(t, exported.Stdout)
 	var zone *exportedZone
 	for i, z := range cfg.Zones {
@@ -1959,9 +1955,10 @@ func TestExportWritesTheFirewallAndItPlansClean(t *testing.T) {
 }
 
 // exportFirewall runs an export against the stand-in and fails the test if it
-// did not finish. Every test below reads both streams, because the whole of what
-// export does about a Generated Policy is split across them: the file says
-// nothing and stderr says why.
+// did not finish, handing back both streams. Which one a test reads is the point
+// of the test: what export does about a Generated Policy is split across them —
+// the file says nothing and stderr says why — so some of these assert on the
+// file, some on the notice, and the first on both.
 func exportFirewall(t *testing.T, r *replay) result {
 	t.Helper()
 	exported := testRig.runUnifig(t, []string{"export"}, r.env())
@@ -2061,6 +2058,11 @@ func TestExportWritesAPolicyAndNotTheReturnRuleBesideIt(t *testing.T) {
     source: Internal
     destination: External
 `
+	// Every policy the recording holds is one the Controller generates, so this
+	// is what the notice should still say after unifig has added a policy of the
+	// operator's own and the Controller has answered with a companion.
+	recorded := len(r.livePolicies(t))
+
 	// Applied rather than seeded, so the companion is the one the stand-in
 	// generates on the terms hardware was measured on (ADR-0026) rather than one
 	// this test drew itself.
@@ -2095,6 +2097,16 @@ func TestExportWritesAPolicyAndNotTheReturnRuleBesideIt(t *testing.T) {
 		t.Fatalf("plan of a freshly exported config exited %d, want %d\nexported:\n%s\nplan:\n%s",
 			res.ExitCode, exitNoChanges, exported.Stdout, res.Stdout)
 	}
+
+	// The companion is not in the count, and this is the case that says so: it
+	// carries the composite id of a generated policy, exactly as the one ADR-0026
+	// read off the router did, so a count asked of the id alone would take the
+	// recording's total up by one here. What keeps it out is the parent sitting in
+	// the file above it — the file accounts for this policy, which is the opposite
+	// of the notice's subject.
+	if want := fmt.Sprintf("Left out %d firewall policies the Controller generates", recorded); !strings.Contains(string(exported.Stderr), want) {
+		t.Errorf("the notice counts a companion whose parent is in the file, looking for %q:\n%s", want, exported.Stderr)
+	}
 }
 
 // The exclusion rides `connection_state_type` rather than the id shape, and this
@@ -2109,13 +2121,13 @@ func TestExportWritesAPolicyAndNotTheReturnRuleBesideIt(t *testing.T) {
 // true whichever way its id falls, and a test resting on the id would be
 // asserting the wrong reason.
 //
-// It is also where the counting rule shows: the companion is left out and not
-// counted, because a companion is fully determined by the parent that is in the
-// file, which is the opposite of unmanaged.
+// It is not in the count either, and here that holds twice over: its parent is
+// in the file, and it has an id, so "the Controller generates rather than
+// stores" would not be a true sentence about it.
 func TestExportLeavesOutAReturnRuleThatCarriesADocumentHandle(t *testing.T) {
 	r := startReplay(t)
 	const companion = "Was Open (Return)"
-	generated := len(r.livePolicies(t))
+	recorded := len(r.livePolicies(t))
 	r.seedPolicy(t, "Was Open", "ALLOW", "Internal", "External", nil)
 	r.seedPolicy(t, companion, "ALLOW", "External", "Internal", map[string]any{
 		"predefined":            true,
@@ -2130,8 +2142,37 @@ func TestExportLeavesOutAReturnRuleThatCarriesADocumentHandle(t *testing.T) {
 			t.Errorf("export wrote the return rule of a policy it also wrote:\n%s", exported.Stdout)
 		}
 	}
-	if want := fmt.Sprintf("Left out %d firewall policies the Controller generates", generated); !strings.Contains(string(exported.Stderr), want) {
+	if want := fmt.Sprintf("Left out %d firewall policies the Controller generates", recorded); !strings.Contains(string(exported.Stderr), want) {
 		t.Errorf("the notice should count only the Controller's own, looking for %q:\n%s", want, exported.Stderr)
+	}
+}
+
+// And the twelve a migrated router ships are counted, which is the other side of
+// the same rule rather than an exception to it. They are companions — every one
+// is `RESPOND_ONLY` — but the policies they answer for are the Controller's own
+// and went out of the file with the rest, so nothing in the file accounts for
+// them and the notice has to.
+//
+// It is the assertion that keeps the recording's count at eighty-six rather than
+// seventy-four, stated on its own so that a change to the counting rule cannot
+// quietly take twelve policies out of the number an operator reads.
+func TestTheReturnRulesAMigratedRouterShipsAreCounted(t *testing.T) {
+	r := startReplay(t)
+	var companions int
+	for _, policy := range r.livePolicies(t) {
+		if policy["connection_state_type"] == "RESPOND_ONLY" {
+			companions++
+		}
+	}
+	if companions == 0 {
+		t.Fatal("the recording holds no return rules, so there is nothing here to count")
+	}
+
+	stderr := string(exportFirewall(t, r).Stderr)
+
+	if want := fmt.Sprintf("Left out %d firewall policies the Controller generates", len(r.livePolicies(t))); !strings.Contains(stderr, want) {
+		t.Errorf("the notice leaves the %d shipped return rules out of the count, looking for %q:\n%s",
+			companions, want, stderr)
 	}
 }
 
@@ -2148,7 +2189,7 @@ func TestAGeneratedPolicyOnAnUnnameableZoneIsCountedRatherThanCalledIndescribabl
 
 	r.seedPolicyOnAZoneItCannotName(t, "Stored And Unwordable", nil)
 	r.seedPolicyOnAZoneItCannotName(t, "Generated And Unwordable", map[string]any{
-		"_id":        fmt.Sprintf("%s%s%d", internal, unnameableZone, 3),
+		"_id":        compositePolicyID(internal, unnameableZone, 3),
 		"index":      3,
 		"predefined": true,
 	})
@@ -2173,10 +2214,7 @@ func TestAGeneratedPolicyOnAnUnnameableZoneIsCountedRatherThanCalledIndescribabl
 func TestExportSaysWhichZonesItCouldOnlyDescribeInPart(t *testing.T) {
 	r := startReplay(t)
 
-	exported := testRig.runUnifig(t, []string{"export"}, r.env())
-	if exported.ExitCode != 0 {
-		t.Fatalf("unifig export exited %d\nstderr: %s", exported.ExitCode, exported.Stderr)
-	}
+	exported := exportFirewall(t, r)
 
 	if !strings.Contains(string(exported.Stderr), "External") {
 		t.Errorf("export should say the External zone holds something it cannot name, got: %s", exported.Stderr)
