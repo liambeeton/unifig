@@ -239,8 +239,9 @@ func unreadableGateway(blocking bool, facts zoneFacts) []Caveat {
 // properly would be followed by this and refused forever by the marker.
 //
 // Note that this is not the built-in exemption and does not replace it.
-// `pruneFirewallPolicies` still spares on `predefined` (ADR-0005), because what
-// prune asks is whose object it is.
+// `pruneFirewallPolicies` asks this too, beside `predefined` rather than instead
+// of it (ADR-0028): a deletion needs an id as much as an update does, and prune's
+// own question — whose object it is — is still the marker's (ADR-0005).
 func generated(policy unifi.FirewallZonePolicy) bool { return !isDocumentHandle(policy.ID) }
 
 // documentHandleLength and isDocumentHandle are the shape of an id the Controller
@@ -621,19 +622,54 @@ func updateFirewallPolicy(
 // cannot describe it, so it was never prune's to delete, and it governs zones
 // unifig cannot name so it holds nothing back either.
 //
-// It is `predefined` that is read here and not the `_id` test the update path
-// uses (ADR-0027), and the two questions really are different: whose object it
-// is, and whether there is an object at all. They have the same answer on every
-// policy anyone has measured, so a second clause would be inert — and prune's
-// question is the first one, which is what ADR-0005 settled. A firmware that
-// generated a policy without marking it `predefined` would have prune proposing
-// a deletion that answers 404; that is a real gap and it belongs to whoever
-// meets it, with a measurement in hand.
+// `generated` is asked beside it, and it is a second question rather than the
+// same one said twice (ADR-0027, ADR-0028). `predefined` says whose object it is,
+// which is what prune asks and what ADR-0005 settled; the `_id` test says whether
+// there is an object to address at all. A deletion needs an id to send exactly as
+// an update does, so a deletion of a Generated Policy is a promise a plan may not
+// make — ADR-0014's rule arriving in one more place rather than a new rule.
+//
+// **The clause is inert on every policy anyone has measured, and this says so
+// rather than implying otherwise.** All eighty-six a migrated router ships are
+// `predefined: true` *and* carry a composite id; the one custom policy ADR-0027's
+// probe created was `predefined: false` with a document handle. The marker
+// already spares everything this clause would spare, and nothing observable
+// changes on any router unifig has seen.
+//
+// **What changed is that the exported file is about to stop covering the
+// disagreement.** The file has been the backstop: an export names all eighty-six,
+// so `named[key]` spares them whatever the markers say. ADR-0028 decided that
+// export will leave a Generated Policy out, and issue #45 is where that lands —
+// still open as this is written, which is why the sentence about export is in the
+// future tense and this clause is already here. From then on the two tests are
+// halves of one guarantee: a policy export omits is a policy prune must not
+// delete. Were they to read different fields, a firmware that generated a policy
+// without marking it `predefined` would have unifig writing a file that omits the
+// policy and then proposing to delete it, on an id that was never a handle. A
+// file unifig wrote must not be a file prune deletes from, and landing this first
+// is what leaves no window in which it could be.
+//
+// It is a second clause rather than a replacement, because both claims are true
+// and prune's is the first one: collapsing them is the confusion ADR-0027 exists
+// to prevent, and it would quietly narrow the exemption to lose a policy an
+// operator wrote and the Controller marked its own.
 //
 // Spared is not the same list as holds-a-zone-back, and `predefined` is where the
 // two part company: the Controller deletes its own generated policies along with
 // the zone, so one of them is exempt here and counts for nothing in `zonesInUse`
-// (ADR-0019, issue #28).
+// (ADR-0019, issue #28). That is a third question and it is left exactly where it
+// was, on the marker (ADR-0028): what hardware measured is the Controller
+// reclaiming the policies it marks as its own along with the zone, and the clause
+// above measured nothing.
+//
+// So on every policy anyone has read, nothing here changes which zones a plan
+// holds back. On the firmware nobody has met — generated, unmarked — a policy
+// this clause newly spares does hold its zones back, because `zonesInUse` reads
+// `predefined` and that policy has none. That is the cautious direction and it is
+// worth stating rather than glossing: the operator is told which policy kept the
+// zone and why, which is a hold-back with a reason rather than a deletion nobody
+// could have shown them first. Whoever measures that firmware settles it, in
+// `zonesInUse` and with the reclaim in hand.
 //
 // It walks the live collection rather than the keyed index so that the deletions
 // come out in the order the Controller listed them. Two policies of one name are
@@ -648,7 +684,7 @@ func pruneFirewallPolicies(
 	spared = make([]unifi.FirewallZonePolicy, 0, len(live))
 	for _, policy := range live {
 		key, keyed := keyOfLivePolicy(policy, bound)
-		if !keyed || named[key] || policy.NoDelete || policy.Predefined {
+		if !keyed || named[key] || policy.NoDelete || policy.Predefined || generated(policy) {
 			spared = append(spared, policy)
 			continue
 		}

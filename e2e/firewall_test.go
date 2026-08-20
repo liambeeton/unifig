@@ -1522,6 +1522,45 @@ func TestPruneLeavesTheControllersOwnPoliciesAlone(t *testing.T) {
 	}
 }
 
+// The second half of that exemption, and a different claim from the first. A
+// deletion needs an id to send exactly as an update does, so a policy the
+// Controller computes for a pair of zones is one prune has nothing to address —
+// and a plan is a statement about what will happen (ADR-0014, ADR-0028).
+//
+// **The seed is the only arrangement in which this can be told apart from the
+// marker**, which is the whole of why seedUnmarkedGeneratedPolicy exists and
+// where the measurement behind it is written down. On real hardware the clause is
+// inert and the test above already covers those eighty-six; what is seeded here
+// is the disagreement, and it is a firmware nobody has met.
+//
+// It matters because the file is about to stop covering that case. An exported
+// file names all eighty-six, so `named[key]` spares them whatever the markers say
+// — and export will leave a Generated Policy out (ADR-0028, issue #45, still open
+// as this is written). A file unifig wrote must not be a file prune deletes from,
+// so the clause lands before the export that needs it.
+//
+// Two things fail here if the clause goes: the plan proposes the deletion, and
+// the stand-in refuses the DELETE the way the Controller does — 404 on an id that
+// was never a handle.
+func TestPruneSparesAPolicyItHasNoIdToDelete(t *testing.T) {
+	r := startReplay(t)
+	r.seedUnmarkedGeneratedPolicy(t, "Computed", "ALLOW", "Dmz", "Dmz", 2147483647)
+	// A policy prune really does delete, so that the one under test is spared on
+	// purpose rather than because the prune never ran.
+	r.seedPolicy(t, "Mine", "ALLOW", "Internal", "External", nil)
+
+	res := applyFirewall(t, r, "firewall-policies: []\n", "--prune")
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `- firewall-policy "Mine" deleted`) {
+		t.Fatalf("the prune under test did not happen:\n%s", stdout)
+	}
+	if strings.Contains(stdout, `firewall-policy "Computed"`) {
+		t.Errorf("prune proposed deleting a policy the Controller has no id to delete:\n%s", stdout)
+	}
+	r.policyNamed(t, "Computed") // fails the test if the apply deleted it anyway
+}
+
 // ADR-0006. A file with no `zones:` key says nothing about zones, so a prune it
 // takes part in has no business deleting one.
 func TestPruneLeavesTheFirewallAloneWhenTheFileDoesNotMentionIt(t *testing.T) {

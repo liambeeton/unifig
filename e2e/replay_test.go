@@ -737,8 +737,9 @@ func (r *replay) collectionV2(
 // is a lookup failure by its own wording, and the calibration showed the lookup
 // runs before anything else. Nobody sent a DELETE to a composite id, because the
 // success branch of that request would have deleted one of the Controller's own
-// policies. Prune spares a generated policy on its `predefined` marker anyway, so
-// unifig has no path to that request.
+// policies. Prune spares a generated policy twice over — on its `predefined`
+// marker and on the id itself (ADR-0028) — so unifig has no path to that request,
+// and this is what says so out loud when one of the two stops holding.
 //
 // It fails the test as well as answering, because unifig must never send one:
 // the plan holds back a change to a Generated Policy rather than promising it
@@ -1564,22 +1565,56 @@ func (r *replay) seedPolicy(t *testing.T, name, action, source, destination stri
 // that matters: everything else about a generated policy is a policy.
 func (r *replay) seedGeneratedPolicy(t *testing.T, name, action, source, destination string, index int) {
 	t.Helper()
-	// Read before seedPolicy is called rather than inside it, because that takes
-	// the same lock this would.
-	from, _ := r.zoneNamed(t, source)["_id"].(string)
-	to, _ := r.zoneNamed(t, destination)["_id"].(string)
-
 	r.seedPolicy(t, name, action, source, destination, map[string]any{
 		// The whole of what makes it generated: not a document handle but a
 		// description of where the policy came from.
-		"_id":   fmt.Sprintf("%s%s%d", from, to, index),
+		"_id":   r.generatedPolicyID(t, source, destination, index),
 		"index": index,
 		// Along for the ride because the Controller sends both on every one of
-		// the eighty-six a migrated router holds, and because prune's exemption
-		// reads the first. Neither is what makes it unwritable.
+		// the eighty-six a migrated router holds, and because prune's exemptions
+		// read the first. Neither is what makes it unwritable.
 		"predefined": true,
 		"origin_id":  fmt.Sprintf("6613a1f0c4b2d90a5e1f8%03d", len(r.livePolicies(t))),
 	})
+}
+
+// seedUnmarkedGeneratedPolicy is that policy with the marker taken off: the
+// composite `_id` of one the Controller computes, and no `predefined` on it.
+//
+// **It is a firmware nobody has met, and the fixture says so rather than
+// implying otherwise.** On every policy anyone has measured the two fields agree
+// — all eighty-six a migrated router ships are `predefined: true` and carry a
+// composite id, and the one custom policy ADR-0027's probe created was
+// `predefined: false` with a document handle — so a seed carrying both says
+// nothing about which field a caller read. This is the only arrangement in which
+// it can be told, which is what a test of prune's `_id` clause needs and the
+// whole of why this exists (ADR-0028).
+//
+// Nothing else about it is invented. It carries no `origin_id`, because the one
+// generated policy shape anyone has read carries one and this is not that shape;
+// a seed guessing at what an unmet firmware would send beside the id would be
+// stating more than the test is about (ADR-0019).
+func (r *replay) seedUnmarkedGeneratedPolicy(t *testing.T, name, action, source, destination string, index int) {
+	t.Helper()
+	r.seedPolicy(t, name, action, source, destination, map[string]any{
+		"_id":   r.generatedPolicyID(t, source, destination, index),
+		"index": index,
+	})
+}
+
+// generatedPolicyID is the id a Generated Policy carries: the source zone id,
+// the destination zone id and the index run together — a description of where
+// the policy came from rather than a handle into anything (ADR-0027).
+//
+// It is a function of its own so that both seeds state the shape once. Its zone
+// reads happen before seedPolicy is called rather than inside it, because that
+// takes the same lock they do — which holds while it is an argument expression,
+// evaluated before the call it sits in.
+func (r *replay) generatedPolicyID(t *testing.T, source, destination string, index int) string {
+	t.Helper()
+	from, _ := r.zoneNamed(t, source)["_id"].(string)
+	to, _ := r.zoneNamed(t, destination)["_id"].(string)
+	return fmt.Sprintf("%s%s%d", from, to, index)
 }
 
 // zoneEnds names the zones a policy governs, translated out of the IDs it stores
