@@ -1561,6 +1561,57 @@ func TestPruneSparesAPolicyItHasNoIdToDelete(t *testing.T) {
 	r.policyNamed(t, "Computed") // fails the test if the apply deleted it anyway
 }
 
+// The third clause, and a third claim: a Return Rule is not a Resource at all.
+// unifig never creates, names or deletes one — the config states its arrival and
+// departure as a field of its parent's change (ADR-0026) — so prune has no more
+// business deleting one than export has writing one.
+//
+// **This is the arrangement the exported file used to cover.** Export wrote the
+// companion until issue #45 — `Allow Return Traffic` twelve times over on a
+// migrated router, and `"<name> (Return)"` beside any allow policy of the
+// operator's own — so `named[key]` spared it whatever its markers said. That
+// backstop is gone, and the file below is the one export now writes: the parent,
+// and nothing about the companion. A file unifig wrote must not be a file prune
+// deletes from (ADR-0028).
+//
+// **The seed is the only arrangement that can tell this clause from the two
+// beside it**, which is why seedUnmarkedReturnRule exists and where the
+// measurement behind it is written down. Every companion anyone has read carries
+// a composite id — the twelve a migrated router ships carry the `predefined`
+// marker too — so `generated` alone would spare every one of them before this
+// clause was reached; the one seeded here is unmarked with a document handle, and
+// it is a firmware nobody has met.
+//
+// What the deletion would do is worse than the 404 a Generated Policy answers.
+// The handle is real, so the DELETE lands — and the parent still carries
+// `create_allow_respond: true`, so the next plan proposes putting the companion
+// back as a `return-rule` field change (ADR-0026). Prune deletes it, apply
+// restores it, and neither plan says the two are about the same object.
+func TestPruneSparesTheReturnRuleExportStoppedWriting(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Was Open", "ALLOW", "Internal", "External", nil)
+	r.seedUnmarkedReturnRule(t, "Was Open (Return)", "External", "Internal")
+	// A policy prune really does delete, so that the companion is spared on
+	// purpose rather than because the prune never ran.
+	r.seedPolicy(t, "Mine", "ALLOW", "Internal", "External", nil)
+
+	res := applyFirewall(t, r, `firewall-policies:
+  - name: Was Open
+    action: allow
+    source: Internal
+    destination: External
+`, "--prune")
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `- firewall-policy "Mine" deleted`) {
+		t.Fatalf("the prune under test did not happen:\n%s", stdout)
+	}
+	if strings.Contains(stdout, `firewall-policy "Was Open (Return)"`) {
+		t.Errorf("prune proposed deleting the companion the file states as its parent's verdict:\n%s", stdout)
+	}
+	r.policyNamed(t, "Was Open (Return)") // fails the test if the apply deleted it anyway
+}
+
 // ADR-0006. A file with no `zones:` key says nothing about zones, so a prune it
 // takes part in has no business deleting one.
 func TestPruneLeavesTheFirewallAloneWhenTheFileDoesNotMentionIt(t *testing.T) {

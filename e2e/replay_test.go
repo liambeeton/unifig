@@ -1622,6 +1622,37 @@ func (r *replay) seedUnmarkedGeneratedPolicy(t *testing.T, name, action, source,
 	})
 }
 
+// seedUnmarkedReturnRule is the companion with everything but its own field
+// taken off it: `RESPOND_ONLY`, an ordinary document handle, and no `predefined`.
+//
+// **It is a firmware nobody has met, and the fixture says so rather than
+// implying otherwise.** Every companion anyone has measured carries a composite
+// `_id`, which is the thing this one drops: the twelve `Allow Return Traffic` a
+// migrated router ships carry one and the `predefined` marker with it, and the
+// one ADR-0026's write session watched the Controller generate for a *custom*
+// parent was recorded on its id — the marker on that one was not read, which is
+// why this says the id rather than both. So a companion of any shape anyone has
+// seen is spared by `generated` before `returnRule` is ever reached, and a clause
+// that had been deleted would look exactly like one that works. This is the only
+// arrangement in which `returnRule` can be told from the two clauses beside it,
+// which is what a test of prune's companion clause needs (ADR-0019, ADR-0028).
+//
+// Its verdict is `ALLOW` rather than a parameter, because that is the whole of
+// when the Controller makes one: a companion answers for a policy created
+// allowing, and the request is refused beside any verdict that closes a path
+// (ADR-0022).
+//
+// Nothing else about it is invented. It keeps seedPolicy's `create_allow_respond:
+// true`, which is what all twelve in the recording carry, and it takes no
+// `origin_id`, for the reason seedUnmarkedGeneratedPolicy takes none: the
+// companion shapes anyone has read carry one and this is not one of those shapes.
+func (r *replay) seedUnmarkedReturnRule(t *testing.T, name, source, destination string) {
+	t.Helper()
+	r.seedPolicy(t, name, "ALLOW", source, destination, map[string]any{
+		"connection_state_type": "RESPOND_ONLY",
+	})
+}
+
 // unnameableZone is a zone id no zone on this site carries. A policy with it on
 // one end is one unifig has no name to write there, which is the whole of what
 // makes a policy indescribable: a policy is its name, its verdict and its pair

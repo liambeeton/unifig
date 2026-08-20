@@ -1,5 +1,21 @@
 # Export writes only the policies unifig could change
 
+> **Amended by issue #47 on how far its guarantee reaches, not on its decision.**
+> "Prune's exemption gains a second clause" below stops at the Generated Policy,
+> because the Return Rule exclusion was one this ADR deferred — *"Nothing here
+> settles it"*. Issue #45 then shipped **two** exclusions, and only the first had
+> a clause in prune to match it. The companion had been spared by `named[key]`
+> for as long as export wrote it — `Allow Return Traffic` twelve times over, and
+> `"<name> (Return)"` beside any allow policy of the operator's own — and from
+> #45 it was a live policy that is keyed, absent from the config, and matched by
+> no exemption of its own. `sparedFromPrune` now asks `returnRule` beside the
+> rest, on the same predicate export excludes a companion on, so the two halves
+> read one field and cannot drift. The clause is inert on every companion anyone
+> has measured, for the same reason the `_id` clause is inert, and what it is
+> there for is the sentence this ADR already ends on: **a file unifig wrote must
+> not be a file prune deletes from.** The reasoning stays with the code that does
+> it, as "What this does not decide" asked.
+
 `unifig export` writes every live Firewall Policy it can word into the config,
 and on a migrated router that is all 86 of them. This repository's own
 `unifig.yaml` is the evidence and the injury: 19 `Allow All Traffic`, 16 `Block
