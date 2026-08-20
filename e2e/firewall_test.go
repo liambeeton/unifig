@@ -2354,11 +2354,18 @@ func TestPlanWillNotPromiseAChangeToAPolicyTheControllerGenerates(t *testing.T) 
 	}
 	// Named by its whole key, because a migrated router ships nineteen of that
 	// name and a sentence about one has to say which (ADR-0001).
+	//
+	// The way out names the rename, and says what the operator's policy wins
+	// against. Without the first half the advice loops back into this same caveat
+	// — an entry under this policy's name on this policy's pair has this policy's
+	// key — and without the second an operator has no reason to believe a policy
+	// of their own beats the Controller's (issue #43).
 	for _, fragment := range []string{
 		`"Allow All Traffic" (Dmz to Dmz)`,
 		"will not be changed",
 		"no endpoint can edit it",
-		"takes precedence over it",
+		"the lowest precedence there is",
+		"under a name of your own, takes precedence over it",
 	} {
 		if !strings.Contains(stdout, fragment) {
 			t.Errorf("the plan does not say why the change cannot be made (%q missing):\n%s", fragment, stdout)
@@ -2465,7 +2472,11 @@ func TestAGeneratedPolicyBlockingTheGatewayWarnsWithoutMarkingAChangeRisky(t *te
 	}
 	// The warning survives the mark, in the sentence that suggests the create it
 	// is about.
-	for _, fragment := range []string{"will not be changed", "takes precedence over it", riskOfBlockingTheGateway} {
+	for _, fragment := range []string{
+		"will not be changed",
+		"under a name of your own, takes precedence over it",
+		riskOfBlockingTheGateway,
+	} {
 		if !strings.Contains(stdout, fragment) {
 			t.Errorf("the caveat should carry the way out and what it costs (%q missing):\n%s", fragment, stdout)
 		}
@@ -2488,11 +2499,44 @@ func TestTheWayOutOfAnUnwritablePolicyCarriesNoWarningWhereThereIsNoDanger(t *te
 `)
 
 	stdout := string(res.Stdout)
-	if !strings.Contains(stdout, "takes precedence over it") {
+	if !strings.Contains(stdout, "under a name of your own, takes precedence over it") {
 		t.Errorf("the caveat should still say the way out:\n%s", stdout)
 	}
 	if strings.Contains(stdout, riskOfBlockingTheGateway) {
 		t.Errorf("a policy nowhere near the gateway was warned about:\n%s", stdout)
+	}
+}
+
+// Advice is only worth what following it does, and followed literally this
+// advice used to arrive back where it started. Keep the name, keep the pair,
+// change the verdict — and the entry has the generated policy's own key, name
+// together with pair (ADR-0001), so planFirewallPolicies matches it, finds the
+// same difference and says the same caveat again. unifig would never create
+// anything, and nothing in the sentence said why (issue #43).
+//
+// The rename is what makes the way out a way out: a name of the operator's own
+// is a key of their own, there is nothing to match, and the plan creates. That
+// create is a policy unifig owns and can change afterwards, which is the whole
+// of what the caveat promises.
+func TestTheWayOutOfAnUnwritablePolicyIsAPlanThatCreates(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Block the Dmz
+    action: block
+    source: Dmz
+    destination: Dmz
+`)
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `+ firewall-policy "Block the Dmz"`) {
+		t.Errorf("a policy of the operator's own on the pair should be a create:\n%s", stdout)
+	}
+	// And it is a create rather than a create with a hedge on it: the policy the
+	// operator was told to write is not one unifig then declines to write.
+	if strings.Contains(stdout, "will not be changed") {
+		t.Errorf("the way out was itself caveated:\n%s", stdout)
 	}
 }
 

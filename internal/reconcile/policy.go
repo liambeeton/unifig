@@ -280,6 +280,20 @@ func isDocumentHandle(id string) bool {
 // operator's own on the same pair is one that takes effect over it (ADR-0018).
 // That is a policy unifig creates, owns and can change afterwards.
 //
+// **The rename in that sentence is load-bearing rather than stylistic.** A
+// policy's key is its name together with its pair of zones (ADR-0001), so an
+// entry keeping this policy's name on this policy's pair has this policy's key:
+// planFirewallPolicies matches it to the generated policy, computes the same
+// difference, and arrives back here with the same caveat. An operator who
+// followed the advice literally would loop, and unifig would never create
+// anything (issue #43). A name of the operator's own is a key of their own,
+// which is nothing to match and therefore the create the way out promises.
+//
+// It gets more load-bearing once Export stops writing generated policies into
+// the file (ADR-0028): an operator overriding one then has no exported line to
+// edit, so they write a fresh entry and take the name off the UniFi UI in front
+// of them — which is the name this sentence has to talk them out of.
+//
 // `closing` is whether the change being held back was one that would have closed
 // the path to the Gateway zone, and it is here because otherwise this sentence
 // tells an operator to go and do the one thing unifig stops to confirm. The mark
@@ -290,7 +304,8 @@ func isDocumentHandle(id string) bool {
 // the same words the mark does, and an operator meets them here rather than
 // discovering them at the confirmation prompt.
 func unwritablePolicy(key policyKey, closing bool) Caveat {
-	way := "a policy of your own on the same pair takes precedence over it"
+	way := "the Controller's own sits at the lowest precedence there is, so a policy of your own on the same pair, " +
+		"under a name of your own, takes precedence over it"
 	if closing {
 		// Named as a Risky change rather than only described, because that is the
 		// word an operator already knows from every plan that carries one, and

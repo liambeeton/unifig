@@ -1,5 +1,14 @@
 # The Controller's own policies are generated, not stored, so unifig cannot update one
 
+> **Amended by issue #43 on the wording of the way out, not on its decision.**
+> The caveat below ends by telling the operator that "a policy of your own on the
+> same pair takes precedence over it", and an operator who followed that literally
+> — same name, same pair, new verdict — wrote an entry carrying the generated
+> policy's own key (ADR-0001), which `planFirewallPolicies` matches rather than
+> creates, and got this same caveat back. The sentence now names the rename: a
+> policy of your own on the same pair, **under a name of your own**. Everything
+> else here stands, the gateway half included.
+
 `updateFirewallPolicy` could not land a change on any of the eighty-six Firewall
 Policies a migrated UDR ships, and `internal/reconcile/policy.go` said the
 opposite in as many words — ADR-0018 rested an argument on it:
@@ -111,8 +120,10 @@ of the `Change`.
   `unreadableGateway` already applies to itself.
 - **It names the policy by its whole key**, because a migrated router ships
   nineteen of that name (ADR-0001, issue #24), and it ends with the way out: a
-  policy of the operator's own on the same pair takes precedence, because the
-  Controller's sits at `index: 2147483647`.
+  policy of the operator's own on the same pair, under a name of their own, takes
+  precedence, because the Controller's sits at `index: 2147483647`. The rename is
+  what makes it a way out rather than a loop, and issue #43 is where that was
+  found.
 
 ## ADR-0018's Risky mark is reconciled rather than removed
 
@@ -148,10 +159,11 @@ what changes is which shape of change can carry it.
 
 Dropping the mark on a change nobody can apply is only half of the reconciliation,
 and the other half is a trap this walked into first. The caveat ends by telling the
-operator the way out — write your own policy on the same pair — and on the Internal
-to Gateway pair that is *precisely* the create ADR-0018 marks Risky. A plan that
-removed the confirmation and then recommended the dangerous thing, with the danger
-left out, would be worse than the state it replaced.
+operator the way out — write your own policy on the same pair, under your own
+name — and on the Internal to Gateway pair that is *precisely* the create
+ADR-0018 marks Risky. A plan that removed the confirmation and then recommended
+the dangerous thing, with the danger left out, would be worse than the state it
+replaced.
 
 So `unwritablePolicy` takes whether the change it is holding back would have closed
 the path to the Gateway, and appends `gatewayRisk` — the same sentence the mark
