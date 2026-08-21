@@ -1598,6 +1598,36 @@ func (r *replay) seedGeneratedPolicy(t *testing.T, name, action, source, destina
 	})
 }
 
+// seedStoredPolicy seeds the other half of the clash issue #46 measured: a
+// policy of the operator's own, on a pair the Controller already generates one
+// for, carrying everything the Controller was watched giving it.
+//
+// **Every field here is a reading rather than a choice (ADR-0019).** A
+// hand-built POST against the live migrated UDR on 20 August 2026 put a policy
+// carrying a Generated Policy's own name and pair onto the site, and the
+// Controller answered `201` and kept both objects side by side. What it gave the
+// new one was `predefined: false`, an ordinary document handle — which seedPolicy
+// already issues — and `index: 10000`, which unifig never asked for and which is
+// below the whole `30000` band the shipped specific policies sit in, let alone
+// the `2147483647` its generated twin carries.
+//
+// The index is what the precedence in ADR-0029 rests on, so a seed leaving it out
+// would be a fixture asserting the clash without the fact that resolves it.
+// Nothing reads the field — unifig matches on the id shape, not on the index, for
+// the reason that ADR gives — which is exactly why it has to be stated here: the
+// measurement is the evidence, and a fixture is where this repository keeps one.
+func (r *replay) seedStoredPolicy(t *testing.T, name, action, source, destination string) {
+	t.Helper()
+	r.seedPolicy(t, name, action, source, destination, map[string]any{
+		"index":      storedPolicyIndex,
+		"predefined": false,
+	})
+}
+
+// storedPolicyIndex is the index the Controller assigned the created policy,
+// unasked, in issue #46's probe.
+const storedPolicyIndex = 10000
+
 // seedUnmarkedGeneratedPolicy is that policy with the marker taken off: the
 // composite `_id` of one the Controller computes, and no `predefined` on it.
 //
@@ -1692,6 +1722,32 @@ func (r *replay) generatedPolicyID(t *testing.T, source, destination string, ind
 	from, _ := r.zoneNamed(t, source)["_id"].(string)
 	to, _ := r.zoneNamed(t, destination)["_id"].(string)
 	return compositePolicyID(from, to, index)
+}
+
+// policiesOnKey is every policy the stand-in holds under one policy key — a name
+// together with the pair of zones it governs (ADR-0001) — which is what a test
+// asks when it wants to know what an apply left on a key rather than under a
+// name. The recording ships nineteen policies called `Allow All Traffic`, so a
+// lookup by name alone says almost nothing about which of them was meant.
+//
+// It hands back the policies rather than a count, because the tests that need it
+// need the `_id`: on a key a stored policy shares with a generated one, which of
+// the two is left is the whole question, and the id shape is what tells them
+// apart (ADR-0029).
+func (r *replay) policiesOnKey(t *testing.T, name, source, destination string) []map[string]any {
+	t.Helper()
+	from, _ := r.zoneNamed(t, source)["_id"].(string)
+	to, _ := r.zoneNamed(t, destination)["_id"].(string)
+
+	var found []map[string]any
+	for _, policy := range r.livePolicies(t) {
+		ends, _ := policy["source"].(map[string]any)
+		other, _ := policy["destination"].(map[string]any)
+		if policy["name"] == name && ends["zone_id"] == from && other["zone_id"] == to {
+			found = append(found, policy)
+		}
+	}
+	return found
 }
 
 // compositePolicyID is that shape spelled once, for the callers that already

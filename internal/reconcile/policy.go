@@ -97,18 +97,9 @@ func planFirewallPolicies(
 	bound bindings,
 	opts Options,
 ) ([]Change, []unifi.FirewallZonePolicy, []Caveat, error) {
-	if err := uniquelyKeyed(live, bound); err != nil {
+	byKey, err := policiesByKey(live, bound)
+	if err != nil {
 		return nil, nil, nil, err
-	}
-	// A policy without a key is left out of the collection rather than filed
-	// under an empty one: nothing in the file can match it, and prune must not
-	// reach it either — deleting a policy unifig could not describe is a change
-	// it could not have shown the operator first.
-	byKey := make(map[policyKey]unifi.FirewallZonePolicy, len(live))
-	for _, policy := range live {
-		if key, keyed := keyOfLivePolicy(policy, bound); keyed {
-			byKey[key] = policy
-		}
 	}
 	held := policyNames(live)
 
@@ -458,39 +449,138 @@ func listFirewallPolicies(ctx context.Context, client unifi.Client, site string)
 	return live, nil
 }
 
-// uniquelyKeyed refuses a site holding two policies unifig could not tell apart.
-// It reads like uniquelyNamed's message because it is the same failure, reported
-// about a wider key.
+// policiesByKey is the live collection indexed by the key a config entry
+// matches, and it refuses the site where a key has no one answer.
 //
-// Two policies sharing a name is ordinary and expected; two sharing a name *and*
-// a zone pair is the ambiguity that has no answer, and it is still refused. It is
-// asked by the verbs that match policies to config rather than by the read.
+// **The index and the refusal are one function because they are one decision.**
+// What the refusal exists for is the moment a config entry has to resolve to
+// exactly one live policy, so "which policies is this site refused over" and
+// "which policy does this key mean" are the same question asked from either
+// side. Asked in two places they could come to disagree, and the shape that
+// disagreement takes is a site unifig plans against one policy and refuses to
+// export, or the reverse.
 //
-// A policy without a key is left out rather than counted: it is not one of a
-// pair unifig had to choose between, and counting it would refuse the site over
-// a clash between two ends that could not be named.
-func uniquelyKeyed(live []unifi.FirewallZonePolicy, bound bindings) error {
-	counts := make(map[policyKey]int, len(live))
+// **Two policies sharing a name is ordinary; sharing a name and a pair of zones
+// is no longer the same thing as having no answer.** A policy the operator
+// stored and one the Controller generates can share all three, and the
+// Controller has already said which of them the site is about: it answered `201`
+// to the create, kept both objects, and put the stored one at `index: 10000`
+// against the generated one's `2147483647` — the lowest precedence there is, on
+// its own ordering (ADR-0029, issue #46). So the pair is matchable rather than
+// ambiguous: the stored policy is what a config entry means, the generated one
+// is shadowed, and unifig stops refusing a whole site over a state ADR-0027's
+// own way out invites an operator to create.
+//
+// What is still refused is a key more than one *stored* policy carries. Nothing
+// has answered that one — both can be written to, so unifig would be guessing
+// which the file meant — and it is the ambiguity this was built for.
+//
+// It is asked by the verbs that match policies to config rather than by the
+// read, which is why listFirewallPolicies filters and refuses nothing.
+//
+// A policy without a key is left out of both answers rather than filed under an
+// empty one. It is not one of a pair unifig had to choose between, and counting
+// it would refuse the site over a clash between two ends that could not be
+// named; nothing in the file can match it either, and prune must not reach it —
+// deleting a policy unifig could not describe is a change it could not have
+// shown the operator first.
+func policiesByKey(
+	live []unifi.FirewallZonePolicy,
+	bound bindings,
+) (map[policyKey]unifi.FirewallZonePolicy, error) {
+	sharing := make(map[policyKey][]unifi.FirewallZonePolicy, len(live))
 	for _, policy := range live {
 		if key, keyed := keyOfLivePolicy(policy, bound); keyed {
-			counts[key]++
+			sharing[key] = append(sharing[key], policy)
 		}
 	}
 
+	byKey := make(map[policyKey]unifi.FirewallZonePolicy, len(sharing))
 	var shared []string
-	for key, count := range counts {
-		if count > 1 {
-			shared = append(shared, fmt.Sprintf("%d matching %s", count, key))
+	for key, alike := range sharing {
+		contenders := unshadowed(alike)
+		if len(contenders) == 1 {
+			byKey[key] = contenders[0]
+			continue
 		}
+		// Whose the clashing policies are, which decides what the operator can
+		// do about them. A contending group is all stored or all generated —
+		// that is what unshadowed leaves — so the first says it for the group.
+		mine := "of your own"
+		if generated(contenders[0]) {
+			mine = "the Controller generates itself"
+		}
+		shared = append(shared, fmt.Sprintf("%d %s matching %s", len(contenders), mine, key))
 	}
 	if len(shared) == 0 {
-		return nil
+		return byKey, nil
 	}
 
 	slices.Sort(shared)
-	return fmt.Errorf(
-		"unifig matches firewall policies on the Controller by name and the pair of zones they govern, so no two may share all three: this site has %s; rename or remove the extras in the Controller's UI, then run again",
+	// **The sentence names the end of the clash an operator can act on**, which
+	// it used not to. "Rename or remove the extras in the Controller's UI" is
+	// half-unreachable the moment a policy the Controller generates is one of the
+	// extras: it has no id any endpoint resolves, so it can be neither renamed
+	// nor deleted, and the UI has nothing to offer for it either (ADR-0027, issue
+	// #46). Saying which are the operator's is what makes the instruction one
+	// they can carry out — and on the clash where none of them is, it is what
+	// stops the instruction being the whole answer.
+	//
+	// **The last clause is a way out rather than an aside.** Where the clash is
+	// between policies the Controller generates, there is nothing to rename and
+	// nothing to remove, and writing a policy of the operator's own on that name
+	// and pair takes precedence over every generated policy carrying it — so the
+	// key resolves on a create rather than on a deletion nobody can perform. It
+	// doubles as why the count can be smaller than what the UI shows: a generated
+	// policy under a stored one's key is shadowed, not counted.
+	return nil, fmt.Errorf(
+		"unifig matches firewall policies on the Controller by name and the pair of zones they govern, so no two "+
+			"may share all three: this site has %s; rename or remove the extras of your own in the Controller's "+
+			"UI, then run again — a policy the Controller generates for a pair of zones has no id, so it can be "+
+			"neither renamed nor deleted, and one of your own sharing its name and pair takes precedence over it "+
+			"rather than clashing with it",
 		strings.Join(shared, ", "))
+}
+
+// unshadowed is which of the policies sharing a key a config entry could still
+// mean, once the Controller's own precedence has been applied: the stored ones
+// where the key has any, and all of them where it has none.
+//
+// **The gate is the `_id` shape rather than `predefined`**, for the reason
+// `generated` gives and one this sharpens. What settles the clash is not whose
+// policy it is but which of the two the operator can be talking about at all,
+// and that is the one with something to write to: an entry matched to the
+// generated policy could only ever produce the caveat (ADR-0027), while the same
+// entry matched to the stored one is a change unifig makes. Reading the marker
+// instead would put a policy an operator wrote and the Controller marked its own
+// on the losing side of a precedence it should win, and would shadow forever the
+// policies of a firmware that stored its own properly.
+//
+// **Where nothing is stored, nothing is shadowed.** Two policies the Controller
+// generates sharing one key is a firmware nobody has met — the eighty-six a
+// migrated router ships hold no such pair, which is what a healthy export against
+// the baseline site says (issue #46) — and unifig can write to neither of them,
+// so there is no precedence here to apply and choosing between them would be the
+// guess the refusal exists to avoid. They go back as they came, and the caller
+// refuses the key.
+//
+// It does not ask which policy the site *enforces*, and the distinction is worth
+// keeping. That reading is the Controller's index model — lower is evaluated
+// first — and it is the evidence the precedence rests on rather than the test it
+// applies: the `10000` a create is assigned is a value the Controller chose
+// unasked, measured once, and a match resolved on it would be unifig reading a
+// field it has never had a reason to model.
+func unshadowed(sharing []unifi.FirewallZonePolicy) []unifi.FirewallZonePolicy {
+	stored := make([]unifi.FirewallZonePolicy, 0, len(sharing))
+	for _, policy := range sharing {
+		if !generated(policy) {
+			stored = append(stored, policy)
+		}
+	}
+	if len(stored) == 0 {
+		return sharing
+	}
+	return stored
 }
 
 // projectFirewallPolicies projects the site's policies into the config that
@@ -534,8 +624,11 @@ func projectFirewallPolicies(ctx context.Context, client unifi.Client, site stri
 		return nil, nil, 0, err
 	}
 	// Export matches too, in the sense that matters here: a file describing two
-	// policies unifig cannot tell apart is a file it cannot plan afterwards.
-	if err := uniquelyKeyed(live, bound); err != nil {
+	// policies unifig cannot tell apart is a file it cannot plan afterwards. It
+	// wants the refusal rather than the index — what it writes is decided per
+	// policy, below — and it asks for both anyway, because the refusal a second
+	// function computed would be one that could disagree with the plan's.
+	if _, err := policiesByKey(live, bound); err != nil {
 		return nil, nil, 0, err
 	}
 

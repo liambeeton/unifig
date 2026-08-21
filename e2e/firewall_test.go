@@ -1831,11 +1831,20 @@ func TestAnEmptyPlanStillSaysWhyItPrunedNoZones(t *testing.T) {
 // A policy's key is its name and the pair of zones it governs, so a name on its
 // own repeating is ordinary — the Controller's own predefined set does it
 // nineteen times over (ADR-0001, issue #24). What has no answer is two policies
-// alike in all three, and that is still refused rather than guessed at.
-func TestPlanRefusesToGuessBetweenTwoPoliciesSharingANameAndBothEnds(t *testing.T) {
+// the operator **stored** alike in all three, and that is still refused rather
+// than guessed at: both can be written to, so unifig would be picking which one
+// the file meant.
+//
+// The precedence in ADR-0029 does not reach this clash and the count does not
+// move for it. What the message gains is the half issue #46 found missing — it
+// says which end of a clash the operator can act on. Here that is both ends, and
+// it is the sentence's other clash that needs it: a policy the Controller
+// generates has no id, so telling an operator to go and remove one is telling
+// them to do something the UI cannot do.
+func TestPlanRefusesToGuessBetweenTwoStoredPoliciesSharingANameAndBothEnds(t *testing.T) {
 	r := startReplay(t)
-	r.seedPolicy(t, "Twice Over", "ALLOW", "Internal", "External", nil)
-	r.seedPolicy(t, "Twice Over", "BLOCK", "Internal", "External", nil)
+	r.seedStoredPolicy(t, "Twice Over", "ALLOW", "Internal", "External")
+	r.seedStoredPolicy(t, "Twice Over", "BLOCK", "Internal", "External")
 
 	res := planFirewall(t, r, `firewall-policies:
   - name: Twice Over
@@ -1848,10 +1857,18 @@ func TestPlanRefusesToGuessBetweenTwoPoliciesSharingANameAndBothEnds(t *testing.
 		t.Fatalf("plan exited %d, want %d — it picked one of two policies alike in name and both ends\nstdout: %s",
 			res.ExitCode, exitError, res.Stdout)
 	}
-	// The pair is named, because the name alone does not identify which policies
-	// the operator has to go and look at.
 	stderr := string(res.Stderr)
-	for _, fragment := range []string{"Twice Over", "Internal", "External", "UI"} {
+	for _, fragment := range []string{
+		// The pair is named, because the name alone does not identify which
+		// policies the operator has to go and look at. Both are theirs, and the
+		// count is of the clash rather than of the key: nothing here is shadowed.
+		`2 of your own matching "Twice Over" (Internal to External)`,
+		"rename or remove the extras of your own in the Controller's UI",
+		// And the half that is new, which is what the operator needs on the
+		// clash this one is not.
+		"it can be neither renamed nor deleted",
+		"takes precedence over it rather than clashing with it",
+	} {
 		if !strings.Contains(stderr, fragment) {
 			t.Errorf("stderr should mention %q, got: %s", fragment, stderr)
 		}
@@ -2758,15 +2775,10 @@ func TestApplyWritesNothingForAPolicyTheControllerGenerates(t *testing.T) {
 	if writes := r.policyWrites(t); len(writes) != 0 {
 		t.Errorf("apply made %d write(s) to a policy the Controller generates, want none: %v", len(writes), writes)
 	}
-	// Found by its pair rather than by its name: the recording ships nineteen
-	// more of that name, which is the whole reason a policy's key is not its name.
-	dmz, _ := r.zoneNamed(t, "Dmz")["_id"].(string)
-	for _, policy := range r.livePolicies(t) {
-		source, _ := policy["source"].(map[string]any)
-		destination, _ := policy["destination"].(map[string]any)
-		if policy["name"] != "Allow All Traffic" || source["zone_id"] != dmz || destination["zone_id"] != dmz {
-			continue
-		}
+	// Found by its whole key rather than by its name: the recording ships
+	// nineteen more of that name, which is the whole reason a policy's key is not
+	// its name.
+	for _, policy := range r.policiesOnKey(t, "Allow All Traffic", "Dmz", "Dmz") {
 		if policy["action"] != "ALLOW" {
 			t.Errorf("the Controller's own policy is %v, want it left exactly as it was", policy["action"])
 		}
@@ -2984,6 +2996,227 @@ func TestAnEmptyPlanWithNothingToSayStillSaysTheControllerMatches(t *testing.T) 
 
 	if !strings.Contains(string(res.Stdout), "already matches the config") {
 		t.Errorf("a plan with nothing to say should say so plainly:\n%s", res.Stdout)
+	}
+}
+
+// The clash issue #46 went and measured: a policy of the operator's own sharing
+// all three parts of its key with one the Controller generates for the pair.
+//
+// unifig used to refuse the whole site for it — export outright, and plan the
+// moment the file had a `firewall-policies:` section at all — which is a refusal
+// over a state ADR-0027's own way out invites an operator to create. The
+// Controller has answered the question the refusal says has no answer: it took
+// the create at `201`, kept both objects, and put the stored one at `index:
+// 10000` against the generated one's `2147483647` (ADR-0029).
+//
+// So the match resolves to the stored policy, and it resolves to the one thing
+// on the pair unifig could write to in the first place.
+func TestAStoredPolicyTakesPrecedenceOverTheGeneratedOneSharingItsKey(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+	r.seedStoredPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz")
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Allow All Traffic
+    action: block
+    source: Dmz
+    destination: Dmz
+`)
+
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d — the site was refused over a clash the Controller has resolved\nstderr: %s",
+			res.ExitCode, exitChangesPending, res.Stderr)
+	}
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `~ firewall-policy "Allow All Traffic"`) {
+		t.Errorf("the plan does not change the policy the operator can change:\n%s", stdout)
+	}
+	// The generated one is shadowed rather than matched, so nothing here is the
+	// caveat about a policy with no id to write to.
+	if strings.Contains(stdout, "will not be changed") {
+		t.Errorf("the plan matched the generated policy over the operator's own:\n%s", stdout)
+	}
+}
+
+// The plan's promise is only worth what apply does, and this is the seam the
+// precedence has to survive: the write goes to the document handle of the stored
+// policy, and the generated one is left exactly as it was.
+//
+// The stand-in is the guard on the first half rather than an assertion here — a
+// PUT to a composite id is answered 404 and fails the test out loud (see
+// unresolvable) — so what this states is the second: unifig changed the
+// operator's policy and nothing else on the pair.
+func TestApplyWritesToTheStoredPolicyRatherThanTheGeneratedOneSharingItsKey(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+	r.seedStoredPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz")
+
+	res := applyFirewall(t, r, `firewall-policies:
+  - name: Allow All Traffic
+    action: block
+    source: Dmz
+    destination: Dmz
+`, "--auto-approve")
+
+	if res.ExitCode != 0 {
+		t.Fatalf("apply exited %d, want 0\nstderr: %s", res.ExitCode, res.Stderr)
+	}
+
+	// Both objects are still there — the Controller keeps them side by side, and
+	// an apply that reduced two policies to one would be unifig having deleted
+	// something nobody asked it to.
+	verdicts := map[string]string{}
+	for _, policy := range r.policiesOnKey(t, "Allow All Traffic", "Dmz", "Dmz") {
+		id, _ := policy["_id"].(string)
+		action, _ := policy["action"].(string)
+		verdicts[id] = action
+	}
+	dmz, _ := r.zoneNamed(t, "Dmz")["_id"].(string)
+	generated := compositePolicyID(dmz, dmz, 2147483647)
+	if verdicts[generated] != "ALLOW" {
+		t.Errorf("the Controller's own policy is %q, want it left exactly as it was", verdicts[generated])
+	}
+	stored := 0
+	for id, action := range verdicts {
+		if !isDocumentHandle(id) {
+			continue
+		}
+		stored++
+		if action != "BLOCK" {
+			t.Errorf("the operator's own policy is %q, want the verdict the config states", action)
+		}
+	}
+	if stored != 1 {
+		t.Errorf("the site holds %d stored policies on the pair, want the one the operator created", stored)
+	}
+}
+
+// The other half of #46's injury, and the louder one: `unifig export` exited 1
+// with nothing on stdout, so a site holding this clash could not be adopted at
+// all.
+//
+// What export writes is unchanged by the precedence — the stored policy goes in
+// because a plan can act on it, the generated one stays out because no plan ever
+// could (ADR-0028) — and the file it hands over now plans clean, which is the
+// whole of the site no longer being refused.
+func TestExportWritesTheStoredPolicyAndStillLeavesOutTheGeneratedOneItShadows(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+	r.seedStoredPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz")
+	live := r.livePolicies(t)
+
+	exported := exportFirewall(t, r)
+
+	cfg := exportedYAML(t, exported.Stdout)
+	if len(cfg.FirewallPolicies) != 1 {
+		t.Fatalf("export wrote %+v, want the operator's own policy and nothing else", cfg.FirewallPolicies)
+	}
+	if want := (exportedFirewallPolicy{
+		Name: "Allow All Traffic", Action: "allow", Source: "Dmz", Destination: "Dmz",
+	}); cfg.FirewallPolicies[0] != want {
+		t.Errorf("the exported policy is %+v, want %+v", cfg.FirewallPolicies[0], want)
+	}
+	// The shadowed policy is left out and counted like every other one the
+	// Controller generates. Being shadowed is not being described: nothing in
+	// the file is a statement about it, and the entry beside it is a statement
+	// about the operator's own policy that happens to share its key.
+	if want := fmt.Sprintf("Left out %d firewall policies the Controller generates rather than stores", len(live)-1); !strings.Contains(string(exported.Stderr), want) {
+		t.Errorf("the notice should still speak for the shadowed policy, looking for %q:\n%s", want, exported.Stderr)
+	}
+
+	if res := planExportedConfig(t, r, exported.Stdout); res.ExitCode != exitNoChanges {
+		t.Fatalf("plan of a freshly exported config exited %d, want %d\nexported:\n%s\nplan:\n%s",
+			res.ExitCode, exitNoChanges, exported.Stdout, res.Stdout)
+	}
+}
+
+// Prune's exemptions are untouched by the precedence, and they have to be said
+// on the pair where the two policies sit together: matching resolves to the
+// stored one, and that is not a statement about which of them prune may delete.
+//
+// The stored policy is the operator's own and absent from the file, so it goes.
+// The generated one is spared twice over — on its marker (ADR-0005) and on
+// having no id to send a deletion to (ADR-0028) — and sharing a key with a
+// policy prune just deleted changes neither.
+func TestPruneSparesTheGeneratedPolicyWhoseKeyTheStoredOneTook(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
+	r.seedStoredPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz")
+
+	before := len(r.livePolicies(t))
+
+	res := applyFirewall(t, r, "firewall-policies: []\n", "--prune")
+
+	if !strings.Contains(string(res.Stdout), `- firewall-policy "Allow All Traffic" deleted`) {
+		t.Fatalf("the prune under test did not happen:\n%s", res.Stdout)
+	}
+
+	// Which of the two went is asked of the key rather than of the name, because
+	// nineteen policies on this site are called `Allow All Traffic` and a line
+	// saying one of them was deleted does not say which. What has to be left
+	// standing on the key is the one with no document handle.
+	var onTheKey []string
+	for _, policy := range r.policiesOnKey(t, "Allow All Traffic", "Dmz", "Dmz") {
+		id, _ := policy["_id"].(string)
+		onTheKey = append(onTheKey, id)
+	}
+	if len(onTheKey) != 1 || isDocumentHandle(onTheKey[0]) {
+		t.Errorf("the key is left holding %v, want only the policy the Controller generates for the pair", onTheKey)
+	}
+	// And exactly one policy left this site, so the prune took the operator's own
+	// and nothing beside it.
+	if after := len(r.livePolicies(t)); after != before-1 {
+		t.Errorf("the site went from %d policies to %d, want the one stored policy gone and nothing else",
+			before, after)
+	}
+}
+
+// The boundary of the precedence, said where it can be told: what outranks a
+// generated policy is a policy unifig could write to, not "any other policy".
+//
+// **Two generated policies sharing a key is a firmware nobody has met**, and the
+// fixture says so rather than implying otherwise. The eighty-six a migrated
+// router ships hold no such pair — 86 policies under 86 distinct keys, which is
+// why export against #46's restored baseline is healthy — so this is seeded, and
+// seeded to pin a boundary rather than to describe a router. That is
+// seedUnmarkedGeneratedPolicy's arrangement rather than a new liberty with
+// ADR-0019: without it, "a stored policy outranks a generated one" and
+// "generated policies are not counted" look identical, and the second silently
+// picks between two objects unifig cannot write to.
+//
+// **Refusing it is the behaviour that was already there**, kept rather than
+// chosen: nothing has answered this clash either. There is no stored policy to
+// resolve to and no way to choose between two ends with no id, which is the
+// guess `policiesByKey` refuses on the operator's behalf.
+//
+// So the way out has to be in the message, and it is a real one: writing a
+// policy of their own on that name and pair takes precedence over both.
+func TestTwoGeneratedPoliciesSharingAKeyAreStillRefused(t *testing.T) {
+	r := startReplay(t)
+	r.seedGeneratedPolicy(t, "Computed Twice", "ALLOW", "Dmz", "Dmz", 30000)
+	r.seedGeneratedPolicy(t, "Computed Twice", "BLOCK", "Dmz", "Dmz", 2147483647)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Computed Twice
+    action: allow
+    source: Dmz
+    destination: Dmz
+`)
+
+	if res.ExitCode != exitError {
+		t.Fatalf("plan exited %d, want %d — it picked one of two policies it can write to neither of\nstdout: %s",
+			res.ExitCode, exitError, res.Stdout)
+	}
+	stderr := string(res.Stderr)
+	// Named as the Controller's, because that is what decides what the operator
+	// can do about them — and telling them to remove one would be telling them
+	// to do something the UI cannot do (ADR-0027).
+	if !strings.Contains(stderr, `2 the Controller generates itself matching "Computed Twice" (Dmz to Dmz)`) {
+		t.Errorf("the refusal should say whose the clashing policies are, got: %s", stderr)
+	}
+	// And the way out, which is the only one this clash has.
+	if !strings.Contains(stderr, "takes precedence over it rather than clashing with it") {
+		t.Errorf("the refusal should carry the create that resolves it, got: %s", stderr)
 	}
 }
 
