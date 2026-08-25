@@ -906,7 +906,7 @@ func TestCreatingAnAllowPolicyAsksTheControllerForTheReturnRule(t *testing.T) {
   - name: Let them answer
     action: allow
     source: Internal
-    destination: External
+    destination: Dmz
 `)
 
 	sent := r.onlyPolicyWrite(t)
@@ -963,6 +963,156 @@ func TestCreatingABlockingPolicyDoesNotAskForAReturnRule(t *testing.T) {
 					verdict, sent)
 			}
 		})
+	}
+}
+
+// The second condition on the request, and the one an operator found the hard
+// way rather than a probe.
+//
+// ADR-0022 had the rule as "ask on an allow and not otherwise", measured against
+// a `Dmz -> Dmz` probe. That generalised from the one pair it ran on. An
+// operator applying a twelve-policy firewall got three blocking policies created
+// and then, on the first `allow` the apply came to, the identical 400 the
+// blocking creates had been refused with:
+//
+//	unifig: create firewall-policy "Cyberdelia to internet": Server error (400)
+//	for POST .../firewall-policies: Firewall policy create respond traffic not
+//	allowed
+//
+// Three probes on the live migrated UDR on 25 August 2026 closed it, and they
+// are why this is a rule about the destination rather than about anything else
+// the failing policy happened to be (ADR-0030):
+//
+//   - `Dmz -> External`, `ALLOW`, the flag true: refused 400. So it is the
+//     destination and not the source, the zone's age or its membership.
+//   - `Dmz -> External`, `ALLOW`, the flag false: accepted 201, and the site
+//     gained one policy rather than two. So the Controller takes the allow
+//     perfectly well and simply generates nothing — which is what makes not
+//     asking a fix rather than a different failure.
+//   - `Internal -> Dmz`, `ALLOW`, the flag true: accepted 201, and the site
+//     gained two onto a pair whose reverse already held a `RESPOND_ONLY` rule.
+//     That refuted the reading that the refusal was about the reverse pair being
+//     occupied, which fitted every observation until it was tested.
+//
+// Asserted on the request rather than the round-trip, for ADR-0019's reason and
+// the one ADR-0022 gave when this same test was got wrong the first time: a
+// stand-in that stores what it is handed would pass a body hardware refuses. The
+// stand-in refuses it too, in refusedByPolicyWrite, so a unifig that asked again
+// fails here on the body it built and there on the answer it got.
+func TestCreatingAnAllowPolicyIntoExternalDoesNotAskForTheReturnRule(t *testing.T) {
+	r := startReplay(t)
+	external := r.externalZone(t)
+
+	applyFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Out to the internet
+    action: allow
+    source: %s
+    destination: %s
+`, r.internalZone(t), external))
+
+	sent := r.onlyPolicyWrite(t)
+	if respond := sent["create_allow_respond"]; respond != false {
+		t.Errorf("unifig asked the Controller to make a return rule for a policy into %q, and the Controller refuses that 400: %v",
+			external, sent)
+	}
+	if r.hasPolicyNamed(t, "Out to the internet (Return)") {
+		t.Errorf("something generated a companion for a policy into %q, which hardware was measured not doing", external)
+	}
+}
+
+// The update half, on the same rule. It matters separately because the two paths
+// reach the field by different routes — a create builds a struct, an update
+// merges into the object the Controller sent (ADR-0021) — and ADR-0022's first
+// reading of this endpoint was wrong precisely because it checked one and
+// generalised to both.
+func TestUpdatingAPolicyToAllowIntoExternalDoesNotAskForTheReturnRule(t *testing.T) {
+	r := startReplay(t)
+	external := r.externalZone(t)
+	internal := r.internalZone(t)
+	r.seedPolicy(t, "Was Shut", "BLOCK", internal, external, map[string]any{
+		"create_allow_respond": false,
+	})
+
+	applyFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Was Shut
+    action: allow
+    source: %s
+    destination: %s
+`, internal, external))
+
+	sent := r.onlyPolicyWrite(t)
+	if respond := sent["create_allow_respond"]; respond != false {
+		t.Errorf("the update asked for a return rule on a policy into %q, which the Controller refuses on a PUT exactly as on a POST: %v",
+			external, sent)
+	}
+}
+
+// ADR-0014's standard, applied to the companion: a plan is a statement about
+// what will happen. A policy into External never gets a companion, so a plan
+// that promises one is promising an object that is never going to appear —
+// which is the same defect the return-rule note was added to fix, pointing the
+// other way.
+func TestPlanPromisesNoReturnRuleForAPolicyIntoExternal(t *testing.T) {
+	r := startReplay(t)
+	external := r.externalZone(t)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Out to the internet
+    action: allow
+    source: %s
+    destination: %s
+`, r.internalZone(t), external))
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, `+ firewall-policy "Out to the internet"`) {
+		t.Fatalf("the plan does not hold the policy this is about:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "(Return)") || strings.Contains(stdout, "reply traffic") {
+		t.Errorf("the plan promises a return rule for a policy into %q, and the Controller will not make one:\n%s",
+			external, stdout)
+	}
+}
+
+// The arrangement the bug was reported in, end to end: a firewall holding both
+// verdicts, where the policies that block sort before the one that allows.
+//
+// It is a whole-apply test rather than another request-shape one because the
+// failure was a whole-apply failure. Changes run in the order the plan printed
+// them and apply stops at the first that fails, so what an operator got was a
+// half-written firewall — the blocking policies created, the allow refused, and
+// every policy after it untouched. The two assertions that matter are that the
+// apply finishes and that the next plan is empty; the second is what says the
+// firewall the file describes is the firewall the Controller now holds, rather
+// than one that merely stopped erroring.
+func TestApplyingAFirewallThatAllowsIntoExternalAppliesAllOfIt(t *testing.T) {
+	r := startReplay(t)
+	internal, external := r.internalZone(t), r.externalZone(t)
+
+	body := fmt.Sprintf(`firewall-policies:
+  - name: A blocked path
+    action: block
+    source: %s
+    destination: Dmz
+  - name: B out to the internet
+    action: allow
+    source: %s
+    destination: %s
+`, internal, internal, external)
+
+	res := applyFirewall(t, r, body, "--prune")
+	if res.ExitCode != 0 {
+		t.Fatalf("apply exited %d, and every policy in this file is one the Controller takes\nstdout:\n%s\nstderr:\n%s",
+			res.ExitCode, res.Stdout, res.Stderr)
+	}
+	for _, name := range []string{"A blocked path", "B out to the internet"} {
+		if !r.hasPolicyNamed(t, name) {
+			t.Errorf("apply did not create %q:\n%s", name, res.Stdout)
+		}
+	}
+
+	if next := planFirewall(t, r, body); next.ExitCode != exitNoChanges {
+		t.Errorf("the plan after the apply exited %d, want %d — the firewall does not match the file it was applied from:\n%s",
+			next.ExitCode, exitNoChanges, next.Stdout)
 	}
 }
 
@@ -1039,7 +1189,7 @@ func TestUpdatingAPolicyToAnOpenVerdictAsksForTheReturnRule(t *testing.T) {
 	r := startReplay(t)
 	// A policy created blocking, which is how the Controller records one that
 	// never asked for a companion (ADR-0022) — issue #40's second table row.
-	r.seedPolicy(t, "Was Shut", "BLOCK", "Internal", "External", map[string]any{
+	r.seedPolicy(t, "Was Shut", "BLOCK", "Internal", "Dmz", map[string]any{
 		"create_allow_respond": false,
 	})
 
@@ -1047,7 +1197,7 @@ func TestUpdatingAPolicyToAnOpenVerdictAsksForTheReturnRule(t *testing.T) {
   - name: Was Shut
     action: allow
     source: Internal
-    destination: External
+    destination: Dmz
 `)
 
 	sent := r.onlyPolicyWrite(t)
@@ -1119,7 +1269,7 @@ func TestPlanSaysTheControllerWillMakeTheReturnRuleForAnAllowPolicy(t *testing.T
   - name: Let them answer
     action: allow
     source: Internal
-    destination: External
+    destination: Dmz
 `)
 	stdout := string(res.Stdout)
 	for _, fragment := range []string{`+ firewall-policy "Let them answer"`, "Let them answer (Return)", "reply"} {
@@ -1186,7 +1336,7 @@ func TestPlanSaysTheReturnRuleGoesWhenAPolicyStopsAllowing(t *testing.T) {
 // had if the config had built it from nothing.
 func TestPlanSaysTheReturnRuleArrivesWhenAPolicyStartsAllowing(t *testing.T) {
 	r := startReplay(t)
-	r.seedPolicy(t, "Was Shut", "BLOCK", "Internal", "External", map[string]any{
+	r.seedPolicy(t, "Was Shut", "BLOCK", "Internal", "Dmz", map[string]any{
 		"create_allow_respond": false,
 	})
 
@@ -1194,7 +1344,7 @@ func TestPlanSaysTheReturnRuleArrivesWhenAPolicyStartsAllowing(t *testing.T) {
   - name: Was Shut
     action: allow
     source: Internal
-    destination: External
+    destination: Dmz
 `)
 	stdout := string(res.Stdout)
 	for _, fragment := range []string{`~ firewall-policy "Was Shut"`, "return-rule", `"Was Shut (Return)"`} {
@@ -1214,7 +1364,7 @@ func TestPlanSaysTheReturnRuleArrivesWhenAPolicyStartsAllowing(t *testing.T) {
 // clean here. It is not clean any more, and applying it converges the two.
 func TestPlanSaysTheReturnRuleIsMissingWhenNothingElseDiffers(t *testing.T) {
 	r := startReplay(t)
-	r.seedPolicy(t, "Open No Companion", "ALLOW", "Internal", "External", map[string]any{
+	r.seedPolicy(t, "Open No Companion", "ALLOW", "Internal", "Dmz", map[string]any{
 		"create_allow_respond": false,
 	})
 
@@ -1222,7 +1372,7 @@ func TestPlanSaysTheReturnRuleIsMissingWhenNothingElseDiffers(t *testing.T) {
   - name: Open No Companion
     action: allow
     source: Internal
-    destination: External
+    destination: Dmz
 `)
 	if res.ExitCode != exitChangesPending {
 		t.Fatalf("plan exited %d, want %d — a policy allowing without its companion is a change:\n%s",
@@ -1251,7 +1401,7 @@ func TestTheSameConfigGivesTheSameFirewallWhateverThePolicysHistory(t *testing.T
   - name: Let them answer
     action: allow
     source: Internal
-    destination: External
+    destination: Dmz
 `
 	companion := "Let them answer (Return)"
 
@@ -1265,7 +1415,7 @@ func TestTheSameConfigGivesTheSameFirewallWhateverThePolicysHistory(t *testing.T
 
 	t.Run("created blocking, then allowed", func(t *testing.T) {
 		r := startReplay(t)
-		r.seedPolicy(t, "Let them answer", "BLOCK", "Internal", "External", map[string]any{
+		r.seedPolicy(t, "Let them answer", "BLOCK", "Internal", "Dmz", map[string]any{
 			"create_allow_respond": false,
 		})
 		applyFirewall(t, r, body)
@@ -1589,17 +1739,17 @@ func TestPruneSparesAPolicyItHasNoIdToDelete(t *testing.T) {
 // restores it, and neither plan says the two are about the same object.
 func TestPruneSparesTheReturnRuleExportStoppedWriting(t *testing.T) {
 	r := startReplay(t)
-	r.seedPolicy(t, "Was Open", "ALLOW", "Internal", "External", nil)
-	r.seedUnmarkedReturnRule(t, "Was Open (Return)", "External", "Internal")
+	r.seedPolicy(t, "Was Open", "ALLOW", "Internal", "Dmz", nil)
+	r.seedUnmarkedReturnRule(t, "Was Open (Return)", "Dmz", "Internal")
 	// A policy prune really does delete, so that the companion is spared on
 	// purpose rather than because the prune never ran.
-	r.seedPolicy(t, "Mine", "ALLOW", "Internal", "External", nil)
+	r.seedPolicy(t, "Mine", "ALLOW", "Internal", "Dmz", nil)
 
 	res := applyFirewall(t, r, `firewall-policies:
   - name: Was Open
     action: allow
     source: Internal
-    destination: External
+    destination: Dmz
 `, "--prune")
 
 	stdout := string(res.Stdout)
@@ -2124,7 +2274,7 @@ func TestExportWritesAPolicyAndNotTheReturnRuleBesideIt(t *testing.T) {
   - name: Let them answer
     action: allow
     source: Internal
-    destination: External
+    destination: Dmz
 `
 	// Every policy the recording holds is one the Controller generates, so this
 	// is what the notice should still say after unifig has added a policy of the

@@ -68,6 +68,47 @@ var blockingActions = map[string]bool{"block": true, "reject": true}
 // ships a fourth verdict is covered here and would have to be added there.
 func opensAPath(action string) bool { return action == "allow" }
 
+// asksForReturnRule is whether unifig requests the companion return rule for a
+// policy, and it is the one place that decides. The create, the update and the
+// plan all go through it so that what the plan promises, what a create asks for
+// and what an update writes cannot come to mean different things — the same
+// reason `plan --prune` and `apply --prune` share options().
+//
+// Two conditions, measured a week apart on the same live migrated UDR on
+// Network 10.5.67, and neither inferable from the other:
+//
+// The verdict has to open a path. The Controller refuses the request beside any
+// verdict that closes one, because there is no traffic to return (ADR-0022).
+//
+// The destination has to be a zone other than External. The Controller refuses
+// the request for a policy into the internet with the very same message, and
+// this one cost an operator a half-applied firewall to find: every `→ internet`
+// allow in a config is a create unifig could not make (ADR-0030). Return traffic
+// on that path is the gateway's own to keep track of, so there is nothing for a
+// companion policy to do and the Controller declines to make one — it takes the
+// same allow without the request and generates nothing.
+//
+// Its counterpart is the plan's: a policy this returns false for is one whose
+// change must not promise a companion, which is why returnRuleNote and
+// returnRuleField ask it rather than asking the verdict.
+func asksForReturnRule(desired config.FirewallPolicy, facts zoneFacts) bool {
+	return opensAPath(desired.Action) && !intoExternal(desired, facts)
+}
+
+// intoExternal is whether a policy's destination is the zone the Controller
+// stands the internet up as, found by the Controller's own `zone_key` rather
+// than by the name "External" — the same reading, and for the same reason, as
+// the gateway zone a Risky change turns on (ADR-0018).
+//
+// Unknown facts mean unifig asks for the companion, which is what it did before
+// any of this was known. That is the conservative end on purpose: the Controller
+// answering the request with a 400 names the policy and stops the apply, where
+// silently not asking would leave an allow policy without the companion its
+// neighbours have and say nothing.
+func intoExternal(desired config.FirewallPolicy, facts zoneFacts) bool {
+	return facts.known && facts.external != "" && desired.Destination == facts.external
+}
+
 var storedActions = map[string]string{
 	"allow":  "ALLOW",
 	"block":  "BLOCK",
@@ -754,13 +795,13 @@ func createFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts, bound 
 		Action: Create,
 		Kind:   FirewallPolicy,
 		Name:   desired.Name,
-		Fields: setPolicyFields(desired),
+		Fields: setPolicyFields(desired, facts),
 		Risk:   risk,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// Read at the moment of writing rather than the moment of planning:
 			// either zone may have been created by a change earlier in this very
 			// apply.
-			policy := newFirewallPolicy(desired)
+			policy := newFirewallPolicy(desired, facts)
 			if err := overwriteManagedPolicy(&policy, desired, bound); err != nil {
 				return err
 			}
@@ -785,7 +826,7 @@ func updateFirewallPolicy(
 	// asked of the live collection rather than of the policy's own
 	// `create_allow_respond`, for the reason returnRuleField gives: the flag is
 	// the request, and the companion is what an operator has.
-	fields := changedPolicyFields(current, desired, live.CreateAllowRespond, held[returnRuleName(live.Name)])
+	fields := changedPolicyFields(current, desired, facts, live.CreateAllowRespond, held[returnRuleName(live.Name)])
 	if len(fields) == 0 {
 		return Change{}, false
 	}
@@ -831,7 +872,7 @@ func updateFirewallPolicy(
 			// an operator had narrowed it to, in the same request and without
 			// saying so (ADR-0021, issue #35). So the object that goes back is
 			// the one the Controller sent.
-			return mergeIntoStoredPolicy(ctx, client, site, live.ID, desired, bound)
+			return mergeIntoStoredPolicy(ctx, client, site, live.ID, desired, facts, bound)
 		},
 	}, true
 }
@@ -991,9 +1032,9 @@ func deleteFirewallPolicy(live unifi.FirewallZonePolicy, bound bindings) Change 
 // setPolicyFields lists what a create would set. All three are always listed,
 // because the schema requires all three: there is no such thing as a policy the
 // config states only part of.
-func setPolicyFields(desired config.FirewallPolicy) []Field {
+func setPolicyFields(desired config.FirewallPolicy, facts zoneFacts) []Field {
 	return []Field{
-		{Name: "action", To: desired.Action, Notes: returnRuleNote(desired)},
+		{Name: "action", To: desired.Action, Notes: returnRuleNote(desired, facts)},
 		{Name: "source", To: desired.Source},
 		{Name: "destination", To: desired.Destination},
 	}
@@ -1011,10 +1052,14 @@ func setPolicyFields(desired config.FirewallPolicy) []Field {
 // companion, which is what makes this the plan describing a consequence rather
 // than a coincidence.
 //
-// It is on the verdict because the verdict decides it. The Controller refuses
-// the request outright on a policy that blocks, so there is no second policy to
-// announce and a blocking create carries no note — the one case where saying
-// nothing is the true statement.
+// It asks asksForReturnRule rather than the verdict, because the verdict is only
+// half of what decides. The Controller refuses the request outright on a policy
+// that blocks, so there is no second policy to announce; it refuses it just the
+// same on an allow into the External zone (ADR-0030), where the note would be
+// promising an operator a policy that is never going to appear. Both are cases
+// where saying nothing is the true statement, and ADR-0014's standard — a plan
+// is a statement about what will happen — is why the note has to know about the
+// second one rather than only the create.
 //
 // A note rather than a Change of its own, on ADR-0010's distinction: unifig does
 // not create the companion, cannot name it in a config file, and will not be the
@@ -1025,8 +1070,8 @@ func setPolicyFields(desired config.FirewallPolicy) []Field {
 // It is one statement because a create is one story: unifig decides the request,
 // so it knows the answer. The update path is three, and they are next door in
 // returnRuleUpdateNote.
-func returnRuleNote(desired config.FirewallPolicy) []string {
-	if !opensAPath(desired.Action) {
+func returnRuleNote(desired config.FirewallPolicy, facts zoneFacts) []string {
+	if !asksForReturnRule(desired, facts) {
 		return nil
 	}
 	return []string{fmt.Sprintf(
@@ -1119,8 +1164,12 @@ const returnRuleSuffix = " (Return)"
 // Empty when the two ends agree, which is the ordinary case: a policy that
 // allowed and still allows keeps its companion, and a plan does not mention what
 // is not moving.
-func returnRuleField(desired config.FirewallPolicy, requested, companionHeld bool) (Field, bool) {
-	want := opensAPath(desired.Action)
+func returnRuleField(
+	desired config.FirewallPolicy,
+	facts zoneFacts,
+	requested, companionHeld bool,
+) (Field, bool) {
+	want := asksForReturnRule(desired, facts)
 	// Nothing for unifig to write: the request the Controller is holding already
 	// says what the verdict says. This is what keeps an exported firewall
 	// planning clean — the fifty-two shipped `ALLOW` policies carry the flag
@@ -1160,7 +1209,11 @@ func returnRuleField(desired config.FirewallPolicy, requested, companionHeld boo
 // optional field is treated everywhere else — and it is the same rule
 // underneath. Omission means unmanaged, and the schema lets none of these be
 // omitted, so a policy in the config always states its verdict and both ends.
-func changedPolicyFields(current, desired config.FirewallPolicy, requested, companionHeld bool) []Field {
+func changedPolicyFields(
+	current, desired config.FirewallPolicy,
+	facts zoneFacts,
+	requested, companionHeld bool,
+) []Field {
 	fields := make([]Field, 0, 4)
 	if current.Action != desired.Action {
 		fields = append(fields, Field{Name: "action", From: text(current.Action), To: desired.Action})
@@ -1177,7 +1230,7 @@ func changedPolicyFields(current, desired config.FirewallPolicy, requested, comp
 	// decides whether one is. An update runs when they disagree, which is what
 	// makes a policy left at `allow` without a companion something unifig can
 	// put right rather than only describe (ADR-0026).
-	if field, differs := returnRuleField(desired, requested, companionHeld); differs {
+	if field, differs := returnRuleField(desired, facts, requested, companionHeld); differs {
 		fields = append(fields, field)
 	}
 	return fields
@@ -1268,6 +1321,7 @@ func mergeIntoStoredPolicy(
 	client unifi.Client,
 	site, id string,
 	desired config.FirewallPolicy,
+	facts zoneFacts,
 	bound bindings,
 ) error {
 	stored, err := readStoredPolicy(ctx, client, site, id)
@@ -1275,7 +1329,7 @@ func mergeIntoStoredPolicy(
 		return err
 	}
 	stored.dropMarkers()
-	if err := stored.overwriteManaged(desired, bound); err != nil {
+	if err := stored.overwriteManaged(desired, facts, bound); err != nil {
 		return err
 	}
 	return client.Put(ctx, policyPath(site, id), stored, nil)
@@ -1350,7 +1404,7 @@ func (p storedPolicy) id() string {
 // The fifth is `create_allow_respond`, which unifig does own and which is not a
 // line of the config: it is the verdict, restated as the request the Controller
 // acts on. See setReturnRuleRequest.
-func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, bound bindings) error {
+func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, facts zoneFacts, bound bindings) error {
 	source, err := bound.zoneID(desired.Source)
 	if err != nil {
 		return err
@@ -1372,7 +1426,7 @@ func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, bound bind
 	if err := p.setZone("destination", destination); err != nil {
 		return err
 	}
-	return p.setReturnRuleRequest(desired)
+	return p.setReturnRuleRequest(desired, facts)
 }
 
 // setReturnRuleRequest writes the request for the companion return rule to match
@@ -1407,8 +1461,8 @@ func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, bound bind
 // a field is writing a Go zero onto something the operator set and unifig does
 // not model, while this is a field unifig now states on purpose, on every create
 // already, and every policy either site holds carries it.
-func (p storedPolicy) setReturnRuleRequest(desired config.FirewallPolicy) error {
-	return p.set("create_allow_respond", opensAPath(desired.Action))
+func (p storedPolicy) setReturnRuleRequest(desired config.FirewallPolicy, facts zoneFacts) error {
+	return p.set("create_allow_respond", asksForReturnRule(desired, facts))
 }
 
 // set writes one field of a stored policy.
@@ -1510,7 +1564,7 @@ func (p storedPolicy) dropMarkers() {
 // port, a client or an evening keeps that forever, because an update merges into
 // the object the Controller sent and writes only the same four values
 // (mergeIntoStoredPolicy, ADR-0021).
-func newFirewallPolicy(desired config.FirewallPolicy) unifi.FirewallZonePolicy {
+func newFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts) unifi.FirewallZonePolicy {
 	return unifi.FirewallZonePolicy{
 		Enabled:             true,
 		Protocol:            "all",
@@ -1526,16 +1580,15 @@ func newFirewallPolicy(desired config.FirewallPolicy) unifi.FirewallZonePolicy {
 		// which is what makes this the cause rather than a correlation. Deleting
 		// the parent took the companion with it (issue #36, ADR-0022).
 		//
-		// It is asked for on an allow and not otherwise, because the Controller
-		// refuses the pair. A create of a `block` policy carrying it true is a
-		// 400, `Firewall policy create respond traffic not allowed`, which fails
-		// the whole apply — measured in the same session, and the reason
-		// `newFirewallPolicy` had to learn what verdict it is building for. A
-		// `reject` was never sent, since the apply stopped at the block; it goes
-		// out false with every other non-allow verdict, which is what unifig sent
-		// on everything it created before any of this and what the Controller has
-		// always taken.
-		CreateAllowRespond: opensAPath(desired.Action),
+		// Whether it is asked for at all is asksForReturnRule's, and there are two
+		// conditions rather than one. A create of a `block` policy carrying it
+		// true is a 400, `Firewall policy create respond traffic not allowed`,
+		// which fails the whole apply — measured in the same session, and the
+		// reason `newFirewallPolicy` had to learn what verdict it is building for.
+		// So is a create of an `allow` policy whose destination is the External
+		// zone, with the identical message and a week later (ADR-0030) — which is
+		// the reason it had to learn the ends too, and why this takes the facts.
+		CreateAllowRespond: asksForReturnRule(desired, facts),
 		// The Controller rejects a policy with no schedule outright, so this is
 		// less a default than a field with one permitted value at creation. It
 		// is not parity either: all eighty-six policies the recording holds
