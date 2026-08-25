@@ -206,7 +206,8 @@ plan as no change, and it can only do that by comparing against the live value.
   every other export notice keeps. Filed as **issue #52**, and it must not stay
   open long: `all` beside a specific port is now a shape the Controller will hand
   back and `validate` will reject, so export could otherwise write a file it
-  cannot read.
+  cannot read. Closed by **ADR-0032**, which keeps the entry and counts the
+  omission.
 - The update path's promise that "the schedule, **the port and address matching**,
   the logging switch and everything else an operator set in the UI survive" is
   now conditional, and the comment saying it has been amended. Port matching

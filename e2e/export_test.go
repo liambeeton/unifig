@@ -33,11 +33,30 @@ type exportedZone struct {
 	Networks *[]string `yaml:"networks"`
 }
 
+// exportedFirewallPolicy is one policy as export writes it, narrowing and all.
+// The ports are strings because that is what the config says they are — a port
+// or an inclusive `low-high` range — and absent where the entry states none,
+// which is the whole of what a policy whose narrowing unifig has no words for
+// looks like in the file (ADR-0032).
 type exportedFirewallPolicy struct {
-	Name        string `yaml:"name"`
-	Action      string `yaml:"action"`
-	Source      string `yaml:"source"`
-	Destination string `yaml:"destination"`
+	Name        string   `yaml:"name"`
+	Action      string   `yaml:"action"`
+	Source      string   `yaml:"source"`
+	Destination string   `yaml:"destination"`
+	Protocol    string   `yaml:"protocol"`
+	Ports       []string `yaml:"ports"`
+}
+
+// same is equality for one of those. It is a method rather than `==` because the
+// ports are a list, and it is here rather than at a call site because what makes
+// two exported policies the same entry is a property of the shape.
+func (p exportedFirewallPolicy) same(other exportedFirewallPolicy) bool {
+	return p.Name == other.Name &&
+		p.Action == other.Action &&
+		p.Source == other.Source &&
+		p.Destination == other.Destination &&
+		p.Protocol == other.Protocol &&
+		slices.Equal(p.Ports, other.Ports)
 }
 
 type exportedNetwork struct {

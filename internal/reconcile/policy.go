@@ -56,13 +56,25 @@ const gatewayRisk = "the Controller answers in the Gateway zone, and blocking tr
 var blockingActions = map[string]bool{"block": true, "reject": true}
 
 // specificPorts and anyPorts are the Controller's two port-matching modes that
-// unifig understands. There is a third, OBJECT, which points at a port group —
-// unifig neither writes it nor has a word for it, and a policy carrying one
-// reads back with an unmanaged narrowing.
+// unifig understands. There is a third, portGroup, which points at a port group
+// — unifig neither writes it nor has a word for it, and a policy carrying one
+// reads back with an unmanaged narrowing that export counts rather than
+// describes (ADR-0032).
 const (
 	specificPorts = "SPECIFIC"
 	anyPorts      = "ANY"
+	portGroup     = "OBJECT"
 )
+
+// anyMatch is the Controller's word for an end that matches on the zone there
+// and nothing more, which is every end unifig writes.
+//
+// It is the same string as anyPorts and a different field's answer: that one is
+// one of the port-matching modes unifig writes, this one is a `matching_target`
+// unifig only ever reads. A constant standing for both would be one place saying
+// two things, and the day the Controller spells one of them differently is the
+// day that costs an hour.
+const anyMatch = "ANY"
 
 // policyProtocols are the six of the Controller's thirty-seven that unifig
 // models, spelled exactly as the Controller spells them.
@@ -772,10 +784,12 @@ func unshadowed(sharing []unifi.FirewallZonePolicy) []unifi.FirewallZonePolicy {
 // unaccountedFor. It is a count rather than a list because a migrated router
 // ships eighty-six of these under names it reuses across them, and the notice
 // nobody reads protects nobody (ADR-0012, ADR-0028).
-func projectFirewallPolicies(ctx context.Context, client unifi.Client, site string, bound bindings) ([]config.FirewallPolicy, []string, int, error) {
+func projectFirewallPolicies(ctx context.Context, client unifi.Client, site string, bound bindings) (
+	policies []config.FirewallPolicy, indescribable []string, unaccounted, partial int, err error,
+) {
 	live, err := listFirewallPolicies(ctx, client, site)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
 	// Export matches too, in the sense that matters here: a file describing two
 	// policies unifig cannot tell apart is a file it cannot plan afterwards. It
@@ -783,11 +797,10 @@ func projectFirewallPolicies(ctx context.Context, client unifi.Client, site stri
 	// policy, below — and it asks for both anyway, because the refusal a second
 	// function computed would be one that could disagree with the plan's.
 	if _, err := policiesByKey(live, bound); err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
 
-	policies := make([]config.FirewallPolicy, 0, len(live))
-	var indescribable []string
+	policies = make([]config.FirewallPolicy, 0, len(live))
 	var left []unifi.FirewallZonePolicy
 	for _, policy := range live {
 		if generated(policy) || returnRule(policy) {
@@ -799,7 +812,10 @@ func projectFirewallPolicies(ctx context.Context, client unifi.Client, site stri
 			indescribable = append(indescribable, policy.Name)
 			continue
 		}
-		policies = append(policies, quietWideNarrowing(described))
+		if narrowedBeyondTheConfig(policy) {
+			partial++
+		}
+		policies = append(policies, quietWideNarrowing(quietInvertedMatch(described, policy)))
 	}
 	slices.SortFunc(policies, func(a, b config.FirewallPolicy) int { return strings.Compare(a.Name, b.Name) })
 	slices.Sort(indescribable)
@@ -814,7 +830,7 @@ func projectFirewallPolicies(ctx context.Context, client unifi.Client, site stri
 	if len(policies) == 0 {
 		policies = nil
 	}
-	return policies, indescribable, unaccountedFor(left, writtenPolicyNames(policies)), nil
+	return policies, indescribable, unaccountedFor(left, writtenPolicyNames(policies)), partial, nil
 }
 
 // unaccountedFor is how many of the policies export left out the notice has to
@@ -927,8 +943,10 @@ func statedProtocol(policy unifi.FirewallZonePolicy) string {
 // was measured being accepted and stored, and an entry repeating it back is one
 // `validate` would reject, so export would be writing a file it could not read.
 //
-// All three come out as an unmanaged narrowing, which is honest. What none of
-// them do yet is say so out loud — that is issue #52.
+// All three come out as an unmanaged narrowing, which is honest. Saying so out
+// loud is narrowedBeyondTheConfig's job, and it asks this function rather than
+// reading the fields again, so that what the entry states and what the notice
+// speaks for cannot come apart.
 func statedPorts(policy unifi.FirewallZonePolicy) []config.Port {
 	destination := policy.Destination
 	if destination.PortMatchingType != specificPorts || destination.Port == "" {
@@ -939,6 +957,109 @@ func statedPorts(policy unifi.FirewallZonePolicy) []config.Port {
 	}
 	return splitPorts(destination.Port)
 }
+
+// narrowedBeyondTheConfig is whether the Controller holds this policy narrowed
+// by something the entry export writes for it does not state — the count behind
+// export's partial-narrowing notice (ADR-0032, issue #52).
+//
+// **It is asked of the live policy rather than of the entry**, because the
+// shapes it catches are invisible in the entry: a policy narrowed to a port
+// group and a policy narrowed to nothing at all write the same three lines. That
+// is the whole defect. A file that came back short is supposed to say so, which
+// is the promise every other export notice keeps, and this is the one place the
+// firewall was quietly not keeping it — ADR-0031 made it sharper by putting a
+// combination on the wire (`all` beside a specific port) that unifig will not
+// write back.
+//
+// **The reading is per end and per mode rather than per field.** The Controller
+// narrows a policy in five places — the protocol, the two ends' ports and the
+// two ends' matching targets — and each mode is read together with what it points
+// at, because a mode with nothing under it narrows nothing. Asking the modes
+// catches the address lists, MAC lists, app ids and regions that hang off them
+// without unifig keeping a list of the Controller's matching engines: a list like
+// that fails by going quiet, which is the argument ADR-0005 and ADR-0018 have
+// each already made about a different list.
+//
+// **The inversions are read beside the thing they invert**, for that same
+// reason and one of their own: `match_opposite_protocol` and the two
+// `match_opposite_ports` are plain bools with no `omitempty`, so they are on the
+// wire of every policy the Controller sends and a notice reading one alone would
+// speak for an omission that is not there. The address and network inversions
+// are not read at all, and need not be — they mean something only beside a
+// matching target of IP or NETWORK, and every target but ANY already counts.
+//
+// **It says nothing about the plan**, deliberately. An entry stating no
+// narrowing manages none (ADR-0004), so a policy this counts still plans clean,
+// which is what makes writing it the right call rather than dropping it the way
+// export drops a port forward whose ports it cannot describe.
+func narrowedBeyondTheConfig(policy unifi.FirewallZonePolicy) bool {
+	// The protocol, and the two ways it goes unsaid. One outside the six unifig
+	// models reads back as an entry stating none, which is unmanaged and true and
+	// indistinguishable from a policy that narrows nothing at all; an inverted
+	// one names the protocols the policy does *not* match, which the entry has no
+	// way to say. Both are asked beside the protocol itself, because a policy
+	// carrying none has nothing there to leave unsaid — and an inverted `all` is
+	// counted rather than excused, since a policy matching everything-but-all
+	// matches nothing and the entry would claim the opposite.
+	if policy.Protocol != "" && (statedProtocol(policy) == "" || policy.MatchOppositeProtocol) {
+		return true
+	}
+	// The destination's ports, and the two ways those go unsaid. The entry could
+	// not carry them — a port group, or ports beside a protocol that has none,
+	// which is what statedPorts already decides — or the Controller inverted
+	// them, and an entry repeating a value that names the traffic the policy does
+	// not match would say the opposite of what the Controller holds (which is why
+	// export drops it as well as counting it, see quietInvertedMatch).
+	destination := policy.Destination
+	if narrowsPorts(destination.PortMatchingType, destination.Port, destination.PortGroupID) &&
+		(destination.MatchOppositePorts || statedPorts(policy) == nil) {
+		return true
+	}
+	// The source end, all of it and its inversion with it: the config states the
+	// destination end only (ADR-0031), so any port narrowing here is one with no
+	// field to go in.
+	source := policy.Source
+	if narrowsPorts(source.PortMatchingType, source.Port, source.PortGroupID) {
+		return true
+	}
+	return narrowsTarget(destination.MatchingTarget) || narrowsTarget(source.MatchingTarget)
+}
+
+// narrowsPorts is whether an end's port matching narrows anything at all.
+//
+// It reads the mode together with what the mode points at, rather than the mode
+// alone, because an end in a port-matching mode holding nothing narrows nothing
+// — a shape nobody has read off a router, and one a notice would otherwise
+// speak for. Anything outside the three modes counts whatever it holds: a
+// firmware unifig has not met is exactly the case the notice exists for.
+func narrowsPorts(matching, port, group string) bool {
+	switch matching {
+	case "", anyPorts:
+		return false
+	case specificPorts:
+		return port != ""
+	case portGroup:
+		return group != ""
+	default:
+		return true
+	}
+}
+
+// narrowsTarget is whether an end matches on something other than the zone at
+// that end — an application, a category, a region, a domain, an address, a
+// network, a MAC.
+//
+// Every value but the Controller's own ANY, rather than the four its UI offers,
+// for the reason narrowedBeyondTheConfig gives: a list of matching engines is a
+// list that fails by going quiet, and its failure here is a policy narrowed by
+// next year's engine exporting as one narrowed by nothing.
+//
+// An absent field goes with ANY rather than with the rest, which is narrowsPorts'
+// reading of an absent mode and needs saying here because the field is
+// `omitempty`: every one of the 86 policies in the recording carries a target,
+// so an end without one is an end the Controller said nothing about rather than
+// one it narrowed by something with no name.
+func narrowsTarget(target string) bool { return target != "" && target != anyMatch }
 
 // createFirewallPolicy is the Change for a policy the Controller does not have.
 //
@@ -1952,12 +2073,12 @@ func newFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts) unifi.Fir
 		// no operator's value to write over.
 		Schedule: unifi.FirewallZonePolicySchedule{Mode: "ALWAYS", TimeAllDay: true},
 		Source: unifi.FirewallZonePolicySource{
-			MatchingTarget:   "ANY",
-			PortMatchingType: "ANY",
+			MatchingTarget:   anyMatch,
+			PortMatchingType: anyPorts,
 		},
 		Destination: unifi.FirewallZonePolicyDestination{
-			MatchingTarget:   "ANY",
-			PortMatchingType: "ANY",
+			MatchingTarget:   anyMatch,
+			PortMatchingType: anyPorts,
 		},
 	}
 }
@@ -1979,6 +2100,34 @@ func newFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts) unifi.Fir
 func quietWideNarrowing(described config.FirewallPolicy) config.FirewallPolicy {
 	if described.Protocol == "all" && len(described.Ports) == 0 {
 		described.Protocol = ""
+	}
+	return described
+}
+
+// quietInvertedMatch drops from an exported entry a narrowing the Controller has
+// inverted: `match_opposite_ports` on the destination, `match_opposite_protocol`
+// on the policy.
+//
+// The value beside one of those flags names the traffic the policy does *not*
+// match, so `ports: [53]` written off an inverted policy would be the file
+// saying the opposite of what the Controller holds — worse than the omission
+// this whole notice is about, and the one shape where writing the narrowing is
+// less honest than leaving it out. Left out, the entry states no narrowing,
+// which manages none, which is true (ADR-0004).
+//
+// **The planner is deliberately left as it was**, which is why this is export's
+// and not statedPorts'. A file that states the inverted value plans as no change
+// today, and would plan as a perpetual update if the projection dropped it for
+// both readers, because an update writing the ports back leaves the inversion
+// where it is. Neither is a decision this notice needed to make, and issue #52
+// scoped the plan side out by name.
+func quietInvertedMatch(described config.FirewallPolicy, live unifi.FirewallZonePolicy) config.FirewallPolicy {
+	if live.Destination.MatchOppositePorts {
+		described.Ports = nil
+	}
+	if live.MatchOppositeProtocol {
+		described.Protocol = ""
+		described.Ports = nil
 	}
 	return described
 }

@@ -393,6 +393,66 @@ func TestNoGeneratedPoliciesMeansNoNotice(t *testing.T) {
 	}
 }
 
+// A policy narrowed by something unifig has no words for is in the file — it is
+// still a name, a verdict and a pair of zones, which is what a plan could act on
+// — and the notice is what stops the entry reading as the whole truth about what
+// the policy matches (ADR-0032).
+func TestThePartialNarrowingNoticeCountsThemAndSaysWhatItLeftOut(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WritePartialPolicies(&notice, 2); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+
+	written := notice.String()
+	for _, fragment := range []string{
+		"2 firewall policies",
+		// What was left out, in the shapes an operator can go and look at.
+		"port group",
+		"inverted",
+		"source",
+		// And what unifig will do about it, which is nothing.
+		"leaves the rest of the matching exactly as it is",
+	} {
+		if !strings.Contains(written, fragment) {
+			t.Errorf("the notice should mention %q, got:\n%s", fragment, written)
+		}
+	}
+}
+
+// It counts where the notices above it name, on WriteGeneratedPolicies'
+// reasoning: a paragraph of quoted policy names is what teaches an operator to
+// read past the notices around it, and a policy's name is not its key, so the
+// quoted list would not even identify one (ADR-0012, ADR-0028).
+func TestThePartialNarrowingNoticeNamesNoneOfThem(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WritePartialPolicies(&notice, 3); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+	if strings.Contains(notice.String(), `"`) {
+		t.Errorf("the notice quotes a policy name where it should give a count, got:\n%s", notice.String())
+	}
+}
+
+func TestOnePartiallyNarrowedPolicyIsCountedInTheSingular(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WritePartialPolicies(&notice, 1); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+	if !strings.Contains(notice.String(), "1 firewall policy narrowed by") {
+		t.Errorf("the notice should count one in the singular, got:\n%s", notice.String())
+	}
+}
+
+func TestNoPartiallyNarrowedPoliciesMeansNoNotice(t *testing.T) {
+	var notice strings.Builder
+	if err := export.WritePartialPolicies(&notice, 0); err != nil {
+		t.Fatalf("writing the notice: %v", err)
+	}
+	if notice.Len() != 0 {
+		t.Errorf("a site whose every narrowing the file states should say nothing, got:\n%s", notice.String())
+	}
+}
+
 // The whole point, stated on its own: after redaction the secret is not in the
 // document anywhere.
 func TestNoSecretSurvivesRedaction(t *testing.T) {

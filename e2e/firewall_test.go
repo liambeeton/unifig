@@ -2255,7 +2255,7 @@ func TestExportStillWritesAPolicyTheControllerReallyStores(t *testing.T) {
 	}
 	if want := (exportedFirewallPolicy{
 		Name: "Mine", Action: "block", Source: "Internal", Destination: "External",
-	}); cfg.FirewallPolicies[0] != want {
+	}); !cfg.FirewallPolicies[0].same(want) {
 		t.Errorf("the exported policy is %+v, want %+v", cfg.FirewallPolicies[0], want)
 	}
 }
@@ -3263,7 +3263,7 @@ func TestExportWritesTheStoredPolicyAndStillLeavesOutTheGeneratedOneItShadows(t 
 	}
 	if want := (exportedFirewallPolicy{
 		Name: "Allow All Traffic", Action: "allow", Source: "Dmz", Destination: "Dmz",
-	}); cfg.FirewallPolicies[0] != want {
+	}); !cfg.FirewallPolicies[0].same(want) {
 		t.Errorf("the exported policy is %+v, want %+v", cfg.FirewallPolicies[0], want)
 	}
 	// The shadowed policy is left out and counted like every other one the
@@ -3445,18 +3445,12 @@ func TestTheRecordedPoliciesCarryTheIdShapeTheControllerReturns(t *testing.T) {
 // puts there is the part a test cannot invent.
 func narrowedTo(t *testing.T, r *replay, zone, protocol, port string) map[string]any {
 	t.Helper()
-	destination, _ := r.zoneNamed(t, zone)["_id"].(string)
-	if destination == "" {
-		t.Fatalf("the recording has no zone named %q to narrow a policy towards", zone)
-	}
 	return map[string]any{
 		"protocol": protocol,
-		"destination": map[string]any{
-			"zone_id":            destination,
-			"matching_target":    "ANY",
+		"destination": endOn(t, r, zone, map[string]any{
 			"port_matching_type": "SPECIFIC",
 			"port":               port,
-		},
+		}),
 	}
 }
 
@@ -3699,5 +3693,332 @@ func TestANarrowedBlockToTheGatewayIsStillARiskyChange(t *testing.T) {
 	stdout := string(res.Stdout)
 	if !strings.Contains(stdout, "! ") || !strings.Contains(stdout, riskOfBlockingTheGateway) {
 		t.Errorf("a policy closing the gateway is Risky however narrow it is:\n%s", stdout)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A narrowing unifig has no words for (ADR-0032, issue #52).
+//
+// The other half of ADR-0031. A policy the Controller holds narrowed by
+// something the config cannot state — a port group, an inverted match, a source
+// port, an application target, a protocol outside the six — is still a name, a
+// verdict and a pair of zones, which is what `CONTEXT.md` says export's scope
+// is, so export writes it. The entry is true: an entry stating no narrowing
+// manages none, and the next plan is silent about it.
+//
+// What is not true is a file that came back short saying nothing about it, which
+// is the promise every other notice on this stderr keeps. So the policy goes in
+// the file and the omission goes in a count — deliberately not the
+// `WriteIndescribablePortForwards` treatment, which drops the whole object,
+// because a forward missing a port has nothing left worth writing and a policy
+// missing its narrowing has three of its four fields.
+
+// endOn is one end of a seeded policy: the zone the test names, matching
+// everything at it, with whatever narrowing the test is about laid over the top.
+//
+// The end has to be handed over whole because seedPolicy builds it, and the zone
+// id it puts there is the part a test cannot invent. It serves both ends — the
+// two are the same shape in the fields these tests set — so a test narrowing a
+// source states it the way a test narrowing a destination does.
+func endOn(t *testing.T, r *replay, zone string, narrowing map[string]any) map[string]any {
+	t.Helper()
+	id, _ := r.zoneNamed(t, zone)["_id"].(string)
+	if id == "" {
+		t.Fatalf("the recording has no zone named %q to put a policy's end on", zone)
+	}
+	end := map[string]any{"zone_id": id, "matching_target": "ANY"}
+	for field, value := range narrowing {
+		end[field] = value
+	}
+	return end
+}
+
+// unstatedNarrowing is the notice this section is about, in the singular.
+const unstatedNarrowing = "Wrote 1 firewall policy narrowed by something the config cannot state"
+
+// exportedPolicyNamed is the entry export wrote for one policy, and a failure
+// where it wrote none: every test here is about a policy that is *in* the file.
+func exportedPolicyNamed(t *testing.T, exported []byte, name string) exportedFirewallPolicy {
+	t.Helper()
+	for _, policy := range exportedYAML(t, exported).FirewallPolicies {
+		if policy.Name == name {
+			return policy
+		}
+	}
+	t.Fatalf("export left %q out of the file altogether:\n%s", name, exported)
+	return exportedFirewallPolicy{}
+}
+
+// The shape that matters most, because ADR-0031 is what made it reachable. `all`
+// beside a SPECIFIC port is a combination the live migrated UDR was measured
+// accepting and storing, and the one thing unifig refuses that the Controller
+// takes — so an entry repeating it back is a file `validate` rejects, and export
+// writing the policy without its port and saying nothing is a file that claims
+// the policy has no ports.
+func TestExportWritesAPolicyWhosePortsSitBesideAProtocolWithNoneAndCountsIt(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Wide and narrow", "ALLOW", "Internal", "Dmz", map[string]any{
+		"protocol":    "all",
+		"destination": endOn(t, r, "Dmz", map[string]any{"port_matching_type": "SPECIFIC", "port": "53"}),
+	})
+
+	exported := exportFirewall(t, r)
+
+	written := exportedPolicyNamed(t, exported.Stdout, "Wide and narrow")
+	if want := (exportedFirewallPolicy{
+		Name: "Wide and narrow", Action: "allow", Source: "Internal", Destination: "Dmz",
+	}); !written.same(want) {
+		t.Errorf("the exported policy is %+v, want %+v — a port beside `all` is a line validate would reject", written, want)
+	}
+	if !strings.Contains(string(exported.Stderr), unstatedNarrowing) {
+		t.Errorf("export said nothing about the port it could not write, looking for %q:\n%s",
+			unstatedNarrowing, exported.Stderr)
+	}
+
+	// And the file it wrote is a file that plans clean: an entry stating no
+	// narrowing manages none, so the port stays where the operator put it.
+	if res := planExportedConfig(t, r, exported.Stdout); res.ExitCode != exitNoChanges {
+		t.Fatalf("plan of a freshly exported config exited %d, want %d\nexported:\n%s\nplan:\n%s",
+			res.ExitCode, exitNoChanges, exported.Stdout, res.Stdout)
+	}
+}
+
+// A port group: the narrowing is a reference to a Controller object unifig does
+// not manage, so there is no name for the file to put in `ports:` — and the
+// protocol beside it is still written, because the entry says what it can.
+func TestExportWritesAPolicyNarrowedByAPortGroupAndCountsIt(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Ports by group", "ALLOW", "Internal", "Dmz", map[string]any{
+		"protocol": "tcp",
+		"destination": endOn(t, r, "Dmz", map[string]any{
+			"port_matching_type": "OBJECT",
+			"port_group_id":      "6613a1f0c4b2d90a5e1f7fff",
+		}),
+	})
+
+	exported := exportFirewall(t, r)
+
+	written := exportedPolicyNamed(t, exported.Stdout, "Ports by group")
+	if want := (exportedFirewallPolicy{
+		Name: "Ports by group", Action: "allow", Source: "Internal", Destination: "Dmz", Protocol: "tcp",
+	}); !written.same(want) {
+		t.Errorf("the exported policy is %+v, want %+v — the protocol is describable and the port group is not", written, want)
+	}
+	if !strings.Contains(string(exported.Stderr), unstatedNarrowing) {
+		t.Errorf("export said nothing about the port group, looking for %q:\n%s",
+			unstatedNarrowing, exported.Stderr)
+	}
+}
+
+// An inversion — "every port except these" — which unifig has no way to say and
+// which turns the ports beside it into their own opposite. This is the one shape
+// where writing the narrowing would be worse than leaving it out: the same
+// `ports:` list means the other half of the port space.
+func TestExportWritesAPolicyWithAnInvertedPortMatchAndCountsIt(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "All but DNS", "ALLOW", "Internal", "Dmz", map[string]any{
+		"protocol": "tcp",
+		"destination": endOn(t, r, "Dmz", map[string]any{
+			"port_matching_type":   "SPECIFIC",
+			"port":                 "53",
+			"match_opposite_ports": true,
+		}),
+	})
+
+	exported := exportFirewall(t, r)
+
+	written := exportedPolicyNamed(t, exported.Stdout, "All but DNS")
+	if len(written.Ports) != 0 {
+		t.Errorf("export wrote %v as the policy's ports, which is the set it does not match", written.Ports)
+	}
+	if !strings.Contains(string(exported.Stderr), unstatedNarrowing) {
+		t.Errorf("export said nothing about the inversion, looking for %q:\n%s",
+			unstatedNarrowing, exported.Stderr)
+	}
+
+	// Dropping the ports is not the same as inventing a difference: the entry
+	// states the protocol it can and no ports at all, which manages none, so the
+	// inversion stays exactly where the operator put it.
+	if res := planExportedConfig(t, r, exported.Stdout); res.ExitCode != exitNoChanges {
+		t.Fatalf("plan of a freshly exported config exited %d, want %d\nexported:\n%s\nplan:\n%s",
+			res.ExitCode, exitNoChanges, exported.Stdout, res.Stdout)
+	}
+}
+
+// A destination matched by application rather than by zone and port: a matching
+// engine of its own, and nothing the six protocols and a port list can describe.
+func TestExportWritesAPolicyMatchedOnAnApplicationAndCountsIt(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "No streaming", "BLOCK", "Internal", "External", map[string]any{
+		"destination": endOn(t, r, "External", map[string]any{
+			"matching_target": "APP",
+			"app_ids":         []any{4, 7},
+		}),
+	})
+
+	exported := exportFirewall(t, r)
+
+	exportedPolicyNamed(t, exported.Stdout, "No streaming")
+	if !strings.Contains(string(exported.Stderr), unstatedNarrowing) {
+		t.Errorf("export said nothing about the application matching, looking for %q:\n%s",
+			unstatedNarrowing, exported.Stderr)
+	}
+}
+
+// The source end, which #51 declined to model: every fixed-source-port rule
+// anyone has read is a Generated Policy and on client traffic a source port is
+// ephemeral — but a policy the operator narrowed that way is one unifig writes
+// down without the half that makes it the rule they wrote.
+func TestExportWritesAPolicyNarrowedOnItsSourceAndCountsIt(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "From one port", "ALLOW", "Internal", "Dmz", map[string]any{
+		"protocol": "udp",
+		"source": endOn(t, r, "Internal", map[string]any{
+			"port_matching_type": "SPECIFIC",
+			"port":               "68",
+		}),
+	})
+
+	exported := exportFirewall(t, r)
+
+	exportedPolicyNamed(t, exported.Stdout, "From one port")
+	if !strings.Contains(string(exported.Stderr), unstatedNarrowing) {
+		t.Errorf("export said nothing about the source port, looking for %q:\n%s",
+			unstatedNarrowing, exported.Stderr)
+	}
+}
+
+// A protocol outside the six unifig models. The entry states none, which is
+// unmanaged and true, and it is the case where the file reads exactly like a
+// policy that narrows nothing at all — so the count is the only thing telling
+// the two apart.
+func TestExportWritesAPolicyOnAnUnmodelledProtocolAndCountsIt(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Let the tunnel through", "ALLOW", "Internal", "External", map[string]any{
+		"protocol": "esp",
+	})
+
+	exported := exportFirewall(t, r)
+
+	written := exportedPolicyNamed(t, exported.Stdout, "Let the tunnel through")
+	if written.Protocol != "" {
+		t.Errorf("export wrote %q as the protocol, which is not one of the six the file may state", written.Protocol)
+	}
+	if !strings.Contains(string(exported.Stderr), unstatedNarrowing) {
+		t.Errorf("export said nothing about the protocol it could not write, looking for %q:\n%s",
+			unstatedNarrowing, exported.Stderr)
+	}
+}
+
+// The other side of the rule, and the half that keeps the notice worth reading: a
+// narrowing export *can* describe is written in full and says nothing on stderr.
+// A notice firing on the 126 policies of 135 that carry `all` — or on every
+// policy narrowed the way ADR-0031 made writable — is one an operator learns to
+// read past (ADR-0012).
+func TestExportSaysNothingAboutANarrowingItCanWriteInFull(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Allow DNS out", "ALLOW", "Internal", "Dmz", narrowedTo(t, r, "Dmz", "tcp", "53"))
+	r.seedPolicy(t, "Wide open", "ALLOW", "Internal", "External", nil)
+
+	exported := exportFirewall(t, r)
+
+	written := exportedPolicyNamed(t, exported.Stdout, "Allow DNS out")
+	if want := (exportedFirewallPolicy{
+		Name: "Allow DNS out", Action: "allow", Source: "Internal", Destination: "Dmz",
+		Protocol: "tcp", Ports: []string{"53"},
+	}); !written.same(want) {
+		t.Errorf("the exported policy is %+v, want %+v", written, want)
+	}
+	if strings.Contains(string(exported.Stderr), "narrowed by something the config cannot state") {
+		t.Errorf("export counted a narrowing it wrote down in full:\n%s", exported.Stderr)
+	}
+}
+
+// Two of them read as two, which is what says the count is a count rather than a
+// flag — and they are two policies rather than one policy narrowed two ways,
+// because the subject is the entry that came back short.
+func TestTheNarrowingCountIsOfPoliciesRatherThanOfOmissions(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Ports by group", "ALLOW", "Internal", "Dmz", map[string]any{
+		"protocol": "tcp",
+		"destination": endOn(t, r, "Dmz", map[string]any{
+			"port_matching_type": "OBJECT",
+			"port_group_id":      "6613a1f0c4b2d90a5e1f7fff",
+		}),
+	})
+	r.seedPolicy(t, "All but DNS", "ALLOW", "Internal", "Dmz", map[string]any{
+		"protocol": "tcp",
+		"destination": endOn(t, r, "Dmz", map[string]any{
+			"port_matching_type":   "SPECIFIC",
+			"port":                 "53",
+			"match_opposite_ports": true,
+			"matching_target":      "WEB",
+		}),
+	})
+
+	stderr := string(exportFirewall(t, r).Stderr)
+
+	if want := "Wrote 2 firewall policies narrowed by something the config cannot state"; !strings.Contains(stderr, want) {
+		t.Errorf("the notice should count both policies, looking for %q:\n%s", want, stderr)
+	}
+}
+
+// An inversion with nothing under it inverts nothing, and the flags are on the
+// wire either way: `match_opposite_ports` and `match_opposite_protocol` are
+// plain bools with no `omitempty`, so the Controller sends them on every policy
+// it holds — false on all eighty-six in the recording. So each is read beside the
+// thing it inverts. A count that read one alone would speak for an omission that
+// is not there, on a file that is working, which is the notice ADR-0012 says
+// teaches an operator to skip the rest.
+//
+// The second seed is a shape nobody has read off a router — a policy carrying no
+// protocol at all — and it is here rather than implied, because it is the only
+// arrangement in which the protocol flag can be told from the protocol beside it.
+func TestAnInversionWithNothingToInvertIsNotCounted(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Every port already", "ALLOW", "Internal", "Dmz", map[string]any{
+		"protocol": "tcp",
+		"destination": endOn(t, r, "Dmz", map[string]any{
+			"port_matching_type":   "ANY",
+			"match_opposite_ports": true,
+		}),
+	})
+	r.seedPolicy(t, "No protocol to invert", "ALLOW", "Internal", "Dmz", map[string]any{
+		"protocol":                nil,
+		"match_opposite_protocol": true,
+	})
+
+	exported := exportFirewall(t, r)
+
+	exportedPolicyNamed(t, exported.Stdout, "Every port already")
+	exportedPolicyNamed(t, exported.Stdout, "No protocol to invert")
+	if strings.Contains(string(exported.Stderr), "narrowed by something the config cannot state") {
+		t.Errorf("export counted a policy whose inversion inverts nothing:\n%s", exported.Stderr)
+	}
+}
+
+// The two notices do not meet on one policy, and the recording is what says so:
+// every one of its eighty-six is the Controller's own, and some of those are
+// narrowed by things unifig cannot word. A policy export never wrote is not a
+// policy export wrote short — it is counted where it is left out, once.
+func TestAGeneratedPolicyNarrowedBeyondTheConfigIsCountedOnlyAsGenerated(t *testing.T) {
+	r := startReplay(t)
+	// seedGeneratedPolicy with the protocol changed, which is the whole of what
+	// this needs: the composite `_id` is what makes a policy generated, and the
+	// narrowing is what export would have had no words for had it written one.
+	r.seedPolicy(t, "Allow Web", "ALLOW", "Dmz", "External", map[string]any{
+		"_id":        r.generatedPolicyID(t, "Dmz", "External", 30000),
+		"index":      30000,
+		"predefined": true,
+		"protocol":   "esp",
+	})
+
+	stderr := string(exportFirewall(t, r).Stderr)
+
+	if strings.Contains(stderr, "narrowed by something the config cannot state") {
+		t.Errorf("export counted the narrowing of a policy it never wrote:\n%s", stderr)
+	}
+	if want := fmt.Sprintf("Left out %d firewall policies the Controller generates", len(r.livePolicies(t))); !strings.Contains(stderr, want) {
+		t.Errorf("the generated notice should speak for it instead, looking for %q:\n%s", want, stderr)
 	}
 }

@@ -684,7 +684,7 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 	bound.bindZones(liveZones)
 	zones, partialZones := projectZones(liveZones, bound)
 
-	policies, indescribablePolicies, generatedPolicies, err := projectFirewallPolicies(ctx, client, site, bound)
+	policies, indescribablePolicies, generatedPolicies, partialPolicies, err := projectFirewallPolicies(ctx, client, site, bound)
 	if err != nil {
 		return config.Config{}, Notices{}, err
 	}
@@ -724,6 +724,7 @@ func Project(ctx context.Context, client unifi.Client, site string) (config.Conf
 			PartialZones:              partialZones,
 			IndescribablePolicies:     indescribablePolicies,
 			GeneratedPolicies:         generatedPolicies,
+			PartialPolicies:           partialPolicies,
 			IndescribablePortForwards: indescribableForwards,
 			PartialWANSlots:           partial,
 			NoEncryptedDNS:            dns == nil,
@@ -770,6 +771,16 @@ type Notices struct {
 	// companions a migrated router ships are counted, because their parents are
 	// generated policies and went out too. See unaccountedFor.
 	GeneratedPolicies int
+	// PartialPolicies counts the firewall policies written without part of what
+	// they match on, because the Controller narrows them by something the config
+	// has no way to state — a port group, an inverted match, a source port, an
+	// application or region target, a protocol outside the six (ADR-0032).
+	//
+	// The policy itself is in the file, which is what makes this the third kind
+	// of notice rather than a second IndescribablePortForwards. A count rather
+	// than a list, on GeneratedPolicies' reasoning. Both arguments are
+	// WritePartialPolicies'; see narrowedBeyondTheConfig for what counts.
+	PartialPolicies int
 	// IndescribablePortForwards names the port forwards left out of the config
 	// entirely, because a port of theirs is a range or a list rather than the
 	// single port unifig models.

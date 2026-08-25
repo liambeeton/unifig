@@ -230,6 +230,51 @@ func WriteGeneratedPolicies(w io.Writer, generated int) error {
 	return err
 }
 
+// WritePartialPolicies says how many firewall policies export wrote without
+// part of what they match on, because the Controller narrows them by something
+// the config has no way to state (ADR-0032).
+//
+// **It is the notices' third kind: the object is in the file.** WriteOmissions
+// and the two beside it say unifig could not describe the object and left it
+// out. WriteGeneratedPolicies says unifig could and chose not to. This one says
+// unifig described the object and could not describe the whole of it — which is
+// WritePartialZones' and WritePartialWANSlots' shape, arriving at the firewall.
+//
+// **It is deliberately not the WriteIndescribablePortForwards treatment**, which
+// drops the whole object. A forward whose ports unifig cannot describe has
+// nothing left worth writing — a port is half of what a forward is — whereas a
+// policy still has a name, a verdict and a pair of zones, and `CONTEXT.md` says
+// export's scope is what a Plan could act on, which those three are. The entry
+// is true as it stands: an entry stating no narrowing manages none (ADR-0004),
+// so the policy plans clean and the narrowing stays exactly where the operator
+// put it.
+//
+// **It counts where the partial notices above it name**, on
+// WriteGeneratedPolicies' reasoning rather than on its own: a paragraph of
+// quoted policy names is what teaches an operator to read past the notices above
+// it (ADR-0012), and a policy's name is not its key (ADR-0001), so the quoted
+// list would not even identify which policy to go and look at. The shapes are
+// named instead, because those are what an operator can recognise in the
+// Controller's UI.
+//
+// It ends in a consequence rather than in a way out, which is where every notice
+// but WriteGeneratedPolicies ends. There is nothing to do about a port group
+// unifig does not model, and the honest sentence is that unifig will leave it
+// alone.
+func WritePartialPolicies(w io.Writer, policies int) error {
+	if policies == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nWrote %s narrowed by something the config cannot state.\n",
+		countOf(policies, "firewall policy", "firewall policies"))
+	b.WriteString("Each matches on more than the protocol and destination ports unifig models — a port group, an inverted match, a source port, an application or region target, or a protocol outside the six. unifig manages the verdict, the pair of zones and whatever narrowing the entry does state, and leaves the rest of the matching exactly as it is.\n")
+
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
 // WriteIndescribablePortForwards names the port forwards export left out
 // entirely, on the same promise as WriteOmissions: a file that came back short
 // says so.

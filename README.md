@@ -534,6 +534,19 @@ The return rule the Controller generates beside each of your own allow policies 
 
 A file you already have that names them all keeps working exactly as it did, and gets no warning: plan is silent when the file and the Controller agree, and a notice firing once per policy on a file that is working is how you learn to read past the ones that matter. Re-exporting is how you get the shorter file.
 
+A policy you narrowed in the UniFi UI by something unifig has no words for — a port group, "every port *except* these", an app or region rule, a source port, a protocol outside the six — is written down without that part, and counted rather than named:
+
+```
+Wrote 1 firewall policy narrowed by something the config cannot state.
+Each matches on more than the protocol and destination ports unifig models — a
+port group, an inverted match, a source port, an application or region target,
+or a protocol outside the six. unifig manages the verdict, the pair of zones and
+whatever narrowing the entry does state, and leaves the rest of the matching
+exactly as it is.
+```
+
+The policy is in the file rather than left out of it, because a name, a verdict and a pair of Zones are still something a plan can act on — unlike a port forward missing a port, where there is nothing left worth writing. The entry is true as it stands: it states no narrowing, so it manages none, so what you set in the UI stays exactly where it is and the next plan is silent about it.
+
 A WAN slot that connects in a way unifig does not model gets the other half of the same promise: the slot is in the file so you can see it exists, with nothing under it and a notice saying why.
 
 ```
