@@ -149,6 +149,7 @@ type zoneMarker struct {
 const (
 	gatewayZoneKey  = "gateway"
 	internalZoneKey = "internal"
+	externalZoneKey = "external"
 )
 
 // zoneFacts is what the Controller says about its own zones, and whether it
@@ -159,7 +160,7 @@ const (
 // out, and the two must not lead to the same behaviour, because one of them ends
 // in a plan proposing to delete the zone that stands for the internet.
 //
-// All three fields share the one `known` flag because they come from one
+// All four fields share the one `known` flag because they come from one
 // response: there is no state in which the Controller answered about its zones
 // and unifig learned one of these and not the others.
 type zoneFacts struct {
@@ -176,13 +177,19 @@ type zoneFacts struct {
 	// says the Controller will choose rather than naming the wrong zone
 	// (ADR-0020).
 	internal string
+	// external is the name of the zone the Controller stands the internet up as,
+	// and empty when the site has none. It is read for one reason: the Controller
+	// refuses the companion return rule for a policy whose destination is this
+	// zone, so it is what asksForReturnRule compares against. Held as a name for
+	// the reason gateway is — a policy states its ends as names.
+	external string
 }
 
 func (f zoneFacts) owns(zone unifi.FirewallZone) bool { return f.builtIn[zone.ID] }
 
 // readZoneFacts reads what the Controller says about its own zones: which are
-// built-in, which of those is the one it answers in, and which is the one it
-// falls back to for a network no other zone holds.
+// built-in, which of those is the one it answers in, which is the one it falls
+// back to for a network no other zone holds, and which is the internet.
 //
 // It reads `default_zone`, which is the marker a zone carries. That is not the
 // marker a network carries: a network says the same thing with
@@ -240,6 +247,8 @@ func readZoneFacts(ctx context.Context, client unifi.Client, site string) zoneFa
 				facts.gateway = zone.Name
 			case internalZoneKey:
 				facts.internal = zone.Name
+			case externalZoneKey:
+				facts.external = zone.Name
 			}
 		}
 		return facts

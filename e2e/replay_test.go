@@ -156,7 +156,7 @@ type writeContract struct {
 	// endpoint understands rather than a field it has never heard of. It guards
 	// the create and the update alike, because the endpoint that refused issue
 	// #36's create refused issue #37's update on the same body.
-	refusesBody func(map[string]any) string
+	refusesBody func(r *replay, sent map[string]any) string
 	// semantics is what a PUT here does with a field the body leaves out.
 	semantics writeSemantics
 	// companions is whether this endpoint generates a companion return rule for
@@ -289,7 +289,7 @@ func (c writeContract) refused(r *replay, w http.ResponseWriter, sent map[string
 	if c.refusesBody == nil {
 		return false
 	}
-	if refusal := c.refusesBody(sent); refusal != "" {
+	if refusal := c.refusesBody(r, sent); refusal != "" {
 		r.refuse(w, refusal)
 		return true
 	}
@@ -362,6 +362,22 @@ var refusedByZoneWrite = []string{
 // being anything but `ALLOW`, which is the shape of the rule the message states
 // rather than the list of verdicts anybody watched it apply.
 //
+// **The second condition is the destination**, and it was measured a week later
+// on the same live migrated UDR, off a half-applied firewall rather than a
+// probe: an operator's `apply` created three blocking policies and then stopped
+// on the first `allow` it came to, `Cyberdelia -> External`, with this identical
+// message. Two probes on `Dmz -> External` — a zone holding no networks — closed
+// it: the same body carrying `create_allow_respond: true` is refused `400`, and
+// carrying it `false` is accepted `201` with no companion generated. So an allow
+// into the internet takes the policy and declines the request, and the reverse
+// pair is not what decides — a third probe, `Internal -> Dmz`, was accepted and
+// generated a companion onto a pair that already carried a `RESPOND_ONLY` rule,
+// which is what refuted the reading that the refusal was about the reverse pair
+// being occupied (ADR-0030).
+//
+// The zone is found by the Controller's own `zone_key`, not by the name
+// "External", for the reason zoneKeyed gives.
+//
 // It covers the update as well as the create, and that is a second measurement
 // rather than a symmetry. ADR-0022 had only ever seen the update carry the pair
 // the Controller accepts — a policy created `block`, so carrying the flag false,
@@ -371,11 +387,47 @@ var refusedByZoneWrite = []string{
 // puts the stored true back beside `BLOCK` and is refused with this same
 // message. The endpoint is one endpoint and the rule is about the body, not
 // about which verb carried it.
-func refusedByPolicyWrite(sent map[string]any) string {
+func refusedByPolicyWrite(r *replay, sent map[string]any) string {
 	respond, _ := sent["create_allow_respond"].(bool)
+	if !respond {
+		return ""
+	}
 	action, _ := sent["action"].(string)
-	if respond && action != "ALLOW" {
-		return "Firewall policy create respond traffic not allowed"
+	if action != "ALLOW" {
+		return refusedRespondTraffic
+	}
+	if r.zoneKeyOfLocked(zoneIDOf(sent, "destination")) == "external" {
+		return refusedRespondTraffic
+	}
+	return ""
+}
+
+// refusedRespondTraffic is the Controller's own wording, and it is one string
+// because it was one string on the wire: the two refusals above are the same
+// message, which is what says the endpoint is applying one rule about the
+// request rather than two rules about two situations.
+const refusedRespondTraffic = "Firewall policy create respond traffic not allowed"
+
+// zoneIDOf reads one end's zone id out of a policy body.
+func zoneIDOf(sent map[string]any, end string) string {
+	side, _ := sent[end].(map[string]any)
+	id, _ := side["zone_id"].(string)
+	return id
+}
+
+// zoneKeyOfLocked is the Controller's own key for the zone with this id, or
+// empty for a zone of the operator's own — which carries no key at all, exactly
+// as the live router answers.
+//
+// Locked, because the only caller is refusedByPolicyWrite and collectionV2 holds
+// r.mu for the whole of a write. Taking it again here would deadlock, and taking
+// it before the write would be reading zones the same request may be about.
+func (r *replay) zoneKeyOfLocked(id string) string {
+	for _, zone := range r.zones {
+		if zone["_id"] == id {
+			key, _ := zone["zone_key"].(string)
+			return key
+		}
 	}
 	return ""
 }
@@ -1478,6 +1530,14 @@ func (r *replay) gatewayZone(t *testing.T) string {
 func (r *replay) internalZone(t *testing.T) string {
 	t.Helper()
 	return r.zoneKeyed(t, "internal")
+}
+
+// externalZone is the zone the Controller stands the internet up as. A policy
+// allowing traffic into it is one the Controller will not generate a companion
+// return rule for (ADR-0030).
+func (r *replay) externalZone(t *testing.T) string {
+	t.Helper()
+	return r.zoneKeyed(t, "external")
 }
 
 // renameZoneKeyed gives a keyed zone a different name, leaving the key that says
