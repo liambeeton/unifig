@@ -55,6 +55,119 @@ const gatewayRisk = "the Controller answers in the Gateway zone, and blocking tr
 // check asks what the verdict is changing *from* as well as to.
 var blockingActions = map[string]bool{"block": true, "reject": true}
 
+// specificPorts and anyPorts are the Controller's two port-matching modes that
+// unifig understands. There is a third, OBJECT, which points at a port group —
+// unifig neither writes it nor has a word for it, and a policy carrying one
+// reads back with an unmanaged narrowing.
+const (
+	specificPorts = "SPECIFIC"
+	anyPorts      = "ANY"
+)
+
+// policyProtocols are the six of the Controller's thirty-seven that unifig
+// models, spelled exactly as the Controller spells them.
+//
+// Six rather than thirty-seven because ADR-0004 rejected inheriting the
+// Internal API's surface as unifig's public one by name, and the other
+// thirty-one are transport and tunnelling protocols nobody writes a home
+// firewall rule about. Spelled as the Controller spells them because there is
+// nothing to translate: unlike a verdict, which the Controller stores upper-case
+// and the file states lower-case, `tcp_udp` is `tcp_udp` on both sides, and a
+// translation table with nothing in it to translate is a table that can drift.
+var policyProtocols = map[string]bool{
+	"all": true, "tcp": true, "udp": true, "tcp_udp": true, "icmp": true, "icmpv6": true,
+}
+
+// portBearingProtocols are the modelled protocols a port can narrow.
+//
+// It holds the same three strings as portforward.go's modelledProtocols and is
+// deliberately not the same variable: that one is the whole of what a forward's
+// protocol may be, this one is which of six policy protocols carry ports. They
+// coincide today because TCP and UDP are the protocols with ports; a seventh
+// modelled protocol that had them would move this one and not that one.
+//
+// The other three — `all`, `icmp`, `icmpv6` — have no ports, so stating one of
+// them is what clears a narrowing. `validate` refuses a file stating ports
+// beside one (see portsNeedAProtocol), which is the same rule facing the other
+// way, and both exist because the Controller enforces neither: it was measured
+// accepting `all` beside a specific port and storing it, on the live migrated
+// UDR on 25 August 2026 (ADR-0031).
+var portBearingProtocols = map[string]bool{"tcp": true, "udp": true, "tcp_udp": true}
+
+// narrowing is what a config entry says to do to a live policy's protocol and
+// destination ports, which is not the same as what it states.
+//
+// The distinction is ADR-0004's and it is the whole of this type. A file that
+// states no protocol is not asking for `all`; it is asking for nothing, and the
+// live policy's own narrowing stays. A file that states a protocol with no ports
+// is asking about the protocol only. And a file stating a protocol that has no
+// ports is asking for two things at once — that protocol, and the ports gone —
+// because unifig will not write a port beside a protocol that cannot carry one.
+// That last case is ADR-0004's own "a modelled field's change strands an
+// unmodelled one, so unifig repairs it and says so in the plan", and it is the
+// only way the file has to widen a policy again.
+type narrowing struct {
+	// protocol is empty where the config states none, which means unmanaged.
+	protocol string
+	// ports is the Controller's own joined form, empty where the config states
+	// none — which means unmanaged unless clears is set.
+	ports string
+	// clears is whether the stated protocol takes the port matching with it.
+	clears bool
+}
+
+// narrowingOf reads the config's narrowing off an entry.
+//
+// It trusts `validate` for the combination it does not check: ports beside a
+// protocol that has none is refused offline, so ports here always arrive beside
+// a protocol that can hold them.
+func narrowingOf(desired config.FirewallPolicy) narrowing {
+	if desired.Protocol == "" {
+		return narrowing{}
+	}
+	if !portBearingProtocols[desired.Protocol] {
+		return narrowing{protocol: desired.Protocol, clears: true}
+	}
+	return narrowing{protocol: desired.Protocol, ports: joinPorts(desired.Ports)}
+}
+
+// manages is whether this narrowing asks for anything at all.
+func (n narrowing) manages() bool { return n.protocol != "" }
+
+// managesPorts is whether it asks for the port matching specifically, either by
+// naming ports or by clearing them.
+func (n narrowing) managesPorts() bool { return n.clears || n.ports != "" }
+
+// joinPorts and splitPorts convert between the config's list and the
+// Controller's single string, which holds the whole list — `"443,80"`,
+// `"8000-8010"`, or a mix. The separator is the Controller's own, with no
+// spaces: what goes on the wire is what a UDR was measured accepting and
+// reading back unchanged (ADR-0031).
+func joinPorts(ports []config.Port) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ports))
+	for _, port := range ports {
+		parts = append(parts, string(port))
+	}
+	return strings.Join(parts, ",")
+}
+
+func splitPorts(joined string) []config.Port {
+	parts := strings.Split(joined, ",")
+	ports := make([]config.Port, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			ports = append(ports, config.Port(trimmed))
+		}
+	}
+	if len(ports) == 0 {
+		return nil
+	}
+	return ports
+}
+
 // opensAPath is whether a verdict lets traffic through, and it is the only
 // distinction the Controller's return-rule rule turns on: it generates the
 // companion on a create that allows, and refuses a body that asks for one beside
@@ -686,7 +799,7 @@ func projectFirewallPolicies(ctx context.Context, client unifi.Client, site stri
 			indescribable = append(indescribable, policy.Name)
 			continue
 		}
-		policies = append(policies, described)
+		policies = append(policies, quietWideNarrowing(described))
 	}
 	slices.SortFunc(policies, func(a, b config.FirewallPolicy) int { return strings.Compare(a.Name, b.Name) })
 	slices.Sort(indescribable)
@@ -777,7 +890,54 @@ func fromLivePolicy(policy unifi.FirewallZonePolicy, bound bindings) (config.Fir
 		Action:      action,
 		Source:      source,
 		Destination: destination,
+		Protocol:    statedProtocol(policy),
+		Ports:       statedPorts(policy),
 	}, true
+}
+
+// statedProtocol is the policy's protocol as the config would write it, and
+// empty where the config has no word for it.
+//
+// The Controller takes thirty-seven protocols and unifig models six, so this is
+// where the other thirty-one become unmanaged rather than wrong: a policy on
+// `esp` reads back as a policy stating no protocol, which under ADR-0004 is a
+// policy whose protocol unifig does not manage. That is true, and it is what
+// keeps an `esp` policy plannable — every other field of it still diffs.
+//
+// It does not quiet `all` down to nothing, though `all` is the Controller's
+// default and means no narrowing at all. Quieting belongs to export, which is
+// the only caller that wants it; the planner needs the live value, because a
+// file stating `protocol: all` against a policy already on `all` has to come out
+// as no change rather than as a perpetual one.
+func statedProtocol(policy unifi.FirewallZonePolicy) string {
+	if !policyProtocols[policy.Protocol] {
+		return ""
+	}
+	return policy.Protocol
+}
+
+// statedPorts is the destination-side port narrowing as the config would write
+// it, and nil wherever the config could not write it.
+//
+// Three things make it nil, and only one of them is "there is no narrowing".
+// The port matching may be ANY, which is that one. It may be OBJECT — a
+// reference to a port group, which this file has no way to name. Or the
+// protocol may be one that has no ports, which is the Controller storing a
+// combination unifig refuses to write (ADR-0031): `all` beside a specific port
+// was measured being accepted and stored, and an entry repeating it back is one
+// `validate` would reject, so export would be writing a file it could not read.
+//
+// All three come out as an unmanaged narrowing, which is honest. What none of
+// them do yet is say so out loud — that is issue #52.
+func statedPorts(policy unifi.FirewallZonePolicy) []config.Port {
+	destination := policy.Destination
+	if destination.PortMatchingType != specificPorts || destination.Port == "" {
+		return nil
+	}
+	if !portBearingProtocols[policy.Protocol] {
+		return nil
+	}
+	return splitPorts(destination.Port)
 }
 
 // createFirewallPolicy is the Change for a policy the Controller does not have.
@@ -1033,11 +1193,97 @@ func deleteFirewallPolicy(live unifi.FirewallZonePolicy, bound bindings) Change 
 // because the schema requires all three: there is no such thing as a policy the
 // config states only part of.
 func setPolicyFields(desired config.FirewallPolicy, facts zoneFacts) []Field {
-	return []Field{
+	fields := []Field{
 		{Name: "action", To: desired.Action, Notes: returnRuleNote(desired, facts)},
 		{Name: "source", To: desired.Source},
 		{Name: "destination", To: desired.Destination},
+		// The fourth is always listed and the fifth only sometimes, which is the
+		// same rule as the first three rather than an exception to it. A create
+		// really does set a protocol — `all`, where the file states none — so
+		// there is always something to print. Ports are the part a create can
+		// genuinely leave alone, and `protocol: all` already says there are
+		// none, so a second line saying it again is a line that teaches an
+		// operator to skim.
+		{Name: "protocol", To: createdProtocol(desired)},
 	}
+	if ports := portList(desired.Ports); ports != nil {
+		fields = append(fields, Field{Name: "ports", To: ports})
+	}
+	annotateWideGatewayBlock(fields, config.FirewallPolicy{}, desired, createdProtocol(desired), facts)
+	return fields
+}
+
+// createdProtocol is the protocol a create actually writes, which is `all`
+// wherever the file states none — newFirewallPolicy's own default, and the
+// reason the plan can print a value for a field the config left empty.
+func createdProtocol(desired config.FirewallPolicy) string {
+	if desired.Protocol == "" {
+		return "all"
+	}
+	return desired.Protocol
+}
+
+// portList renders a narrowing's ports as one field value, and nothing at all
+// where there are none — so clearing one reads as `443, 80 -> (none)` rather
+// than as `443, 80 -> ""`.
+//
+// It is nameList's shape without nameList's quotes: a port is a number, and
+// quoting it would make `"443"` look like a string the Controller stores rather
+// than the port it is. The separator is the plan's, not the wire's — what goes
+// to the Controller is joinPorts, with no spaces.
+func portList(ports []config.Port) any {
+	if len(ports) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(ports))
+	for _, port := range ports {
+		parts = append(parts, string(port))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// annotateWideGatewayBlock says what a blocking policy with no narrowing costs
+// when it points at the zone the Controller answers in, which is more than the
+// operator asking for it usually means.
+//
+// It is here because of what a custom Zone's path to the Controller is made of,
+// read off the live migrated UDR: exactly two Generated Policies, `Allow mDNS`
+// at index 30000 and `Allow All Traffic` at 2147483647. There is no generated
+// `Allow DNS` and no `Allow DHCP` for a custom Zone — only the Hotspot zone
+// ships those — so leases, name resolution and time all ride that catch-all, and
+// a policy unifig creates lands at index 10000, above every one of them. "Keep
+// the IoT VLAN off the admin page" written without a narrowing does not keep it
+// off the admin page. It keeps it off the network.
+//
+// The wording hedges for ADR-0018's reason and stops where ADR-0018 stops. unifig
+// does not model `index` or `enabled` and will not evaluate a rule set, so this
+// is a statement about what the policy says rather than a verdict on what the
+// firewall will do — the same line ADR-0018 drew for the Risky mark, and the
+// same one issue #1 drew when it put lockout analysis out of scope.
+//
+// It fires only where the change is the one bringing the block about: a create,
+// a verdict turning blocking, or a protocol widening back to `all`. A policy
+// that was already a wide gateway block and is having its return rule corrected
+// has not newly cost anybody their DHCP, and a note on that change is one an
+// operator learns to read past (ADR-0012).
+func annotateWideGatewayBlock(fields []Field, from, to config.FirewallPolicy, effective string, facts zoneFacts) {
+	if effective != "all" || !blockingActions[to.Action] {
+		return
+	}
+	if !facts.known || facts.gateway == "" || to.Destination != facts.gateway {
+		return
+	}
+	// Newly blocking, or newly wide: a verdict turning to block or reject brings
+	// the block about, and a protocol widening back to `all` takes the ports off
+	// one that was already there.
+	brings := becomesBlocking(from, to) || (to.Protocol == "all" && from.Protocol != "all")
+	if !brings {
+		return
+	}
+	annotateFirst(fields,
+		"this states no ports, so it blocks every service the Controller offers this zone — "+
+			"DHCP leases and DNS as well as the management UI",
+		"protocol", "action")
 }
 
 // returnRuleNote is what a create does beyond the policy it names: on an allow,
@@ -1205,16 +1451,22 @@ func returnRuleField(
 // changedPolicyFields lists the managed fields on which the Controller and the
 // config disagree.
 //
-// Every field is compared unconditionally, which is the opposite of how an
+// The first three are compared unconditionally, which is the opposite of how an
 // optional field is treated everywhere else — and it is the same rule
-// underneath. Omission means unmanaged, and the schema lets none of these be
+// underneath. Omission means unmanaged, and the schema lets none of the three be
 // omitted, so a policy in the config always states its verdict and both ends.
+//
+// The narrowing is where that stops being true and the ordinary rule shows
+// through. `protocol` and `ports` may be omitted, so they are compared only when
+// stated: a policy narrowed in the Controller's UI keeps its narrowing against a
+// file that says nothing about ports, and reads as no change rather than as a
+// widening nobody asked for (ADR-0004, ADR-0031).
 func changedPolicyFields(
 	current, desired config.FirewallPolicy,
 	facts zoneFacts,
 	requested, companionHeld bool,
 ) []Field {
-	fields := make([]Field, 0, 4)
+	fields := make([]Field, 0, 6)
 	if current.Action != desired.Action {
 		fields = append(fields, Field{Name: "action", From: text(current.Action), To: desired.Action})
 	}
@@ -1225,7 +1477,23 @@ func changedPolicyFields(
 		fields = append(fields,
 			Field{Name: "destination", From: text(current.Destination), To: desired.Destination})
 	}
-	// The fourth field, and the only one not read off a line of the config: the
+	// The narrowing, which is two fields and one decision: `narrowingOf` is what
+	// says whether the file asked about the protocol, about the ports, or about
+	// neither, and the plan lists exactly what it asked about. Stating a
+	// protocol with no ports is a protocol change; stating one that has no ports
+	// is that *and* the ports going, which is the only way the file has to widen
+	// a policy again and so has to be visible as its own line.
+	if want := narrowingOf(desired); want.manages() {
+		if current.Protocol != desired.Protocol {
+			fields = append(fields,
+				Field{Name: "protocol", From: text(current.Protocol), To: desired.Protocol})
+		}
+		if want.managesPorts() && joinPorts(current.Ports) != want.ports {
+			fields = append(fields,
+				Field{Name: "ports", From: portList(current.Ports), To: portList(desired.Ports)})
+		}
+	}
+	// The last field, and the only one not read off a line of the config: the
 	// verdict decides whether a companion should be there, and the Controller
 	// decides whether one is. An update runs when they disagree, which is what
 	// makes a policy left at `allow` without a companion something unifig can
@@ -1233,7 +1501,19 @@ func changedPolicyFields(
 	if field, differs := returnRuleField(desired, facts, requested, companionHeld); differs {
 		fields = append(fields, field)
 	}
+	annotateWideGatewayBlock(fields, current, desired, effectiveProtocol(current, desired), facts)
 	return fields
+}
+
+// effectiveProtocol is the protocol the policy will be on after this update:
+// the one the file states, or the one the Controller already has where the file
+// states none. Without the second half, a file that narrows nothing would look
+// like a file that widens everything.
+func effectiveProtocol(current, desired config.FirewallPolicy) string {
+	if desired.Protocol == "" {
+		return current.Protocol
+	}
+	return desired.Protocol
 }
 
 // overwriteManagedPolicy writes the config's values onto a Controller policy and
@@ -1259,7 +1539,32 @@ func overwriteManagedPolicy(policy *unifi.FirewallZonePolicy, desired config.Fir
 	policy.Action = storedActions[desired.Action]
 	policy.Source.ZoneID = source
 	policy.Destination.ZoneID = destination
+	applyNarrowing(policy, narrowingOf(desired))
 	return nil
+}
+
+// applyNarrowing writes a config entry's narrowing onto the struct a create
+// sends. It is the create half of the pair; storedPolicy.setNarrowing is the
+// update half, and the two differ only in what they are writing onto.
+//
+// A create has no live narrowing to preserve, so "unmanaged" here means leaving
+// newFirewallPolicy's own defaults — `all` and ANY — exactly where they are, and
+// clearing is a no-op onto them rather than a separate case. It is still written
+// out, because the two halves are one rule and a rule kept in one half is a rule
+// that drifts.
+func applyNarrowing(policy *unifi.FirewallZonePolicy, want narrowing) {
+	if !want.manages() {
+		return
+	}
+	policy.Protocol = want.protocol
+	switch {
+	case want.clears:
+		policy.Destination.PortMatchingType = anyPorts
+		policy.Destination.Port = ""
+	case want.ports != "":
+		policy.Destination.PortMatchingType = specificPorts
+		policy.Destination.Port = want.ports
+	}
 }
 
 // markerPrefix is what the Controller names its read-only markers with, and the
@@ -1426,7 +1731,56 @@ func (p storedPolicy) overwriteManaged(desired config.FirewallPolicy, facts zone
 	if err := p.setZone("destination", destination); err != nil {
 		return err
 	}
+	if err := p.setNarrowing(desired); err != nil {
+		return err
+	}
 	return p.setReturnRuleRequest(desired, facts)
+}
+
+// setNarrowing writes the config's narrowing onto the policy the Controller
+// sent. It runs after setZone, because both read-modify-write the destination
+// end and this one has to see the zone the other just put there.
+//
+// The clearing branch **deletes** the `port` key rather than emptying it, and
+// that is a measurement rather than a preference: a PUT carrying
+// `port_matching_type: ANY` with the key gone was read back on the live migrated
+// UDR with no port at all, on 25 August 2026 (ADR-0031). Under a v2 policy PUT,
+// which replaces (ADR-0021), a key that is not in the body is a key that is not
+// in the object — which is exactly the property that makes removal expressible
+// here and inexpressible on the zone endpoint, where a body may only carry three
+// fields (ADR-0024).
+func (p storedPolicy) setNarrowing(desired config.FirewallPolicy) error {
+	want := narrowingOf(desired)
+	if !want.manages() {
+		return nil
+	}
+	if err := p.set("protocol", want.protocol); err != nil {
+		return err
+	}
+	if !want.managesPorts() {
+		return nil
+	}
+
+	fields := storedPolicy{}
+	if sent, held := p["destination"]; held {
+		if err := json.Unmarshal(sent, &fields); err != nil {
+			return fmt.Errorf("the destination end of the policy the Controller sent is not an object: %w", err)
+		}
+	}
+	if want.clears {
+		if err := fields.set("port_matching_type", anyPorts); err != nil {
+			return err
+		}
+		delete(fields, "port")
+	} else {
+		if err := fields.set("port_matching_type", specificPorts); err != nil {
+			return err
+		}
+		if err := fields.set("port", want.ports); err != nil {
+			return err
+		}
+	}
+	return p.set("destination", fields)
 }
 
 // setReturnRuleRequest writes the request for the companion return rule to match
@@ -1606,4 +1960,25 @@ func newFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts) unifi.Fir
 			PortMatchingType: "ANY",
 		},
 	}
+}
+
+// quietWideNarrowing drops a `protocol: all` that narrows nothing from an
+// exported entry.
+//
+// `all` is what 126 of the 135 policies on a migrated router carry, and it is
+// the Controller's word for "no narrowing" — so writing it into every entry
+// would be 126 lines saying nothing, which is how an operator learns to skim a
+// file. Leaving it out says the same thing in ADR-0004's terms: an entry stating
+// no protocol manages none, which is exactly true of a policy that has no
+// narrowing to manage.
+//
+// It is export's and not fromLivePolicy's, because the planner needs the
+// opposite. A file stating `protocol: all` against a policy already on `all`
+// has to plan as no change, and it can only do that if the value it compares
+// against is the live one.
+func quietWideNarrowing(described config.FirewallPolicy) config.FirewallPolicy {
+	if described.Protocol == "all" && len(described.Ports) == 0 {
+		described.Protocol = ""
+	}
+	return described
 }

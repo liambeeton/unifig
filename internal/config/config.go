@@ -107,6 +107,42 @@ type FirewallPolicy struct {
 	Action      string `yaml:"action"`
 	Source      string `yaml:"source"`
 	Destination string `yaml:"destination"`
+
+	// Protocol and Ports are the policy's Narrowing: which packets between the
+	// pair of Zones it governs, out of all of them. Both are optional, and
+	// omitting them is ADR-0004's ordinary rule rather than a special case —
+	// a narrowing the file does not state is one unifig does not manage, so a
+	// policy narrowed in the Controller's UI keeps its narrowing.
+	//
+	// Which leaves no way to say "every port" — except that there is one.
+	// Stating `protocol: all` clears the port matching, because unifig will not
+	// write a specific port beside a protocol that has none. That is not the
+	// Controller's rule: it was measured accepting `all` beside a SPECIFIC port
+	// on 25 August 2026 and storing it (ADR-0031). It is unifig's, and it is
+	// what turns ADR-0004's missing removal syntax into a field an operator can
+	// widen again — the case ADR-0004 already covers, where a modelled field's
+	// change strands an unmodelled one and unifig repairs it and says so.
+	Protocol string `yaml:"protocol,omitempty"`
+	Ports    []Port `yaml:"ports,omitempty"`
+}
+
+// Port is one element of a Narrowing: a single port, or an inclusive range
+// written `low-high`.
+//
+// It is a string rather than an integer because the Controller's field is one
+// string holding both — `"443,80"`, `"8000-8010"`, or a mix — and a range has no
+// integer to be. It is not a string in the *file* though, where `443` is written
+// as a number the way anyone writing a port does, so this accepts either scalar
+// and keeps the text. The schema is what says which texts are ports; this is
+// only what stops YAML refusing an integer where a range is also allowed.
+type Port string
+
+func (p *Port) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.ScalarNode {
+		return fmt.Errorf("line %d: a port is a number or a `low-high` range, not a list or a mapping", node.Line)
+	}
+	*p = Port(node.Value)
+	return nil
 }
 
 // PortForward is a rule sending traffic that arrives on a port of the internet

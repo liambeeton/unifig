@@ -986,3 +986,75 @@ func TestValidateWithTooManyArgumentsPrintsUsage(t *testing.T) {
 		t.Errorf("stderr should be the usage text, got: %s", res.stderr)
 	}
 }
+
+// A Narrowing's one cross-field rule, and the one place unifig refuses what the
+// Controller accepts.
+//
+// `all`, `icmp` and `icmpv6` have no ports, so a port beside one of them matches
+// nothing an operator could have meant — but the Controller stores that pair
+// without complaint, measured on the live migrated UDR on 25 August 2026
+// (ADR-0031). Refusing it here is what makes `protocol: all` mean "clear the
+// ports" rather than "keep them and add a contradiction", so this is the rule
+// that syntax rests on rather than a tidy-up.
+func TestValidateCatchesPortsBesideAProtocolThatHasNone(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: IoT off the admin UI
+    action: block
+    source: IoT
+    destination: Gateway
+    protocol: all
+    ports: [443]
+`, nil).mustFailWith(t, "firewall-policies[0].ports", `"IoT off the admin UI"`, "tcp, udp and tcp_udp", "protocol: all")
+}
+
+// The same rule reached the other way: ports with no protocol at all. The message
+// has to name both ways out, because the two readings of this mistake go opposite
+// directions — the operator meant to narrow to a service and left the protocol
+// off, or meant to widen and left the ports on.
+func TestValidateCatchesPortsWithNoProtocolAtAll(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: IoT off the admin UI
+    action: block
+    source: IoT
+    destination: Gateway
+    ports: [443, 80]
+`, nil).mustFailWith(t, "firewall-policies[0].ports", "no protocol", "drop the ports")
+}
+
+// The shape the feature exists for, accepted whole: a protocol that has ports,
+// beside ports, including a range.
+func TestValidateAcceptsANarrowedPolicy(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: IoT off the admin UI
+    action: block
+    source: IoT
+    destination: Gateway
+    protocol: tcp
+    ports: [443, 80, "8000-8010"]
+`, nil).mustPass(t)
+}
+
+// ADR-0004 at the schema level: a policy stating no narrowing manages none, and
+// is an ordinary entry rather than an incomplete one.
+func TestValidateAcceptsAPolicyThatStatesNoNarrowing(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: IoT to the internet
+    action: allow
+    source: IoT
+    destination: External
+`, nil).mustPass(t)
+}
+
+// Port 0 is not a port, and 65536 is not one either. The schema's pattern and its
+// integer bounds have to agree about that, since a range is checked by one and a
+// bare port by the other.
+func TestValidateCatchesAPortOutsideTheRange(t *testing.T) {
+	runValidate(t, `firewall-policies:
+  - name: IoT off the admin UI
+    action: block
+    source: IoT
+    destination: Gateway
+    protocol: tcp
+    ports: [0]
+`, nil).mustFailWith(t, "firewall-policies[0].ports[0]")
+}

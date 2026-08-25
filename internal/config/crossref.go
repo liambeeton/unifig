@@ -145,6 +145,21 @@ func checkReferences(cfg Config, idx index) []Problem {
 			})
 		}
 		governed[key] = true
+
+		// The one cross-field rule a Narrowing has, and the one place unifig is
+		// deliberately stricter than the Controller. `icmp`, `icmpv6` and `all`
+		// have no ports, so a port beside one of them matches nothing an
+		// operator could have meant — but the Controller stores it without
+		// complaint, measured on the live migrated UDR on 25 August 2026
+		// (ADR-0031). Refusing it here is what makes `protocol: all` mean
+		// "clear the ports" rather than "keep them and add a contradiction".
+		if len(policy.Ports) > 0 && !portBearing[policy.Protocol] {
+			at := idx.field("firewall-policies", i, "ports")
+			problems = append(problems, Problem{
+				Line: at.line, Path: at.path,
+				Message: portsNeedAProtocol(policy.Name, policy.Protocol),
+			})
+		}
 	}
 
 	// A port forward is checked for duplicates and for nothing else, and unlike
@@ -275,4 +290,29 @@ func availableNetworks(names []string) string {
 		return "this file defines no networks"
 	}
 	return "defined networks are " + quoteAll(names)
+}
+
+// portBearing are the protocols a port can narrow. The Controller takes
+// thirty-seven protocols and unifig models six of them (ADR-0031); these are the
+// three of those six that carry ports at all.
+var portBearing = map[string]bool{"tcp": true, "udp": true, "tcp_udp": true}
+
+// portsNeedAProtocol is what validate says about a policy stating ports beside a
+// protocol that has none.
+//
+// It names the way out rather than only the rule, because there are two
+// different ways out and the operator's intent decides which: they meant to
+// narrow to a service, in which case the protocol is what is missing, or they
+// meant to widen the policy again, in which case `protocol: all` alone does it
+// and the ports are what is left over. Saying only "ports need tcp" would send
+// half of them the wrong way.
+func portsNeedAProtocol(name, protocol string) string {
+	stated := "no protocol"
+	if protocol != "" {
+		stated = fmt.Sprintf("protocol %q", protocol)
+	}
+	return fmt.Sprintf(
+		"the firewall policy %q states ports beside %s, and only tcp, udp and tcp_udp have ports; "+
+			"give it one of those to narrow it to a service, or drop the ports and state `protocol: all` to widen it again",
+		name, stated)
 }
