@@ -3423,3 +3423,281 @@ func TestTheRecordedPoliciesCarryTheIdShapeTheControllerReturns(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Narrowing — the protocol and destination ports that say which packets between
+// a pair of zones a policy governs, out of all of them (ADR-0031, issue #51).
+//
+// The feature exists because of what a custom zone's path to the Controller is
+// made of. Read off the live migrated UDR on 25 August 2026, each custom zone
+// reaches Gateway through exactly two Generated Policies — `Allow mDNS` at index
+// 30000 and `Allow All Traffic` at 2147483647 — and there is no generated
+// `Allow DNS` and no `Allow DHCP` for a custom zone, only for Hotspot. So DHCP,
+// DNS and NTP all ride that catch-all, and a policy unifig creates lands at
+// index 10000, above every one of them. "Keep the IoT VLAN off the admin page"
+// written as `block <zone> -> Gateway` does not keep it off the admin page; it
+// keeps it off the network. A narrowing is what makes the rule the operator
+// meant writable.
+
+// narrowedTo is a seed's fields for a policy the Controller holds narrowed —
+// what an operator gets by setting the ports in the UI. The whole destination
+// end has to be handed over because seedPolicy builds it, and the zone id it
+// puts there is the part a test cannot invent.
+func narrowedTo(t *testing.T, r *replay, zone, protocol, port string) map[string]any {
+	t.Helper()
+	destination, _ := r.zoneNamed(t, zone)["_id"].(string)
+	if destination == "" {
+		t.Fatalf("the recording has no zone named %q to narrow a policy towards", zone)
+	}
+	return map[string]any{
+		"protocol": protocol,
+		"destination": map[string]any{
+			"zone_id":            destination,
+			"matching_target":    "ANY",
+			"port_matching_type": "SPECIFIC",
+			"port":               port,
+		},
+	}
+}
+
+// The create body, which is the whole of what the probe measured: a POST
+// carrying `tcp` with `port_matching_type: SPECIFIC` and `port: "443,80"` was
+// answered 201 on the live migrated UDR and read back byte-identical on an
+// independent GET (ADR-0031).
+//
+// The wire form is one comma-separated string rather than a list, which is the
+// Controller's shape and not a convenience: its own `Allow Hotspot Portal
+// Authentication` carries `"8880,8843"` in that one field.
+func TestCreatingAPolicyWithPortsNarrowsItOnTheDestination(t *testing.T) {
+	r := startReplay(t)
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: Ellingson off the admin UI
+    action: block
+    source: Internal
+    destination: Dmz
+    protocol: tcp
+    ports: [443, 80]
+`)
+
+	sent := r.onlyPolicyWrite(t)
+	if sent["protocol"] != "tcp" {
+		t.Errorf("the create should carry the stated protocol, got %v: %v", sent["protocol"], sent)
+	}
+	destination, _ := sent["destination"].(map[string]any)
+	if destination["port_matching_type"] != "SPECIFIC" {
+		t.Errorf("a policy stating ports should send SPECIFIC port matching, got %v: %v",
+			destination["port_matching_type"], sent)
+	}
+	if destination["port"] != "443,80" {
+		t.Errorf("the ports should go on the wire as the Controller's one comma-separated string, got %v: %v",
+			destination["port"], sent)
+	}
+}
+
+// A range is the half of the grammar go-unifi's generated pattern claimed and
+// nothing had asked the Controller about. A PUT carrying `"8000-8010"` was
+// answered 200 and read back unchanged (ADR-0031), which is why the config takes
+// one at all rather than following the port forward's single ports.
+func TestAPolicyCanStateAPortRange(t *testing.T) {
+	r := startReplay(t)
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: Shut the high ports
+    action: block
+    source: Internal
+    destination: Dmz
+    protocol: tcp
+    ports: ["8000-8010", 22]
+`)
+
+	destination, _ := r.onlyPolicyWrite(t)["destination"].(map[string]any)
+	if destination["port"] != "8000-8010,22" {
+		t.Errorf("a range and a port should join into the Controller's one field, got %v", destination["port"])
+	}
+}
+
+// The default, and the reason a create can print a protocol for a field the
+// config left empty: a create has no live policy to preserve, so what it does
+// not state it sets — `all` and ANY, which is what every one of unifig's own
+// creates sent before a narrowing was modelled.
+func TestCreatingAPolicyWithNoNarrowingSendsAllProtocolsAndAnyPorts(t *testing.T) {
+	r := startReplay(t)
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: Shut it all
+    action: block
+    source: Internal
+    destination: Dmz
+`)
+
+	sent := r.onlyPolicyWrite(t)
+	if sent["protocol"] != "all" {
+		t.Errorf("a create stating no protocol should send `all`, got %v: %v", sent["protocol"], sent)
+	}
+	destination, _ := sent["destination"].(map[string]any)
+	if destination["port_matching_type"] != "ANY" {
+		t.Errorf("a create stating no ports should send ANY port matching, got %v: %v",
+			destination["port_matching_type"], sent)
+	}
+	if port, carried := destination["port"]; carried {
+		t.Errorf("a create stating no ports should carry no port at all, got %v", port)
+	}
+}
+
+// ADR-0004 arriving at the narrowing, and the decision this feature turned on.
+//
+// A file that says nothing about ports has not asked for every port; it has
+// asked for nothing, so a policy someone narrowed in the Controller's UI keeps
+// its narrowing. The alternative — the config being the whole statement, as
+// ADR-0026 made the Return Rule — would have every entry in every existing file
+// start claiming "any port", and the next apply would widen what an operator had
+// narrowed by hand.
+func TestAPolicyNarrowedInTheControllerKeepsItWhenTheFileStatesNoPorts(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Allow DNS out", "ALLOW", "Internal", "Dmz", narrowedTo(t, r, "Dmz", "tcp", "53"))
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Allow DNS out
+    action: allow
+    source: Internal
+    destination: Dmz
+`)
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, "No changes") {
+		t.Errorf("a file stating no narrowing manages none, so a narrowed policy is no change:\n%s", stdout)
+	}
+}
+
+// The way back out, and the reason there is no `ports: any` sentinel.
+//
+// ADR-0004 has no removal syntax because the schema gives no way to *ask* for a
+// network with no VLAN. Here it does: `all` has no ports, so stating it is the
+// statement that there are none. The Controller does not enforce that — it was
+// measured accepting `all` beside a SPECIFIC port and storing it — so this is
+// unifig's rule, and it is what turns a missing syntax into a field an operator
+// can widen again.
+func TestStatingProtocolAllClearsAPolicysPorts(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Allow DNS out", "ALLOW", "Internal", "Dmz", narrowedTo(t, r, "Dmz", "tcp", "53"))
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: Allow DNS out
+    action: allow
+    source: Internal
+    destination: Dmz
+    protocol: all
+`)
+
+	sent := r.onlyPolicyWrite(t)
+	if sent["protocol"] != "all" {
+		t.Errorf("the update should state the protocol it was given, got %v: %v", sent["protocol"], sent)
+	}
+	destination, _ := sent["destination"].(map[string]any)
+	if destination["port_matching_type"] != "ANY" {
+		t.Errorf("clearing a narrowing should put the port matching back to ANY, got %v: %v",
+			destination["port_matching_type"], sent)
+	}
+	// The key is deleted rather than emptied, which is the measurement rather
+	// than a preference: under a v2 policy PUT, which replaces, a key absent
+	// from the body is a key absent from the object, and that is what the probe
+	// read back (ADR-0021, ADR-0031).
+	if port, carried := destination["port"]; carried {
+		t.Errorf("clearing a narrowing should send no port key at all, got %v: %v", port, sent)
+	}
+}
+
+// The plan has to show the ports going, because widening a policy is a change an
+// operator can make by accident — `protocol: all` looks like it says nothing.
+func TestPlanSaysThePortsGoWhenAPolicyIsWidenedAgain(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Allow DNS out", "ALLOW", "Internal", "Dmz", narrowedTo(t, r, "Dmz", "tcp", "53"))
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Allow DNS out
+    action: allow
+    source: Internal
+    destination: Dmz
+    protocol: all
+`)
+
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{"protocol", "tcp", "ports", "53", "(none)"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan for a widened policy should carry %q:\n%s", fragment, stdout)
+		}
+	}
+}
+
+// The note this whole feature is arranged around: a block to the Gateway zone
+// that states no ports is not the rule the operator asking for it means.
+//
+// It hedges and stops where ADR-0018 stops — a statement about what the policy
+// says, not a verdict on what the rule set will do, because unifig models
+// neither `index` nor `enabled` and issue #1 puts lockout analysis out of scope.
+func TestPlanSaysAWideBlockToTheGatewayTakesDHCPAndDNSToo(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Ellingson off the router
+    action: block
+    source: Internal
+    destination: %s
+`, gateway))
+
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{"blocks every service the Controller offers this zone", "DHCP", "DNS"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("a wide block to the gateway should say what else it takes, wanted %q:\n%s", fragment, stdout)
+		}
+	}
+}
+
+// The other half, and the half that keeps the note worth reading: a policy that
+// names its ports has said what it blocks, so there is nothing left to warn
+// about. A note on every gateway policy is one an operator reads past by the
+// third run (ADR-0012).
+func TestPlanSaysNothingAboutDHCPWhenTheBlockNamesItsPorts(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Ellingson off the admin UI
+    action: block
+    source: Internal
+    destination: %s
+    protocol: tcp
+    ports: [443, 80]
+`, gateway))
+
+	if strings.Contains(string(res.Stdout), "blocks every service") {
+		t.Errorf("a narrowed block names what it blocks, so nothing should warn about DHCP:\n%s", res.Stdout)
+	}
+}
+
+// Q2 of the design, and a deliberate over-warning. The Risky mark asks whether
+// the destination is the gateway and whether the verdict is becoming blocking,
+// and it does not ask about ports — narrowing it to "only when the port set
+// contains the management path" would mean unifig keeping a list of Ubiquiti's
+// management ports, which is the construct ADR-0005 and ADR-0018 have each
+// already rejected and whose failure mode is silence when a port is added.
+func TestANarrowedBlockToTheGatewayIsStillARiskyChange(t *testing.T) {
+	r := startReplay(t)
+	gateway := r.gatewayZone(t)
+
+	res := planFirewall(t, r, fmt.Sprintf(`firewall-policies:
+  - name: Ellingson off the admin UI
+    action: block
+    source: Internal
+    destination: %s
+    protocol: tcp
+    ports: [443]
+`, gateway))
+
+	stdout := string(res.Stdout)
+	if !strings.Contains(stdout, "! ") || !strings.Contains(stdout, riskOfBlockingTheGateway) {
+		t.Errorf("a policy closing the gateway is Risky however narrow it is:\n%s", stdout)
+	}
+}

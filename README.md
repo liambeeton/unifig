@@ -165,7 +165,42 @@ Where nothing in your file claims the network, the second note names `Internal` 
 
 A `--prune` that deletes a Zone says the same thing one step short: the networks it held are not deleted with it and end up in some other Zone, but *which* one has never been measured for a deletion, so unifig says so rather than naming `Internal` on a hunch.
 
-A Policy states its verdict and both ends, always — `action`, `source` and `destination` are required, because a policy that allowed or blocked nothing in particular is not a policy. Everything else about it (ports, addresses, schedules, logging) is the Controller's, and survives an apply untouched.
+A Policy states its verdict and both ends, always — `action`, `source` and `destination` are required, because a policy that allowed or blocked nothing in particular is not a policy.
+
+It may also state a **narrowing**: which packets between the two Zones it actually governs, out of all of them.
+
+```yaml
+firewall-policies:
+  - name: IoT off the admin UI
+    action: block
+    source: IoT
+    destination: Gateway
+    protocol: tcp
+    ports: [443, 80]
+```
+
+- **`protocol`** is one of `all`, `tcp`, `udp`, `tcp_udp`, `icmp`, `icmpv6`.
+- **`ports`** are the ports on the *destination* side: single ports, inclusive `low-high` ranges, or a mix. They need a `protocol` of `tcp`, `udp` or `tcp_udp`, since the others have no ports — `validate` catches that offline.
+- **Both omitted means unmanaged**, as everywhere else: a policy you narrowed in the UI keeps that narrowing against a file that says nothing about ports.
+- **`protocol: all` is how you widen one again.** There is no `ports: any` — a protocol with no ports *is* the statement that there are none, so stating `all` (or `icmp`, or `icmpv6`) clears them, and the plan shows the ports going.
+
+That last bullet is the one place unifig refuses something your Controller would accept: it will happily store a specific port beside `protocol: all`, which matches nothing you could have meant.
+
+**The narrowing is what makes "keep this VLAN off the router's admin page" writable at all**, and the wide version is a trap worth knowing about. The Controller answers in the `Gateway` Zone — and so does everything else it offers you. A custom Zone reaches it through two policies the Controller generates, `Allow mDNS` and a catch-all `Allow All Traffic`; there is no generated `Allow DNS` or `Allow DHCP` for one. So a policy blocking the whole of `Gateway` takes DHCP leases and name resolution with the login page, and the plan says so before you apply it:
+
+```
+  + firewall-policy "IoT off the router"
+      action:      block
+      source:      IoT
+      destination: Gateway
+      protocol:    all
+                   this states no ports, so it blocks every service the Controller offers this zone — DHCP leases and DNS as well as the management UI
+      ! the Controller answers in the Gateway zone, and blocking traffic to it can cut the path this site is managed over
+```
+
+Naming the ports removes the note. It does **not** remove the `!` — a policy closing any part of the `Gateway` Zone is a [Risky change](#risky-changes) however narrow it is, because deciding otherwise would mean unifig keeping its own list of which ports are "management", and a list like that fails by going quiet when Ubiquiti adds one.
+
+Everything else a policy carries — addresses, schedules, logging, port groups, application matching — is the Controller's, and survives an apply untouched.
 
 ### Port forwards
 
