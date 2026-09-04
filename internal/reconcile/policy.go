@@ -1303,6 +1303,18 @@ func reorderPair(
 	if len(before)+len(after) == 0 {
 		return nil
 	}
+	// An empty list goes as `[]` and never as `null`. Neither field is
+	// `omitempty` in the DTO, so a nil slice marshals to `null` — and a body
+	// carrying one answers 500 with a Tomcat error page rather than a message,
+	// measured against the live UDR on a pair whose only stored policy was going
+	// to the other side. That is the commonest shape there is: a pair with one
+	// policy on it puts one list at nothing.
+	if before == nil {
+		before = []string{}
+	}
+	if after == nil {
+		after = []string{}
+	}
 	_, err = client.ReorderFirewallPolicies(ctx, site, &unifi.FirewallPolicyOrderUpdate{
 		SourceZoneId:        sourceID,
 		DestinationZoneId:   destinationID,

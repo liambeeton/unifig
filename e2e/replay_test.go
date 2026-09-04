@@ -1781,27 +1781,38 @@ func (r *replay) nextStoredIndexLocked(sent map[string]any) int {
 // stand-in that accepted a partial list would pass a unifig that sent one, and
 // the operator would find out when their own unmanaged policy moved (ADR-0019).
 func (r *replay) reorder(w http.ResponseWriter, req *http.Request) {
+	// Pointers rather than plain slices, because `null` and `[]` are different
+	// requests here and only one of them works. A body whose list is `null`
+	// answered 500 on the live UDR — a Tomcat error page with no message in it —
+	// and a stand-in decoding both into a nil slice would accept the payload that
+	// failed the operator's own apply (ADR-0019, ADR-0033).
 	var sent struct {
-		SourceZoneID        string   `json:"source_zone_id"`
-		DestinationZoneID   string   `json:"destination_zone_id"`
-		AfterPredefinedIDs  []string `json:"after_predefined_ids"`
-		BeforePredefinedIDs []string `json:"before_predefined_ids"`
+		SourceZoneID        string    `json:"source_zone_id"`
+		DestinationZoneID   string    `json:"destination_zone_id"`
+		AfterPredefinedIDs  *[]string `json:"after_predefined_ids"`
+		BeforePredefinedIDs *[]string `json:"before_predefined_ids"`
 	}
 	if !r.decode(w, req, &sent, reorderPath) {
 		return
 	}
+	if sent.AfterPredefinedIDs == nil || sent.BeforePredefinedIDs == nil {
+		r.t.Errorf("unifig sent a reorder with a null list, which the Controller answers 500 to: %+v", sent)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	after, before := *sent.AfterPredefinedIDs, *sent.BeforePredefinedIDs
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reordered = append(r.reordered, map[string]any{
 		"source_zone_id":        sent.SourceZoneID,
 		"destination_zone_id":   sent.DestinationZoneID,
-		"after_predefined_ids":  sent.AfterPredefinedIDs,
-		"before_predefined_ids": sent.BeforePredefinedIDs,
+		"after_predefined_ids":  after,
+		"before_predefined_ids": before,
 	})
 
-	named := make(map[string]bool, len(sent.AfterPredefinedIDs)+len(sent.BeforePredefinedIDs))
-	for _, id := range append(append([]string{}, sent.AfterPredefinedIDs...), sent.BeforePredefinedIDs...) {
+	named := make(map[string]bool, len(after)+len(before))
+	for _, id := range append(append([]string{}, after...), before...) {
 		named[id] = true
 	}
 	for _, held := range r.policies {
@@ -1820,13 +1831,13 @@ func (r *replay) reorder(w http.ResponseWriter, req *http.Request) {
 	}
 
 	reordered := make([]map[string]any, 0, len(named))
-	for i, id := range sent.BeforePredefinedIDs {
+	for i, id := range before {
 		if held := r.storedPolicyLocked(id); held != nil {
 			held["index"] = storedPolicyIndex + i
 			reordered = append(reordered, held)
 		}
 	}
-	for _, id := range sent.AfterPredefinedIDs {
+	for _, id := range after {
 		if held := r.storedPolicyLocked(id); held != nil {
 			held["index"] = afterPredefinedIndex
 			reordered = append(reordered, held)

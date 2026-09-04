@@ -78,6 +78,13 @@ companions are generated into — and 40000 is the Controller's own number for i
 rather than one unifig picked. The arithmetic in the abandoned draft was a correct
 prediction of a value unifig turned out not to choose.
 
+**An empty list must be `[]` and never `null`.** Neither field is `omitempty` in
+go-unifi's DTO, so a nil slice marshals to `null` — and the first real apply
+against the router answered `500` with a Tomcat error page and no message in it.
+That is the commonest shape there is rather than an edge: a pair with one stored
+policy on it puts one list at nothing, which is exactly the two pairs issue #54
+was about. Nothing was applied, and the site was unchanged at 137 policies.
+
 **It refuses a partial list.** Naming one of two stored policies on a pair
 answered `400 api.err.ShouldIncludeFirewallPolicyInBatchUpdate`; naming both
 answered 200 and placed them as asked. So unifig cannot move one policy without
@@ -193,11 +200,19 @@ else: no rollback, run again.
   config agreed with read as misplaced — which is how three passing tests started
   failing. It has no document handle for the reorder lists to name it by, and it
   is what those lists are named *relative to* (ADR-0027, ADR-0028).
-- **The stand-in models the refusal as well as the success.** `assignsIndex`
-  overrules the body on create, and the reorder answers
-  `api.err.ShouldIncludeFirewallPolicyInBatchUpdate` to a partial list. A stand-in
-  that stored what it was handed would have passed the version of unifig this ADR
-  is a correction of — which is not hypothetical, because it did (ADR-0019).
+- **The stand-in models the refusals as well as the success.** `assignsIndex`
+  overrules the body on create; the reorder answers
+  `api.err.ShouldIncludeFirewallPolicyInBatchUpdate` to a partial list, and 500 to
+  a `null` list. A stand-in that stored what it was handed would have passed the
+  version of unifig this ADR is a correction of — which is not hypothetical,
+  because it did (ADR-0019). The `null` case is the same lesson a second time and
+  the sharper one: the suite was 263 green against a payload the router would not
+  take, because the stand-in decoded `null` and `[]` into the same nil slice. It
+  decodes them into pointers now.
+- **The first apply against real hardware found a defect the whole suite could
+  not.** That is worth stating plainly rather than filing under testing: every
+  measurement in this ADR came from a router, and so did the one bug that survived
+  to the end.
 - **`docs/COMPATIBILITY.md` is unchanged and the recording is not re-cut**, but a
   new endpoint is called for the first time and the matrix cannot speak for it: no
   container has a zone-based firewall (ADR-0013), so the evidence for
