@@ -26,14 +26,29 @@ CI boots `linuxserver/unifi-network-application` at each of these versions and r
 
 These areas are **not in the table above and cannot be**, so nothing here claims a tested container version for them. They are tested at the same seam — the same binary, the same base URL, the same API-key header — against responses recorded from a physical UniFi Dream Router (`e2e/testdata/udr`, `docs/adr/0008-wan-slots-replay-recorded-responses.md`). That is one Controller version, and it is named here rather than left to be inferred from their absence above.
 
-| Area | Recorded Controller version | Why a container cannot answer for it |
+A row naming a second version is one whose tests rest on something no recording could hold. Which Controller answered *that* is under the table, because the column below cannot say it and be read correctly.
+
+| Area | Controller version its evidence came off | Why a container cannot answer for it |
 | --- | --- | --- |
 | WAN slots | 10.5.67 | with no gateway attached a container has no WAN entries at all, so there is nothing to match, update or seed onto (ADR-0008) |
 | Encrypted DNS | 10.5.67 | a Setting is whatever the firmware an operator actually runs says it is, which no container can be trusted to answer for (ADR-0012) |
-| Zones and Firewall Policies | 10.5.67 | no container has a zone-based firewall at all — both collections answer `200 []` on every site and a zone create is refused, because the feature belongs to an adopted gateway (ADR-0013) |
+| Zones and Firewall Policies | 10.5.67, and 10.6.101 where stated below | no container has a zone-based firewall at all — both collections answer `200 []` on every site and a zone create is refused, because the feature belongs to an adopted gateway (ADR-0013) |
 | Untested-version warning | 10.5.67 | the Controller version these tests need is by definition one the matrix does not carry, so they set it on a recording rather than boot it |
 
-Re-recording from a router on another firmware moves these rows with it: the version above is read out of the recording itself, not written down beside it. `make record-udr` is how that is done, and `e2e/testdata/udr/README.md` says what the files hold.
+Re-recording from a router on another firmware moves these rows with it: the recorded version above is read out of the recording itself, not written down beside it. `make record-udr` is how that is done, and `e2e/testdata/udr/README.md` says what the files hold.
+
+A version beside it in that column is the other kind entirely, and re-recording does not move it: it *is* written down, in the test that rests on it, because it is about a request no recording holds.
+
+### What a replayed test was measured on, where the recording could not answer
+
+`make record-udr` is read-only — one `GET` per recorded file, and no writes at all — so what the stand-in models about a **write** was never in `e2e/testdata/udr` to begin with. It was measured in a live session against whatever firmware the router was running that day, and where that is not the version above, saying so is the only way the row is a true statement about the tests it covers.
+
+| Area | Measured on | What was measured |
+| --- | --- | --- |
+| Zones and Firewall Policies | 10.6.101 | how a policy's placement is asked for: `index` taken and ignored on both verbs, and `PUT .../firewall-policies/batch-reorder` assigning 40000 to the policies named in `after_predefined_ids` and 10000 upwards to those in `before_predefined_ids`, refusing a partial list with `api.err.ShouldIncludeFirewallPolicyInBatchUpdate` and a `null` one with 500 (ADR-0033) |
+| Zones and Firewall Policies | 10.6.101 | that the Controller generates a policy's companion return rule only while it is enforcing the policy — disabling an allow whose request is `true` reclaims the companion, re-sending the request repairs nothing, and re-enabling the policy brings the companion back (ADR-0035) |
+
+None of this says the behaviour is absent from the version the row above names — only that nobody has asked it there, which is a different thing and the narrower of the two. A probe on that firmware is what would move one of these lines up into the row; re-recording would not, because a recording holds no writes to move.
 
 ## What unifig does on a version that is not here
 

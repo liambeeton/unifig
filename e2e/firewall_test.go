@@ -1489,6 +1489,16 @@ func TestPlanSaysTheReturnRuleGoesWhenTheRequestIsAlreadyFalse(t *testing.T) {
 	}
 }
 
+// onADisabledPolicysCompanion is the probe behind the three tests below, and a
+// fact no recording could hold whatever firmware it came off: it is a thing the
+// Controller *does* to a companion, and a recording is one moment of GETs.
+var onADisabledPolicysCompanion = measurement{
+	version: "10.6.101",
+	what: "that the Controller generates a policy's companion return rule only while it is enforcing the" +
+		" policy — disabling an allow whose request is `true` reclaims the companion, re-sending the request" +
+		" repairs nothing, and re-enabling the policy brings the companion back (ADR-0035)",
+}
+
 // A policy switched off is the one history that reaches the third row on
 // hardware, and the one the plan may not promise a repair for.
 //
@@ -1511,6 +1521,7 @@ func TestPlanSaysTheReturnRuleGoesWhenTheRequestIsAlreadyFalse(t *testing.T) {
 // consequence of an unmanaged field: unifig says nothing about `enabled`, so it
 // says nothing about what `enabled` decides.
 func TestPlanIsQuietAboutADisabledPolicyWhoseRequestIsAlreadyRight(t *testing.T) {
+	measuredOn(t, onADisabledPolicysCompanion)
 	r := startReplay(t)
 	// The third row exactly — flag true, no companion — reached the only way a
 	// Controller reaches it. `seedCompanion` is deliberately not called: a
@@ -1547,6 +1558,7 @@ func TestPlanIsQuietAboutADisabledPolicyWhoseRequestIsAlreadyRight(t *testing.T)
 // a write worth making with nothing to show for it — reached now by a policy
 // that is simply off.
 func TestPlanPromisesNoCompanionForADisabledPolicyWhoseRequestIsAlreadyFalse(t *testing.T) {
+	measuredOn(t, onADisabledPolicysCompanion)
 	r := startReplay(t)
 	r.seedPolicy(t, "Switched Off And Not Asking", "ALLOW", "Internal", "Dmz", map[string]any{
 		"enabled":              false,
@@ -1586,6 +1598,7 @@ func TestPlanPromisesNoCompanionForADisabledPolicyWhoseRequestIsAlreadyFalse(t *
 // the companion appears when they switch the policy back on. Without this the
 // disclosure would be a gap rather than a trade.
 func TestADisabledPolicysRequestIsStillWrittenByAnUpdateThatHappensAnyway(t *testing.T) {
+	measuredOn(t, onADisabledPolicysCompanion)
 	r := startReplay(t)
 	r.seedPolicy(t, "Switched Off And Being Narrowed", "ALLOW", "Internal", "Dmz", map[string]any{
 		"enabled":              false,
@@ -4288,6 +4301,19 @@ func TestAGeneratedPolicyNarrowedBeyondTheConfigIsCountedOnlyAsGenerated(t *test
 	}
 }
 
+// onTheReorderEndpoint is the live write session behind every placement test
+// below. `make record-udr` is read-only, so nothing about a `PUT` was ever in
+// `e2e/testdata/udr` to be read out of it — the stand-in models this endpoint
+// from what a router was measured doing, and by the time anybody asked it the
+// router had moved a minor version past the one the recording came off.
+var onTheReorderEndpoint = measurement{
+	version: "10.6.101",
+	what: "how a policy's placement is asked for: `index` taken and ignored on both verbs, and" +
+		" `PUT .../firewall-policies/batch-reorder` assigning 40000 to the policies named in" +
+		" `after_predefined_ids` and 10000 upwards to those in `before_predefined_ids`, refusing a partial" +
+		" list with `api.err.ShouldIncludeFirewallPolicyInBatchUpdate` and a `null` one with 500 (ADR-0033)",
+}
+
 // Where a policy unifig creates sits in the Controller's evaluation order, and
 // the whole of why unifig is in the business of saying so.
 //
@@ -4309,6 +4335,7 @@ func TestAGeneratedPolicyNarrowedBeyondTheConfigIsCountedOnlyAsGenerated(t *test
 // only way to put it there is the reorder endpoint — `index` is not writable
 // (ADR-0033).
 func TestCreatingABlockingPolicyMovesItBelowTheCompanionTier(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	// Both verdicts that close a path, because a companion is an `ALLOW` and
 	// either of these can stop one being reached.
 	for _, verdict := range []string{"block", "reject"} {
@@ -4351,6 +4378,7 @@ func TestCreatingABlockingPolicyMovesItBelowTheCompanionTier(t *testing.T) {
 // be a line of unifig's config on the wire that changes nothing, which is the
 // kind of thing that reads as a decision to the next person (ADR-0004).
 func TestTheCreateBodyNamesNoIndex(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
 	applyFirewall(t, r, `firewall-policies:
@@ -4381,6 +4409,7 @@ func TestTheCreateBodyNamesNoIndex(t *testing.T) {
 // the other. So an `allow` is left exactly where the Controller puts it, and
 // unifig sends no reorder at all.
 func TestCreatingAnAllowPolicyLeavesItWhereTheControllerPutIt(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 	// The pair is named rather than arbitrary: this is one of the three the
 	// recording holds an enabled generated BLOCK at 30000 on, so it is the pair
@@ -4411,6 +4440,7 @@ func TestCreatingAnAllowPolicyLeavesItWhereTheControllerPutIt(t *testing.T) {
 // all sitting at 10000. The plan has to see a live policy on the wrong side and
 // say so, with nothing else differing.
 func TestPlanMovesAnExistingBlockingPolicyBelowTheCompanionTier(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
 	r.seedStoredPolicy(t, "Ellingson off the Gibson", "BLOCK", "Dmz", "Internal")
@@ -4451,6 +4481,7 @@ func TestPlanMovesAnExistingBlockingPolicyBelowTheCompanionTier(t *testing.T) {
 // which is what stops an endpoint requiring the whole list from turning into
 // unifig managing the whole list (ADR-0004).
 func TestAReorderNamesThePairsOtherPoliciesAndLeavesTheUnmanagedOneWhereItIs(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
 	r.seedStoredPolicy(t, "Mine to move", "BLOCK", "Dmz", "Internal")
@@ -4484,6 +4515,7 @@ func TestAReorderNamesThePairsOtherPoliciesAndLeavesTheUnmanagedOneWhereItIs(t *
 // about every stored policy on a pair and making one nobody asked for is how an
 // operator's own ordering quietly stops being theirs.
 func TestAPolicyAlreadyBelowTheCompanionTierIsLeftAlone(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
 	r.seedPolicy(t, "Already below", "BLOCK", "Dmz", "Internal", map[string]any{
@@ -4507,6 +4539,7 @@ func TestAPolicyAlreadyBelowTheCompanionTierIsLeftAlone(t *testing.T) {
 // unifig is about to do something the config does not state, and a plan that
 // quietly did more than it printed would not be a plan.
 func TestPlanSaysABlockingPolicyWillBeMovedBelowTheReturnRules(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
 	res := planFirewall(t, r, `firewall-policies:
@@ -4523,6 +4556,7 @@ func TestPlanSaysABlockingPolicyWillBeMovedBelowTheReturnRules(t *testing.T) {
 
 // And says nothing of the sort about an allow, which is not moved.
 func TestPlanSaysNothingAboutMovingAnAllowPolicy(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 	res := planFirewall(t, r, `firewall-policies:
   - name: Let them through
@@ -4547,6 +4581,7 @@ func TestPlanSaysNothingAboutMovingAnAllowPolicy(t *testing.T) {
 // policy on the site, which is a great deal of change to justify with a bug that
 // reaches almost none of them.
 func TestABlockingPolicyOnAPairWithNoReturnRuleIsLeftAlone(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 	r.seedStoredPolicy(t, "No internet", "BLOCK", "Internal", "External")
 
@@ -4573,6 +4608,7 @@ func TestABlockingPolicyOnAPairWithNoReturnRuleIsLeftAlone(t *testing.T) {
 // config rather than waiting for the Controller to generate the companion is what
 // stops "apply, then plan says there is more to do" (ADR-0022, ADR-0033).
 func TestABlockIsMovedForACompanionTheSameApplyIsAboutToCreate(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 
 	// The allow sorts after the block by name, so the companion does not exist

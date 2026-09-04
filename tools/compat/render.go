@@ -66,25 +66,88 @@ func renderRecording(b *strings.Builder, m compat.Matrix) {
 		return
 	}
 
+	measured := slices.ContainsFunc(replayed, func(area compat.Coverage) bool { return len(area.Measurements) > 0 })
+
 	b.WriteString("## Tested against a recording, not a container\n\n")
 	fmt.Fprintf(b, "These areas are **not in the table above and cannot be**, so nothing here claims a"+
 		" tested container version for them. They are tested at the same seam — the same binary, the same base"+
 		" URL, the same API-key header — against responses recorded from a physical UniFi Dream Router"+
 		" (`%s`, `docs/adr/0008-wan-slots-replay-recorded-responses.md`). That is one Controller version, and"+
 		" it is named here rather than left to be inferred from their absence above.\n\n", m.Recording.Source)
+	if measured {
+		b.WriteString("A row naming a second version is one whose tests rest on something no recording could" +
+			" hold. Which Controller answered *that* is under the table, because the column below cannot say" +
+			" it and be read correctly.\n\n")
+	}
 
-	writeRow(b, []string{"Area", "Recorded Controller version", "Why a container cannot answer for it"})
+	// Not "Recorded Controller version": a measurement was not recorded, and a
+	// column heading that said so would be false about the one row that needs
+	// the reader's attention most.
+	writeRow(b, []string{"Area", "Controller version its evidence came off", "Why a container cannot answer for it"})
 	writeRule(b, 3)
 	for _, area := range replayed {
 		version := "not passing"
 		if len(area.Versions) > 0 {
 			version = strings.Join(area.Versions, ", ")
 		}
+		if len(area.Versions) > 0 && len(area.Measurements) > 0 {
+			// The row's own version cannot be left to speak for the tests that
+			// rest on something measured elsewhere, so it says so where it is
+			// read rather than only further down the page.
+			version = fmt.Sprintf("%s, and %s where stated below", version, compat.ListOf(measuredVersions(area)))
+		}
 		writeRow(b, []string{area.Name, version, area.Why})
 	}
 	fmt.Fprintf(b, "\nRe-recording from a router on another firmware moves these rows with it: the"+
-		" version above is read out of the recording itself, not written down beside it. `make record-udr` is"+
-		" how that is done, and `%s/README.md` says what the files hold.\n\n", m.Recording.Source)
+		" recorded version above is read out of the recording itself, not written down beside it."+
+		" `make record-udr` is how that is done, and `%s/README.md` says what the files hold.\n\n",
+		m.Recording.Source)
+	if measured {
+		b.WriteString("A version beside it in that column is the other kind entirely, and re-recording does not" +
+			" move it: it *is* written down, in the test that rests on it, because it is about a request no" +
+			" recording holds.\n\n")
+	}
+
+	if measured {
+		renderMeasured(b, m, replayed)
+	}
+}
+
+// renderMeasured is the exception to the row above it, and the reason the table
+// can carry one: a recording is `GET`s, so what a replayed test asserts about a
+// *write* was measured in a live session against whatever firmware the router
+// was on that day (ADR-0036).
+func renderMeasured(b *strings.Builder, m compat.Matrix, replayed []compat.Coverage) {
+	b.WriteString("### What a replayed test was measured on, where the recording could not answer\n\n")
+	fmt.Fprintf(b, "`make record-udr` is read-only — one `GET` per recorded file, and no writes at all — so"+
+		" what the stand-in models about a **write** was never in `%s` to begin with. It was measured in a"+
+		" live session against whatever firmware the router was running that day, and where that is not the"+
+		" version above, saying so is the only way the row is a true statement about the tests it"+
+		" covers.\n\n", m.Recording.Source)
+
+	writeRow(b, []string{"Area", "Measured on", "What was measured"})
+	writeRule(b, 3)
+	for _, area := range replayed {
+		for _, measurement := range area.Measurements {
+			writeRow(b, []string{area.Name, measurement.Version, measurement.What})
+		}
+	}
+	b.WriteString("\nNone of this says the behaviour is absent from the version the row above names — only" +
+		" that nobody has asked it there, which is a different thing and the narrower of the two. A probe on" +
+		" that firmware is what would move one of these lines up into the row; re-recording would not, because" +
+		" a recording holds no writes to move.\n\n")
+}
+
+// measuredVersions is the Controllers a row's exceptions were measured on, in
+// the order they are published below it.
+func measuredVersions(area compat.Coverage) []string {
+	var versions []string
+	for _, measurement := range area.Measurements {
+		if !slices.Contains(versions, measurement.Version) {
+			versions = append(versions, measurement.Version)
+		}
+	}
+	return versions
 }
 
 func renderWarning(b *strings.Builder, m compat.Matrix) {

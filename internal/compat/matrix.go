@@ -67,6 +67,31 @@ type Coverage struct {
 	// Why this area is not tested against a container, on the areas that are
 	// not. Empty everywhere else.
 	Why string `json:"why,omitempty"`
+	// Measurements are the facts this row rests on that its own Controller
+	// could not answer for, on the rows that have any. Empty everywhere else.
+	Measurements []Measurement `json:"measurements,omitempty"`
+}
+
+// Measurement is one fact a replayed row rests on that was taken somewhere the
+// recording is not evidence about.
+//
+// A recording is `GET`s — `make record-udr` reads one response per file and
+// writes nothing — so what the stand-in models about a *write* was measured in
+// a live session against whatever firmware the router was running that day.
+// Where that is the recording's own version there is nothing to say and the row
+// says it. Where it is not, the row would otherwise publish a version nobody
+// exercised that behaviour on, which is the same failure the version columns
+// exist to prevent, one level down.
+//
+// It is deliberately not a count of the tests resting on it, and not their
+// names: what the table is a claim about is the fact, so a test added beside
+// the ones already citing it changes nothing here and needs no matrix run
+// (Coverage).
+type Measurement struct {
+	// Version is the Controller the fact was measured on.
+	Version string `json:"version"`
+	// What was measured, in a phrase the published table carries as written.
+	What string `json:"what"`
 }
 
 // CompareVersions orders two Controller versions oldest-first, and puts one it
@@ -160,7 +185,7 @@ func (m Matrix) Warning(version string) string {
 			" tested against — the oldest is %s (%s). Carrying on anyway.", version, oldest, table)
 	}
 	return fmt.Sprintf("this Controller runs UniFi Network %s, which unifig has not been tested against; the tested"+
-		" versions are %s (%s). Carrying on anyway.", version, listOf(m.Versions), table)
+		" versions are %s (%s). Carrying on anyway.", version, ListOf(m.Versions), table)
 }
 
 // Warning asks the evidence this binary ships with.
@@ -181,8 +206,10 @@ func (m Matrix) NextMinor() string {
 	return fmt.Sprintf("%d.%d.0", newest[0], newest[1]+1)
 }
 
-// listOf reads a list out the way a person would say it.
-func listOf(items []string) string {
+// ListOf reads a list out the way a person would say it. It is exported because
+// the generated table says the same kind of sentence as the warning does, and
+// two of these would be two places for a comma to differ.
+func ListOf(items []string) string {
 	switch len(items) {
 	case 0:
 		return ""

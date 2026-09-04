@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/liambeeton/unifig/internal/compat"
@@ -45,11 +46,17 @@ func build(cfg compat.Config, s suite, runs map[string]results, recording compat
 			return compat.Matrix{}, err
 		}
 
+		measurements, err := s.measurementsFor(area, evidence, recording)
+		if err != nil {
+			return compat.Matrix{}, err
+		}
+
 		row := compat.Coverage{
-			Name:     area.Name,
-			Tests:    area.Tests,
-			Evidence: evidence,
-			Why:      area.Why,
+			Name:         area.Name,
+			Tests:        area.Tests,
+			Evidence:     evidence,
+			Why:          area.Why,
+			Measurements: measurements,
 		}
 		for _, version := range matrix.Versions {
 			if allPassed(runs[version], tests) {
@@ -105,6 +112,48 @@ func (s suite) evidenceFor(area compat.Area) (compat.Evidence, error) {
 			" area %q cannot be one row: split it, or move the odd tests out",
 			replayed, len(tests), area.Tests, area.Name)
 	}
+}
+
+// measurementsFor is what an area's tests rest on that its own Controller could
+// not answer for: the facts measured in a live write session on firmware the
+// recording is not of (ADR-0036).
+//
+// The row publishes each one once, however many tests cite it. What the table
+// is a claim about is the fact rather than the tests, so adding a test beside
+// the ones already resting on it leaves this generated file alone — which is
+// what keeps half an hour of Docker out of the way of a one-line test
+// (compat.Coverage).
+func (s suite) measurementsFor(area compat.Area, evidence compat.Evidence, recording compat.Recording) ([]compat.Measurement, error) {
+	var measurements []compat.Measurement
+	for _, test := range s.testsByFile[area.Tests] {
+		for _, measurement := range s.measured[test] {
+			if evidence == compat.FromContainer {
+				return nil, fmt.Errorf("the test %s names a Controller its evidence was measured on, and the area"+
+					" %q is tested against the container — whose versions the table already publishes in its own"+
+					" columns; take the %s out, or move the test to an area the container cannot answer for",
+					test, area.Name, measuredOn)
+			}
+			if measurement.Version == recording.Version {
+				return nil, fmt.Errorf("the test %s says its evidence was measured on UniFi Network %s, which is"+
+					" the version the recording is already attributed to; take the %s out, because a second copy"+
+					" of that version is one `make record-udr` would leave behind",
+					test, measurement.Version, measuredOn)
+			}
+			if !slices.Contains(measurements, measurement) {
+				measurements = append(measurements, measurement)
+			}
+		}
+	}
+	// Newest first, as the version columns are, and by what was measured where
+	// two came off the same firmware — so the published order is the facts'
+	// rather than the order tests happen to be sorted in.
+	slices.SortFunc(measurements, func(a, b compat.Measurement) int {
+		if by := compat.CompareVersions(b.Version, a.Version); by != 0 {
+			return by
+		}
+		return strings.Compare(a.What, b.What)
+	})
+	return measurements, nil
 }
 
 // agree checks the configuration against the suite in both directions: every

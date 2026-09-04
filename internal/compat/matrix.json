@@ -103,7 +103,17 @@
       "versions": [
         "10.5.67"
       ],
-      "why": "no container has a zone-based firewall at all — both collections answer `200 []` on every site and a zone create is refused, because the feature belongs to an adopted gateway (ADR-0013)"
+      "why": "no container has a zone-based firewall at all — both collections answer `200 []` on every site and a zone create is refused, because the feature belongs to an adopted gateway (ADR-0013)",
+      "measurements": [
+        {
+          "version": "10.6.101",
+          "what": "how a policy's placement is asked for: `index` taken and ignored on both verbs, and `PUT .../firewall-policies/batch-reorder` assigning 40000 to the policies named in `after_predefined_ids` and 10000 upwards to those in `before_predefined_ids`, refusing a partial list with `api.err.ShouldIncludeFirewallPolicyInBatchUpdate` and a `null` one with 500 (ADR-0033)"
+        },
+        {
+          "version": "10.6.101",
+          "what": "that the Controller generates a policy's companion return rule only while it is enforcing the policy — disabling an allow whose request is `true` reclaims the companion, re-sending the request repairs nothing, and re-enabling the policy brings the companion back (ADR-0035)"
+        }
+      ]
     },
     {
       "name": "Untested-version warning",

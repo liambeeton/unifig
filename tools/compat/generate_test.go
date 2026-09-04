@@ -56,8 +56,8 @@ func TestTheFirewallIsEvidenceAboutARecordingRatherThanAContainer(t *testing.T) 
 
 func TestATableIsBuiltFromTheRunsRatherThanTheConfiguration(t *testing.T) {
 	matrix := built(t, map[string]results{
-		"10.5.67":  ran("TestNetworks", "TestZones"),
-		"10.0.162": ran("TestNetworks", "TestZones"),
+		"10.5.67":  ran("TestNetworks", "TestZones", "TestZonesAgain"),
+		"10.0.162": ran("TestNetworks", "TestZones", "TestZonesAgain"),
 	})
 
 	if got, want := matrix.Versions, []string{"10.5.67", "10.0.162"}; !equal(got, want) {
@@ -110,8 +110,8 @@ func TestTwoHopsFromTheRecording(t *testing.T) { aRecordedSlot(t) }
 // a table generated as though it had.
 func TestAVersionThatDidNotPassIsRefusedRatherThanLeftOut(t *testing.T) {
 	_, err := buildErr(t, map[string]results{
-		"10.5.67":  ran("TestNetworks", "TestZones"),
-		"10.0.162": {tests: map[string]string{"TestNetworks": failed, "TestZones": passed}},
+		"10.5.67":  ran("TestNetworks", "TestZones", "TestZonesAgain"),
+		"10.0.162": {tests: map[string]string{"TestNetworks": failed, "TestZones": passed, "TestZonesAgain": passed}},
 	})
 	if err == nil {
 		t.Fatal("a failing run was published")
@@ -122,7 +122,7 @@ func TestAVersionThatDidNotPassIsRefusedRatherThanLeftOut(t *testing.T) {
 }
 
 func TestAVersionNobodyRanIsRefused(t *testing.T) {
-	_, err := buildErr(t, map[string]results{"10.5.67": ran("TestNetworks", "TestZones")})
+	_, err := buildErr(t, map[string]results{"10.5.67": ran("TestNetworks", "TestZones", "TestZonesAgain")})
 	if err == nil {
 		t.Fatal("a table was generated for a version nobody ran")
 	}
@@ -249,8 +249,8 @@ func TestTheRecordedVersionComesFromTheRecording(t *testing.T) {
 // row that is not there.
 func TestTheTableSaysWhatItDoesNotCover(t *testing.T) {
 	table := render(built(t, map[string]results{
-		"10.5.67":  ran("TestNetworks", "TestZones"),
-		"10.0.162": ran("TestNetworks", "TestZones"),
+		"10.5.67":  ran("TestNetworks", "TestZones", "TestZonesAgain"),
+		"10.0.162": ran("TestNetworks", "TestZones", "TestZonesAgain"),
 	}))
 
 	container, recorded, found := strings.Cut(table, "## Tested against a recording")
@@ -297,7 +297,15 @@ func TestNetworks(t *testing.T) {}
 
 import "testing"
 
-func TestZones(t *testing.T) { startReplay(t) }
+// A fact about a write, which is the one thing a recording of GETs cannot hold.
+var onTheReorderEndpoint = measurement{
+	version: "10.6.101",
+	what:    "the reorder endpoint, in a live write session",
+}
+
+func TestZones(t *testing.T) { startReplay(t); measuredOn(t, onTheReorderEndpoint) }
+
+func TestZonesAgain(t *testing.T) { startReplay(t); measuredOn(t, onTheReorderEndpoint) }
 `)
 	tests, err := readSuite(dir)
 	if err != nil {
@@ -328,7 +336,7 @@ func built(t *testing.T, runs map[string]results) compat.Matrix {
 func buildErr(t *testing.T, runs map[string]results) (compat.Matrix, error) {
 	t.Helper()
 	cfg, tests := fixture(t)
-	return build(cfg, tests, runs, compat.Recording{Version: "10.5.67", Source: "e2e/testdata/udr"})
+	return build(cfg, tests, runs, recorded)
 }
 
 // ran is a run in which every named test passed and nothing else happened.
@@ -368,4 +376,342 @@ func equal(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// A recording holds `GET`s and nothing else, so what a replayed test asserts
+// about a *write* was measured somewhere the recording cannot speak for. The
+// test names that Controller itself, which is what stops the row's recorded
+// version from being read as covering it.
+func TestAReplayedTestNamesTheControllerItsEvidenceWasMeasuredOn(t *testing.T) {
+	cfg, tests := fixture(t)
+
+	got, err := tests.measurementsFor(area(t, cfg, "Zones"), compat.FromRecording, recorded)
+	if err != nil {
+		t.Fatalf("reading the measurements: %v", err)
+	}
+	// Two tests cite the one measurement, and the table publishes it once: what
+	// the row is a claim about is the fact, not how many tests rest on it.
+	if len(got) != 1 {
+		t.Fatalf("read %d measurements, want the one both tests cite: %+v", len(got), got)
+	}
+	if got[0].Version != "10.6.101" {
+		t.Errorf("measured on %q, want the version the test names", got[0].Version)
+	}
+	if !strings.Contains(got[0].What, "reorder") {
+		t.Errorf("the measurement should say what was measured, got %q", got[0].What)
+	}
+}
+
+// The same trap as the recording itself: a test reaching its declaration
+// through a helper is still a test resting on it, and reading only direct calls
+// would publish a row whose exception nobody had stated.
+func TestAMeasurementCitedThroughAHelperIsStillTheTestsEvidence(t *testing.T) {
+	tests := read(t, "indirect_test.go", `package e2e
+
+import "testing"
+
+var onAWrite = measurement{
+	version: "10.6.101",
+	what:    "a write endpoint, in a session on newer firmware",
+}
+
+func aMeasuredReorder(t *testing.T) { measuredOn(t, onAWrite) }
+
+func TestTwoHopsFromTheMeasurement(t *testing.T) { startReplay(t); aMeasuredReorder(t) }
+`)
+
+	if got := tests.measured["TestTwoHopsFromTheMeasurement"]; len(got) != 1 {
+		t.Fatalf("a test one helper away from its measurement carries %d, want 1", len(got))
+	}
+}
+
+// A container area's evidence is the run, on a version the table names in its
+// own column. A measurement there would be a second, quieter claim about the
+// same tests.
+func TestAContainerAreaCannotNameAMeasurement(t *testing.T) {
+	tests := read(t, "container_test.go", `package e2e
+
+import "testing"
+
+var onSomethingElse = measurement{
+	version: "10.6.101",
+	what:    "a write endpoint, in a session on newer firmware",
+}
+
+func TestAgainstTheContainer(t *testing.T) { measuredOn(t, onSomethingElse) }
+`)
+
+	area := compat.Area{Name: "Container", Tests: "container_test.go"}
+	if _, err := tests.measurementsFor(area, compat.FromContainer, recorded); err == nil {
+		t.Error("a container area published a measurement, which its version columns already answer for")
+	}
+}
+
+// Naming the recording's own version is not an exception to the row, it is the
+// row — and a second copy of it is what goes stale when `make record-udr` moves
+// the first.
+func TestAMeasurementNamingTheRecordingsOwnVersionIsRefused(t *testing.T) {
+	tests := read(t, "same_test.go", `package e2e
+
+import "testing"
+
+var onTheRecordingsOwnVersion = measurement{
+	version: "10.5.67",
+	what:    "a write endpoint, on the firmware the recording came off",
+}
+
+func TestAgainstTheRecording(t *testing.T) { startReplay(t); measuredOn(t, onTheRecordingsOwnVersion) }
+`)
+
+	area := compat.Area{Name: "Same", Tests: "same_test.go", Why: "no container has one"}
+	_, err := tests.measurementsFor(area, compat.FromRecording, recorded)
+	if err == nil {
+		t.Fatal("a measurement restating the recording's own version was published beside it")
+	}
+	if !strings.Contains(err.Error(), recorded.Version) {
+		t.Errorf("the error should name the version it duplicates, got: %v", err)
+	}
+}
+
+// A declaration nothing cites is a claim in the table with no test behind it,
+// which is the whole failure this generator exists to prevent — the same rule
+// as a test file no area names, one level down.
+func TestAMeasurementNobodyCitesIsRefused(t *testing.T) {
+	_, err := readSuite(sourceDir(t, "stale_test.go", `package e2e
+
+import "testing"
+
+var onSomethingNobodyTests = measurement{
+	version: "10.6.101",
+	what:    "an endpoint no test rests on",
+}
+
+func TestAgainstTheRecording(t *testing.T) { startReplay(t) }
+`))
+	if err == nil {
+		t.Fatal("a measurement no test cites was accepted")
+	}
+	if !strings.Contains(err.Error(), "onSomethingNobodyTests") {
+		t.Errorf("the error should name the declaration, got: %v", err)
+	}
+}
+
+func TestAMeasurementCitedByNameNothingDeclaresIsRefused(t *testing.T) {
+	_, err := readSuite(sourceDir(t, "unknown_test.go", `package e2e
+
+import "testing"
+
+func TestAgainstTheRecording(t *testing.T) { startReplay(t); measuredOn(t, onNothingAtAll) }
+`))
+	if err == nil {
+		t.Fatal("a citation of a measurement nothing declares was accepted")
+	}
+	if !strings.Contains(err.Error(), "onNothingAtAll") {
+		t.Errorf("the error should name what was cited, got: %v", err)
+	}
+}
+
+// The published table has to carry the exception, or the narrowing happened
+// only in the suite.
+func TestTheTableSaysWhatAReplayedTestWasMeasuredOn(t *testing.T) {
+	table := render(built(t, map[string]results{
+		"10.5.67":  ran("TestNetworks", "TestZones", "TestZonesAgain"),
+		"10.0.162": ran("TestNetworks", "TestZones", "TestZonesAgain"),
+	}))
+
+	recorded, measured, found := strings.Cut(table, "### What a replayed test was measured on")
+	if !found {
+		t.Fatal("the table says nothing about the tests whose evidence is not the recording's")
+	}
+	// The row above must not be left to speak for them on its own.
+	if !strings.Contains(recorded, "10.6.101") {
+		t.Errorf("the Zones row does not point at its exception:\n%s", recorded)
+	}
+	// And the column it sits in must not call it recorded, which it was not.
+	if strings.Contains(recorded, "Recorded Controller version") {
+		t.Errorf("a measured version is published under a heading calling it recorded:\n%s", recorded)
+	}
+	for _, expected := range []string{"| Zones |", "10.6.101", "reorder"} {
+		if !strings.Contains(measured, expected) {
+			t.Errorf("the measured section should carry %q:\n%s", expected, measured)
+		}
+	}
+}
+
+// An area with nothing to except carries no such section, so the table does not
+// grow a heading that says "none".
+func TestATableWithNothingMeasuredElsewhereSaysNothingAboutIt(t *testing.T) {
+	cfg, tests := fixture(t)
+	tests.measured = map[string][]compat.Measurement{}
+
+	matrix, err := build(cfg, tests, map[string]results{
+		"10.5.67":  ran("TestNetworks", "TestZones", "TestZonesAgain"),
+		"10.0.162": ran("TestNetworks", "TestZones", "TestZonesAgain"),
+	}, recorded)
+	if err != nil {
+		t.Fatalf("building the table: %v", err)
+	}
+	if strings.Contains(render(matrix), "### What a replayed test was measured on") {
+		t.Error("a table with no measurements still carries the section")
+	}
+}
+
+// The committed suite's own declarations, checked without Docker for the reason
+// TestTheCommittedConfigurationCoversTheCommittedSuite is.
+func TestTheCommittedSuitesMeasurementsArePublishable(t *testing.T) {
+	cfg, tests := committed(t)
+	recording, err := readRecording(filepath.Join("..", "..", sysinfoFile))
+	if err != nil {
+		t.Fatalf("reading the recording: %v", err)
+	}
+
+	for _, area := range cfg.Areas {
+		evidence, err := tests.evidenceFor(area)
+		if err != nil {
+			continue // The area's own test says so.
+		}
+		if _, err := tests.measurementsFor(area, evidence, recording); err != nil {
+			t.Errorf("%v", err)
+		}
+	}
+}
+
+// recorded is the hardware the fixture's replayed area is evidence about.
+var recorded = compat.Recording{Version: "10.5.67", Source: "e2e/testdata/udr"}
+
+func area(t *testing.T, cfg compat.Config, name string) compat.Area {
+	t.Helper()
+	for _, area := range cfg.Areas {
+		if area.Name == name {
+			return area
+		}
+	}
+	t.Fatalf("the configuration has no %q area", name)
+	return compat.Area{}
+}
+
+// sourceDir is a suite of one file, for the cases where reading it is what is
+// under test.
+func sourceDir(t *testing.T, name, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeSource(t, filepath.Join(dir, name), body)
+	return dir
+}
+
+func read(t *testing.T, name, body string) suite {
+	t.Helper()
+	tests, err := readSuite(sourceDir(t, name, body))
+	if err != nil {
+		t.Fatalf("reading the suite: %v", err)
+	}
+	return tests
+}
+
+// The phrase the table prints is a paragraph, so it is written the way every
+// other paragraph in this codebase is — literals joined with `+` to stay inside
+// a line length. Reading only the first one would publish a sentence that stops
+// halfway.
+func TestAMeasurementWrittenAcrossSeveralLinesIsReadWhole(t *testing.T) {
+	tests := read(t, "joined_test.go", `package e2e
+
+import "testing"
+
+var onAWrite = measurement{
+	version: "10.6.101",
+	what: "the reorder endpoint, which takes two lists" +
+		" and assigns the indices itself",
+}
+
+func TestAgainstTheRecording(t *testing.T) { startReplay(t); measuredOn(t, onAWrite) }
+`)
+
+	got := tests.measured["TestAgainstTheRecording"]
+	if len(got) != 1 {
+		t.Fatalf("read %d measurements, want 1", len(got))
+	}
+	if want := "the reorder endpoint, which takes two lists and assigns the indices itself"; got[0].What != want {
+		t.Errorf("what = %q, want %q", got[0].What, want)
+	}
+}
+
+// A phrase the generator would have to run the suite to know is one nobody can
+// check against the tests it is published beside.
+func TestAMeasurementThatIsNotWrittenDownIsRefused(t *testing.T) {
+	_, err := readSuite(sourceDir(t, "computed_test.go", `package e2e
+
+import "testing"
+
+func what() string { return "something worked out at runtime" }
+
+var onAWrite = measurement{
+	version: "10.6.101",
+	what:    what(),
+}
+
+func TestAgainstTheRecording(t *testing.T) { startReplay(t); measuredOn(t, onAWrite) }
+`))
+	if err == nil {
+		t.Fatal("a measurement whose phrase is computed was accepted")
+	}
+	if !strings.Contains(err.Error(), "what") {
+		t.Errorf("the error should name the field it could not read, got: %v", err)
+	}
+}
+
+// The shapes the reader does not read. Each was written as a measurement and
+// each used to vanish without a word, which is worse than either publishing or
+// refusing it: the slice case took its exception with it and left the row
+// claiming the recording's version for tests nobody had measured there.
+func TestAMeasurementDeclaredInAShapeTheGeneratorCannotReadIsRefused(t *testing.T) {
+	for _, declaration := range []struct {
+		name string
+		body string
+	}{
+		{"a slice of them", `var onWrites = []measurement{{
+	version: "10.6.101",
+	what:    "the reorder endpoint",
+}}`},
+		{"a pointer to one", `var onAWrite = &measurement{
+	version: "10.6.101",
+	what:    "the reorder endpoint",
+}`},
+		{"a zero value", "var onAWrite measurement"},
+	} {
+		t.Run(declaration.name, func(t *testing.T) {
+			_, err := readSuite(sourceDir(t, "shape_test.go", `package e2e
+
+import "testing"
+
+`+declaration.body+`
+
+func TestAgainstTheRecording(t *testing.T) { startReplay(t) }
+`))
+			if err == nil {
+				t.Fatal("a measurement the generator cannot read was accepted, and the exception it carries dropped")
+			}
+			if !strings.Contains(err.Error(), "onAWrite") && !strings.Contains(err.Error(), "onWrites") {
+				t.Errorf("the error should name the declaration, got: %v", err)
+			}
+		})
+	}
+}
+
+// A `var` that has nothing to do with a measurement is not this reader's
+// business, and refusing one would make every fixture in the suite illegal.
+func TestAnOrdinaryDeclarationIsLeftAlone(t *testing.T) {
+	tests := read(t, "ordinary_test.go", `package e2e
+
+import "testing"
+
+var policies = []string{"Gibson to Ellingson"}
+
+var seeded = map[string]bool{"Dmz": true}
+
+func TestAgainstTheRecording(t *testing.T) { startReplay(t); _ = policies; _ = seeded }
+`)
+
+	if got := len(tests.measured); got != 0 {
+		t.Errorf("read %d measurements out of a file with none", got)
+	}
 }
