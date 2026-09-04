@@ -57,6 +57,7 @@ const (
 	setDoHPath      = "/proxy/network/api/s/default/set/setting/doh"
 	zonePath        = "/proxy/network/v2/api/site/default/firewall/zone"
 	policyPath      = "/proxy/network/v2/api/site/default/firewall-policies"
+	reorderPath     = policyPath + "/batch-reorder"
 )
 
 // dohKey is the Controller's own name for the Encrypted DNS setting — how it is
@@ -89,25 +90,10 @@ type replay struct {
 	// issued counts the IDs this stand-in has handed out, so that two objects
 	// created in one apply cannot collide.
 	issued int
-	// assignedIndex is the index this stand-in stamps onto a policy it is
-	// asked to create, whatever the body named, and nil for a Controller that
-	// stores the index it was given.
-	//
-	// **Nil is an assumption rather than a measurement, and this is where it is
-	// written down.** Nobody has sent a real Controller a create naming an
-	// index, so what it does with one is the question issue #54 was blocked on;
-	// unifig now asks, and the default here is the answer being yes. What *is*
-	// measured is the other branch: a create naming no index came back at
-	// `index: 10000` on the live UDR in issue #46's probe, and on all nine
-	// stored policies in issue #54's reading. assignPolicyIndex is how a test
-	// asks for that behaviour, and it is what the day-one answer would look like
-	// if the probe comes back no.
-	//
-	// A stand-in that stores what it is handed is a fixture asserting a guess
-	// (ADR-0019), so the guess is named here rather than left to look like a
-	// reading. It is a cheap one to correct: one field, and the suite says which
-	// tests were resting on it.
-	assignedIndex *int
+	// reordered counts the batch-reorder requests unifig has made, so a test can
+	// assert that a plan promising no placement change made none. The bodies
+	// themselves are not in `written`, which holds the two object collections.
+	reordered []map[string]any
 	// written is every body unifig has sent to one of the v2 collections, in
 	// the order it sent them and whatever the stand-in then did with it.
 	//
@@ -190,10 +176,15 @@ type writeContract struct {
 	// writeContract.unresolvable.
 	notFoundCode string
 	// assignsIndex is whether this collection decides for itself where a created
-	// object sits in evaluation order. Only the firewall-policy collection has
-	// been seen doing it — a create naming no index came back at 10000 — and
-	// what it does with a create that *names* one is replay.assignedIndex's
-	// question rather than this one's.
+	// object sits in evaluation order, **overruling whatever the body said**.
+	//
+	// Measured on the live UDR on 4 September 2026, on a throwaway `Dmz -> Dmz`
+	// policy deleted afterwards: a POST naming `index: 40000` answered 201 and
+	// stored 10000, and a PUT of that same object naming 40000 answered 200 and
+	// stored 10000. So `index` is the Controller's to assign on both verbs, and a
+	// stand-in that stored what it was handed would pass a unifig that thought
+	// otherwise — which is exactly what happened, and what this now stops
+	// (ADR-0019, ADR-0033).
 	assignsIndex bool
 }
 
@@ -523,6 +514,8 @@ func (r *replay) serve(w http.ResponseWriter, req *http.Request) {
 		r.setDoH(w, req)
 	case req.URL.Path == zonePath || strings.HasPrefix(req.URL.Path, zonePath+"/"):
 		r.collectionV2(w, req, zonePath, &r.zones, zoneWriteContract)
+	case req.Method == http.MethodPut && req.URL.Path == reorderPath:
+		r.reorder(w, req)
 	case req.URL.Path == policyPath || strings.HasPrefix(req.URL.Path, policyPath+"/"):
 		// No field is refused here, and that empty list is now a reading rather
 		// than an absence. Issue #37 put a policy back to the live migrated UDR
@@ -710,8 +703,8 @@ func (r *replay) collectionV2(
 		r.issued++
 		sent["_id"] = fmt.Sprintf("6613a1f0c4b2d90a5e1f9%03d", r.issued)
 		sent["site_id"] = "6613a1f0c4b2d90a5e1f0000"
-		if contract.assignsIndex && r.assignedIndex != nil {
-			sent["index"] = *r.assignedIndex
+		if contract.assignsIndex {
+			sent["index"] = r.nextStoredIndexLocked(sent)
 		}
 		*held = append(*held, sent)
 		if contract.companions {
@@ -1409,6 +1402,16 @@ func (r *replay) zoneWrites(t *testing.T) []map[string]any {
 	return r.writesTo(zonePath)
 }
 
+// reorderWrites is every batch-reorder body unifig has sent. It is separate from
+// policyWrites because a reorder is not a write to the policy collection: it
+// carries ids rather than an object, and it goes to its own endpoint.
+func (r *replay) reorderWrites(t *testing.T) []map[string]any {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.reordered)
+}
+
 func (r *replay) policyWrites(t *testing.T) []map[string]any {
 	t.Helper()
 	return r.writesTo(policyPath)
@@ -1713,22 +1716,182 @@ func (r *replay) seedStoredPolicy(t *testing.T, name, action, source, destinatio
 	})
 }
 
+// seedCompanion puts a Return Rule on a pair without going through unifig: the
+// companion of an allow somebody already made, which is what makes a block on
+// that pair the bug issue #54 measured rather than an ordinary policy.
+//
+// It carries the composite `_id` of a Generated Policy and the index the
+// Controller was measured generating one at, because that is what a companion is
+// on every router anyone has read (ADR-0026, ADR-0027).
+func (r *replay) seedCompanion(t *testing.T, parent, source, destination string) {
+	t.Helper()
+	r.seedPolicy(t, parent+" (Return)", "ALLOW", source, destination, map[string]any{
+		"_id":                   r.generatedPolicyID(t, source, destination, companionIndex),
+		"index":                 companionIndex,
+		"predefined":            true,
+		"connection_state_type": "RESPOND_ONLY",
+	})
+}
+
+// nextStoredIndexLocked is the index the Controller gives a policy it has just
+// been asked to create, which is the Controller's decision rather than the
+// body's.
+//
+// A create lands **before** the tier the Controller generates its own policies
+// into, and successive creates on one pair count up from there: measured on the
+// live UDR on 4 September 2026, where two throwaway policies on `Dmz -> Dmz` came
+// back at 10000 and 10001. That second value matters more than it looks — it says
+// two policies unifig created on one pair were never tied, which an earlier
+// reading of this had claimed they were.
+//
+// It is per pair, like every index the Controller assigns: the composite `_id` of
+// a generated policy is the two zone ids and the index run together (ADR-0027),
+// and every pair in the recording starts again at 30000.
+func (r *replay) nextStoredIndexLocked(sent map[string]any) int {
+	source, destination := zoneEndsOf(sent)
+	next := storedPolicyIndex
+	for _, held := range r.policies {
+		if predefined, _ := held["predefined"].(bool); predefined {
+			continue
+		}
+		heldSource, heldDestination := zoneEndsOf(held)
+		if heldSource != source || heldDestination != destination {
+			continue
+		}
+		if index, ok := numberIn(held, "index"); ok && index >= next && index < companionIndex {
+			next = index + 1
+		}
+	}
+	return next
+}
+
+// reorder is `PUT .../firewall-policies/batch-reorder`, the only way a client can
+// say where a stored policy sits — measured on the live UDR on 4 September 2026,
+// in the session that established `index` is not writable on either verb.
+//
+// What it was measured doing, on a throwaway pair restored afterwards:
+//
+//	after_predefined_ids   ->  40000
+//	before_predefined_ids  ->  10000, then 10001, …
+//
+// **And it refuses a partial list.** Naming one of two stored policies on a pair
+// answered `400 api.err.ShouldIncludeFirewallPolicyInBatchUpdate`; naming both
+// answered 200. That refusal is modelled rather than skipped, because it is the
+// whole reason unifig has to read the pair before it can move one policy — a
+// stand-in that accepted a partial list would pass a unifig that sent one, and
+// the operator would find out when their own unmanaged policy moved (ADR-0019).
+func (r *replay) reorder(w http.ResponseWriter, req *http.Request) {
+	var sent struct {
+		SourceZoneID        string   `json:"source_zone_id"`
+		DestinationZoneID   string   `json:"destination_zone_id"`
+		AfterPredefinedIDs  []string `json:"after_predefined_ids"`
+		BeforePredefinedIDs []string `json:"before_predefined_ids"`
+	}
+	if !r.decode(w, req, &sent, reorderPath) {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reordered = append(r.reordered, map[string]any{
+		"source_zone_id":        sent.SourceZoneID,
+		"destination_zone_id":   sent.DestinationZoneID,
+		"after_predefined_ids":  sent.AfterPredefinedIDs,
+		"before_predefined_ids": sent.BeforePredefinedIDs,
+	})
+
+	named := make(map[string]bool, len(sent.AfterPredefinedIDs)+len(sent.BeforePredefinedIDs))
+	for _, id := range append(append([]string{}, sent.AfterPredefinedIDs...), sent.BeforePredefinedIDs...) {
+		named[id] = true
+	}
+	for _, held := range r.policies {
+		if predefined, _ := held["predefined"].(bool); predefined {
+			continue
+		}
+		source, destination := zoneEndsOf(held)
+		if source != sent.SourceZoneID || destination != sent.DestinationZoneID {
+			continue
+		}
+		if id, _ := held["_id"].(string); !named[id] {
+			r.refuseCode(w, "api.err.ShouldIncludeFirewallPolicyInBatchUpdate",
+				"Should include firewall policy in batch update")
+			return
+		}
+	}
+
+	reordered := make([]map[string]any, 0, len(named))
+	for i, id := range sent.BeforePredefinedIDs {
+		if held := r.storedPolicyLocked(id); held != nil {
+			held["index"] = storedPolicyIndex + i
+			reordered = append(reordered, held)
+		}
+	}
+	for _, id := range sent.AfterPredefinedIDs {
+		if held := r.storedPolicyLocked(id); held != nil {
+			held["index"] = afterPredefinedIndex
+			reordered = append(reordered, held)
+		}
+	}
+	r.writeJSON(w, reordered)
+}
+
+// afterPredefinedIndex is what the Controller assigns a policy named in
+// `after_predefined_ids`, read off the router in the same session.
+const afterPredefinedIndex = 40000
+
+func (r *replay) storedPolicyLocked(id string) map[string]any {
+	for _, held := range r.policies {
+		if heldID, _ := held["_id"].(string); heldID == id {
+			return held
+		}
+	}
+	return nil
+}
+
+// zoneEndsOf is the pair a policy governs, as the two zone ids the Controller
+// stores rather than the names unifig knows them by.
+func zoneEndsOf(policy map[string]any) (source, destination string) {
+	end := func(key string) string {
+		side, _ := policy[key].(map[string]any)
+		id, _ := side["zone_id"].(string)
+		return id
+	}
+	return end("source"), end("destination")
+}
+
+// numberIn reads a JSON number out of a decoded body, which is a float64
+// whatever the Controller meant by it.
+func numberIn(policy map[string]any, key string) (int, bool) {
+	switch value := policy[key].(type) {
+	case float64:
+		return int(value), true
+	case int:
+		return value, true
+	}
+	return 0, false
+}
+
+// refuseCode answers the way the Controller answers a request it will not make
+// for a reason it has a code for, which is what refuse does without one.
+func (r *replay) refuseCode(w http.ResponseWriter, code, message string) {
+	body, err := json.Marshal(map[string]any{
+		"code": code, "details": map[string]any{}, "errorCode": 400, "message": message,
+	})
+	if err != nil {
+		r.t.Errorf("encoding the Controller's refusal: %v", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	if _, err := w.Write(body); err != nil {
+		r.t.Errorf("writing the Controller's refusal: %v", err)
+	}
+}
+
 // storedPolicyIndex is the index the Controller assigned the created policy,
 // unasked, in issue #46's probe — and the same value all nine stored policies on
 // the live site carried in issue #54's reading.
 const storedPolicyIndex = 10000
-
-// assignPolicyIndex makes this stand-in place a created policy where it decides
-// rather than where the body asked, which is how a test asks what unifig does
-// when the Controller does not honour the index it was given.
-//
-// See replay.assignedIndex for why the default is the other way and why that
-// default is an assumption rather than a reading.
-func (r *replay) assignPolicyIndex(index int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.assignedIndex = &index
-}
 
 // seedUnmarkedGeneratedPolicy is that policy with the marker taken off: the
 // composite `_id` of one the Controller computes, and no `predefined` on it.

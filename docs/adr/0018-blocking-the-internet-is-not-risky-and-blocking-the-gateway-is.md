@@ -16,13 +16,13 @@
 > exactly that create, so it carries this ADR's own risk sentence with it.
 >
 > **Narrowed by ADR-0033 on one sentence**, in "What unifig cannot know, and says
-> "can" about" below. That section says "It does not model `index`", which is no
-> longer true as written: a create whose verdict closes a path now *asks* for one,
-> so that it does not outrank the companion return rule of an allow unifig made
-> (issue #54). It still **reads** none and still evaluates no rule set, so
-> everything that section concludes stands — the mark is a warning about what a
-> policy says, not a verdict on what the firewall will do. The expansion declined
-> there is the one still declined: reading indices to decide what a rule set does.
+> "can" about" below. That section says "It does not model `index`", and unifig now
+> reads it — to know which side of one boundary a policy sits on, so that a block
+> does not outrank the companion return rule of an allow (issue #54). Everything
+> that section concludes still stands, because it still evaluates no rule set and
+> still decides nothing from the indices of two policies relative to each other:
+> the mark remains a warning about what a policy says, not a verdict on what the
+> firewall will do. The expansion declined there is the one still declined.
 
 `Change.Risk` was set in one place in the codebase — the WAN planner — so no Zone
 or Firewall Policy change ever carried one, and a firewall edit was planned,

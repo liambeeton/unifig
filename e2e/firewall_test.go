@@ -4024,7 +4024,7 @@ func TestAGeneratedPolicyNarrowedBeyondTheConfigIsCountedOnlyAsGenerated(t *test
 }
 
 // Where a policy unifig creates sits in the Controller's evaluation order, and
-// the whole of why it is asked for rather than left to the Controller.
+// the whole of why unifig is in the business of saying so.
 //
 // Measured on the live UDR running 10.6.101 on 3 September 2026 (issue #54). An
 // `allow` Gibson -> Ellingson and a `block` Ellingson -> Gibson, both written by
@@ -4040,36 +4040,63 @@ func TestAGeneratedPolicyNarrowedBeyondTheConfigIsCountedOnlyAsGenerated(t *test
 // reached. Confirmed at packet level in the same session by disabling the block
 // and re-pinging: replies came back, and stopped again when it was re-enabled.
 //
-// So a policy that blocks has to sit below the companion tier, and the only way
-// to put it there is to ask.
-func TestCreatingABlockingPolicyAsksForAnIndexBelowTheCompanionTier(t *testing.T) {
+// A policy that blocks therefore has to end up below the companion tier, and the
+// only way to put it there is the reorder endpoint — `index` is not writable
+// (ADR-0033).
+func TestCreatingABlockingPolicyMovesItBelowTheCompanionTier(t *testing.T) {
 	// Both verdicts that close a path, because a companion is an `ALLOW` and
 	// either of these can stop one being reached.
 	for _, verdict := range []string{"block", "reject"} {
 		t.Run(verdict, func(t *testing.T) {
 			r := startReplay(t)
+			// The issue's own shape: an allow one way, a block the other. The
+			// allow's companion lands on the block's pair, which is the only
+			// place a block above the tier can do any harm.
 			applyFirewall(t, r, fmt.Sprintf(`firewall-policies:
-  - name: Somewhere below
-    action: %s
+  - name: Gibson to Ellingson
+    action: allow
     source: Internal
     destination: Dmz
+  - name: Somewhere below
+    action: %s
+    source: Dmz
+    destination: Internal
 `, verdict))
 
-			sent := r.onlyPolicyWrite(t)
-			index, carried := sent["index"]
-			if !carried {
-				t.Fatalf("the create names no index, so the Controller assigns %d and the policy outranks the companion of an allow unifig made at %d: %v",
-					storedPolicyIndex, companionIndex, sent)
-			}
-			asked, ok := index.(float64)
+			policy := r.policyNamed(t, "Somewhere below")
+			index, ok := numberIn(policy, "index")
 			if !ok {
-				t.Fatalf("the create's index is %#v, which is not a number the Controller could order on", index)
+				t.Fatalf("the created policy holds no index: %v", policy)
 			}
-			if int(asked) <= companionIndex {
-				t.Errorf("unifig asks for index %v, which outranks the companion tier at %d: a policy there drops the reply to traffic an allow unifig made permits",
+			if index <= companionIndex {
+				t.Errorf("the policy is at index %d, at or above the companion tier at %d: a policy there drops the reply to traffic an allow unifig made permits",
 					index, companionIndex)
 			}
 		})
+	}
+}
+
+// The create body says nothing about where the policy goes, because saying so
+// does nothing.
+//
+// Measured on the live UDR on 4 September 2026, on a throwaway `Dmz -> Dmz`
+// policy deleted afterwards: a POST naming `index: 40000` answered 201 and stored
+// 10000, and a PUT of that same object naming 40000 answered 200 and stored
+// 10000. The field is accepted and ignored on both verbs. Sending it anyway would
+// be a line of unifig's config on the wire that changes nothing, which is the
+// kind of thing that reads as a decision to the next person (ADR-0004).
+func TestTheCreateBodyNamesNoIndex(t *testing.T) {
+	r := startReplay(t)
+	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
+	applyFirewall(t, r, `firewall-policies:
+  - name: Somewhere below
+    action: block
+    source: Dmz
+    destination: Internal
+`)
+
+	if index, carried := r.onlyPolicyWrite(t)["index"]; carried {
+		t.Errorf("the create names index %v, and the Controller ignores it on this verb and on the other one", index)
 	}
 }
 
@@ -4082,14 +4109,13 @@ func TestCreatingABlockingPolicyAsksForAnIndexBelowTheCompanionTier(t *testing.T
 // 86-policy recording, with `Block Invalid Traffic`, `Post-Authorization
 // Restrictions` and `Block Unauthorized Traffic` in the same band just below.
 // An `allow` moved down there would sit under an enabled block and do nothing,
-// which is a policy the file states plainly and the firewall does not have: the
-// defect this whole change is about, in the opposite direction.
+// which is a policy the file states plainly and the firewall does not have.
 //
-// There is no third value that escapes both, because the companion and
+// There is no third position that escapes both, because the companion and
 // `Isolated Networks` are at the same index — anything yielding to one yields to
-// the other. So an `allow` asks for nothing and keeps the Controller's own
-// placement, exactly as it did before this change.
-func TestCreatingAnAllowPolicyAsksForNoIndexAtAll(t *testing.T) {
+// the other. So an `allow` is left exactly where the Controller puts it, and
+// unifig sends no reorder at all.
+func TestCreatingAnAllowPolicyLeavesItWhereTheControllerPutIt(t *testing.T) {
 	r := startReplay(t)
 	// The pair is named rather than arbitrary: this is one of the three the
 	// recording holds an enabled generated BLOCK at 30000 on, so it is the pair
@@ -4101,176 +4127,206 @@ func TestCreatingAnAllowPolicyAsksForNoIndexAtAll(t *testing.T) {
     destination: Dmz
 `)
 
-	if index, carried := r.onlyPolicyWrite(t)["index"]; carried {
-		t.Errorf("unifig asked for index %v on an allow; the Controller generates an enabled BLOCK at %d on this very pair, and an allow below one is a policy the file states and the firewall does not have",
+	policy := r.policyNamed(t, "Let them through")
+	if index, _ := numberIn(policy, "index"); index != storedPolicyIndex {
+		t.Errorf("the allow is at index %v, and the Controller generates an enabled BLOCK at %d on this very pair: an allow below one is a policy the file states and the firewall does not have",
+			policy["index"], companionIndex)
+	}
+	if sent := r.reorderWrites(t); len(sent) != 0 {
+		t.Errorf("unifig reordered a pair to place an allow, which is a statement about every stored policy on it: %v", sent)
+	}
+}
+
+// The half that makes this converge, and the case issue #54 was actually
+// reported from.
+//
+// Every site that had this bug when it was found has its policies already
+// created, so a fix that only ran on a create would have fixed nobody's firewall
+// — including the one it was reported from, whose fourteen stored policies were
+// all sitting at 10000. The plan has to see a live policy on the wrong side and
+// say so, with nothing else differing.
+func TestPlanMovesAnExistingBlockingPolicyBelowTheCompanionTier(t *testing.T) {
+	r := startReplay(t)
+	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
+	r.seedStoredPolicy(t, "Ellingson off the Gibson", "BLOCK", "Dmz", "Internal")
+
+	body := `firewall-policies:
+  - name: Ellingson off the Gibson
+    action: block
+    source: Dmz
+    destination: Internal
+`
+	res := planFirewall(t, r, body)
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d; a policy above the companion tier is a change waiting to be made\nstdout: %s",
+			res.ExitCode, exitChangesPending, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{"placement", "after the return rules"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan should say the policy is being moved, looking for %q:\n%s", fragment, stdout)
+		}
+	}
+
+	applyFirewall(t, r, body)
+	policy := r.policyNamed(t, "Ellingson off the Gibson")
+	if index, _ := numberIn(policy, "index"); index <= companionIndex {
+		t.Errorf("the apply left the policy at index %v, at or above the companion tier at %d", policy["index"], companionIndex)
+	}
+	assertNoChangesPendingEnv(t, r.env(), configFile(t, body))
+}
+
+// The reorder names every stored policy on the pair, because the Controller
+// refuses a partial list.
+//
+// Measured on the live UDR on 4 September 2026: naming one of two stored policies
+// on a pair answered `400 api.err.ShouldIncludeFirewallPolicyInBatchUpdate`, and
+// naming both answered 200. So moving one policy means saying where every one of
+// them goes — and a policy the config does not name keeps the side it is on,
+// which is what stops an endpoint requiring the whole list from turning into
+// unifig managing the whole list (ADR-0004).
+func TestAReorderNamesThePairsOtherPoliciesAndLeavesTheUnmanagedOneWhereItIs(t *testing.T) {
+	r := startReplay(t)
+	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
+	r.seedStoredPolicy(t, "Mine to move", "BLOCK", "Dmz", "Internal")
+	r.seedStoredPolicy(t, "Not in the file", "BLOCK", "Dmz", "Internal")
+
+	applyFirewall(t, r, `firewall-policies:
+  - name: Mine to move
+    action: block
+    source: Dmz
+    destination: Internal
+`)
+
+	sent := r.reorderWrites(t)
+	if len(sent) != 1 {
+		t.Fatalf("unifig made %d reorder requests, want the one this config asks for: %v", len(sent), sent)
+	}
+	named := len(sent[0]["after_predefined_ids"].([]string)) + len(sent[0]["before_predefined_ids"].([]string))
+	if named != 2 {
+		t.Errorf("the reorder names %d of the pair's 2 stored policies, and the Controller answers 400 to a partial list: %v",
+			named, sent[0])
+	}
+	if index, _ := numberIn(r.policyNamed(t, "Not in the file"), "index"); index != storedPolicyIndex {
+		t.Errorf("the policy the config does not name moved to index %v; unstated is unmanaged, including here", index)
+	}
+	if index, _ := numberIn(r.policyNamed(t, "Mine to move"), "index"); index <= companionIndex {
+		t.Errorf("the policy the config does name did not move: index %v", index)
+	}
+}
+
+// A plan with nothing to move sends no reorder, because a reorder is a statement
+// about every stored policy on a pair and making one nobody asked for is how an
+// operator's own ordering quietly stops being theirs.
+func TestAPolicyAlreadyBelowTheCompanionTierIsLeftAlone(t *testing.T) {
+	r := startReplay(t)
+	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
+	r.seedPolicy(t, "Already below", "BLOCK", "Dmz", "Internal", map[string]any{
+		"index":      afterPredefinedIndex,
+		"predefined": false,
+	})
+
+	body := `firewall-policies:
+  - name: Already below
+    action: block
+    source: Dmz
+    destination: Internal
+`
+	assertNoChangesPendingEnv(t, r.env(), configFile(t, body))
+	if sent := r.reorderWrites(t); len(sent) != 0 {
+		t.Errorf("a plan with nothing to move still reordered a pair: %v", sent)
+	}
+}
+
+// The create says the move is coming, for the reason the return-rule note exists:
+// unifig is about to do something the config does not state, and a plan that
+// quietly did more than it printed would not be a plan.
+func TestPlanSaysABlockingPolicyWillBeMovedBelowTheReturnRules(t *testing.T) {
+	r := startReplay(t)
+	r.seedCompanion(t, "Gibson to Ellingson", "Dmz", "Internal")
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Somewhere below
+    action: block
+    source: Dmz
+    destination: Internal
+`)
+
+	if !strings.Contains(string(res.Stdout), "move it below") {
+		t.Errorf("the plan should say the policy will be moved:\n%s", res.Stdout)
+	}
+}
+
+// And says nothing of the sort about an allow, which is not moved.
+func TestPlanSaysNothingAboutMovingAnAllowPolicy(t *testing.T) {
+	r := startReplay(t)
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Let them through
+    action: allow
+    source: Internal
+    destination: Dmz
+`)
+
+	if strings.Contains(string(res.Stdout), "move it below") {
+		t.Errorf("the plan promised to move an allow:\n%s", res.Stdout)
+	}
+}
+
+// A block on a pair with no Return Rule on it is left exactly where it is, and
+// this is the test that keeps the fix proportionate to the bug.
+//
+// A blocking policy only outranks a companion where there is a companion. A block
+// on `Internal -> External` has no reply traffic to strand, and moving it would be
+// unifig reordering somebody's firewall for no reason — a reorder being a
+// statement about every stored policy on the pair. Without this gate a brownfield
+// `export` produced a config whose first `plan` proposed moving every blocking
+// policy on the site, which is a great deal of change to justify with a bug that
+// reaches almost none of them.
+func TestABlockingPolicyOnAPairWithNoReturnRuleIsLeftAlone(t *testing.T) {
+	r := startReplay(t)
+	r.seedStoredPolicy(t, "No internet", "BLOCK", "Internal", "External")
+
+	body := `firewall-policies:
+  - name: No internet
+    action: block
+    source: Internal
+    destination: External
+`
+	assertNoChangesPendingEnv(t, r.env(), configFile(t, body))
+	if sent := r.reorderWrites(t); len(sent) != 0 {
+		t.Errorf("unifig reordered a pair that carries no return rule: %v", sent)
+	}
+	if index, _ := numberIn(r.policyNamed(t, "No internet"), "index"); index != storedPolicyIndex {
+		t.Errorf("the policy moved to index %d with no companion on its pair to move it for", index)
+	}
+}
+
+// The companion the config is about to bring into being counts as well as the one
+// already there, which is what makes one apply enough.
+//
+// A block and the allow whose companion it would outrank can be created in either
+// order, and the order is whatever their names happened to sort to. Reading the
+// config rather than waiting for the Controller to generate the companion is what
+// stops "apply, then plan says there is more to do" (ADR-0022, ADR-0033).
+func TestABlockIsMovedForACompanionTheSameApplyIsAboutToCreate(t *testing.T) {
+	r := startReplay(t)
+
+	// The allow sorts after the block by name, so the companion does not exist
+	// at the moment the block is written.
+	body := `firewall-policies:
+  - name: Block first by name
+    action: block
+    source: Dmz
+    destination: Internal
+  - name: Zulu allow sorts last
+    action: allow
+    source: Internal
+    destination: Dmz
+`
+	applyFirewall(t, r, body)
+
+	if index, _ := numberIn(r.policyNamed(t, "Block first by name"), "index"); index <= companionIndex {
+		t.Errorf("the block is at index %d, at or above the companion tier at %d, so the reply to traffic the allow permits is dropped",
 			index, companionIndex)
 	}
-}
-
-// The value a block asks for collides with nothing anyone has read off a
-// Controller, which is the second half of choosing one at all.
-//
-// The recording's own policies span 30000 to 30008 per pair and then jump to
-// 2147483647, and the band is per pair rather than per site: every pair the
-// recording holds starts again at 30000. So a value beyond the whole band and
-// short of the catch-all ties with no policy the Controller generates and still
-// outranks the one it falls back to — which is the ordering ADR-0018 and
-// ADR-0029 both rest on, kept rather than disturbed.
-func TestTheIndexABlockAsksForTiesWithNoGeneratedPolicyAndBeatsTheCatchAll(t *testing.T) {
-	r := startReplay(t)
-	// Read before the apply, so what is being compared against is the
-	// Controller's own band rather than the policy this test is about to add to
-	// it — which lands at the very index under test and would compare equal to
-	// itself.
-	generated := r.livePolicies(t)
-	applyFirewall(t, r, `firewall-policies:
-  - name: Somewhere below
-    action: block
-    source: Internal
-    destination: Dmz
-`)
-
-	index, ok := r.onlyPolicyWrite(t)["index"].(float64)
-	if !ok {
-		t.Fatalf("the create names no index the Controller could order on: %v", r.onlyPolicyWrite(t))
-	}
-	asked := int(index)
-
-	// The catch-all is the lowest precedence the Controller has, and a policy at
-	// or below it is one that never takes effect over the Controller's own.
-	const catchAll = 2147483647
-	if asked >= catchAll {
-		t.Errorf("unifig asks for index %d, at or below the Controller's own catch-all at %d, so a policy it creates would not take effect over one the Controller generates",
-			asked, catchAll)
-	}
-	for _, policy := range generated {
-		held, ok := policy["index"].(float64)
-		if !ok || int(held) == catchAll {
-			continue
-		}
-		if int(held) >= asked {
-			t.Errorf("the Controller generates %q at index %d, which ties with or sits below the %d unifig asks for: a block unifig creates should sit clear of the whole generated band",
-				policy["name"], int(held), asked)
-		}
-	}
-}
-
-// The question this ships to answer, and what unifig does with the answer.
-//
-// Nobody has sent the Controller a create naming an index, so whether it stores
-// what it is told is unmeasured — issue #54 named it as the one thing option 3
-// was blocked on, and it is a question only hardware can settle. unifig asks,
-// reads the answer back, and says so where the answer is no, which is what turns
-// an assumption into a measurement taken at the operator's own site rather than
-// a silence.
-//
-// The stand-in answers no here, which is the one behaviour that *is* measured: a
-// create naming no index came back at 10000, on the live UDR in issue #46's
-// probe and again on all nine stored policies in issue #54's reading.
-func TestApplySaysWhenTheControllerDidNotPutAPolicyWhereUnifigAsked(t *testing.T) {
-	r := startReplay(t)
-	r.assignPolicyIndex(storedPolicyIndex)
-
-	res := applyFirewall(t, r, `firewall-policies:
-  - name: Somewhere below
-    action: block
-    source: Internal
-    destination: Dmz
-`)
-
-	stdout := string(res.Stdout)
-	if res.ExitCode != 0 {
-		t.Fatalf("apply exited %d; the policy was created, so a Controller that placed it elsewhere is not a failed apply\nstdout: %s\nstderr: %s",
-			res.ExitCode, stdout, res.Stderr)
-	}
-	for _, fragment := range []string{
-		`+ firewall-policy "Somewhere below" created`,
-		`Somewhere below`,
-		fmt.Sprintf("%d", storedPolicyIndex),
-		"return rule",
-	} {
-		if !strings.Contains(stdout, fragment) {
-			t.Errorf("apply should say the Controller placed the policy elsewhere, looking for %q:\n%s", fragment, stdout)
-		}
-	}
-}
-
-// And says nothing where the answer is yes, because a notice on every apply is
-// one an operator reads past by the third (ADR-0012).
-func TestApplySaysNothingAboutPlacementWhenTheControllerHonoursIt(t *testing.T) {
-	r := startReplay(t)
-
-	res := applyFirewall(t, r, `firewall-policies:
-  - name: Somewhere below
-    action: block
-    source: Internal
-    destination: Dmz
-`)
-
-	if strings.Contains(string(res.Stdout), "where it chose rather than where unifig asked") {
-		t.Errorf("apply talked about placement on a Controller that put the policy where unifig asked:\n%s", res.Stdout)
-	}
-}
-
-// A Controller that answers a create without an index at all is one that
-// declined to say, not one that said zero.
-//
-// `index` is `omitempty` on the way in, so absent on the way back is
-// indistinguishable from zero once it is decoded — and reporting it would put
-// "asked for index 40000 and was placed at 0" on the end of every single apply.
-// The shape of a create response is as unmeasured as the semantics the read-back
-// exists to measure, which is exactly why it is not read optimistically.
-func TestApplySaysNothingWhenTheControllerAnswersWithNoIndexAtAll(t *testing.T) {
-	r := startReplay(t)
-	r.assignPolicyIndex(0)
-
-	res := applyFirewall(t, r, `firewall-policies:
-  - name: Somewhere below
-    action: block
-    source: Internal
-    destination: Dmz
-`)
-
-	if strings.Contains(string(res.Stdout), "where it chose rather than where unifig asked") {
-		t.Errorf("apply read an absent index as the Controller placing the policy at zero:\n%s", res.Stdout)
-	}
-}
-
-// The placement notice survives a plan that had a Risky change in it, which is
-// not the same run as the one above and did not work when it was written.
-//
-// approveRisky returns the plan with the refused changes left out, and it used
-// to do that by building a fresh `reconcile.Plan{Changes: kept}` — which drops
-// every field of a Plan that is not `Changes`, including the collector the
-// writes report their placement into. Nothing said so: `--allow-risky` returns
-// the plan whole, so only an apply that actually asked lost the notice, and the
-// field is unexported so the package doing the rebuilding cannot see it.
-//
-// This is the run that would have caught it: a Risky change approved, whose
-// index the Controller declines to honour, and the notice still printed at the
-// end.
-func TestThePlacementNoticeSurvivesAnApplyThatAskedAboutARiskyChange(t *testing.T) {
-	r := startReplay(t)
-	r.assignPolicyIndex(storedPolicyIndex)
-	gateway := r.gatewayZone(t)
-	path := configFile(t, fmt.Sprintf(`firewall-policies:
-  - name: Off the management path
-    action: block
-    source: Internal
-    destination: %s
-`, gateway))
-
-	res := testRig.runUnifigWithInput(t, []string{"apply", "--auto-approve", path}, r.env(), "y\n")
-	t.Logf("unifig apply --auto-approve -> exit %d\n%s\n%s", res.ExitCode, res.Stdout, res.Stderr)
-
-	if res.ExitCode != 0 {
-		t.Fatalf("apply exited %d\nstdout: %s\nstderr: %s", res.ExitCode, res.Stdout, res.Stderr)
-	}
-	stdout := string(res.Stdout)
-	if !strings.Contains(stdout, "Risky change") {
-		t.Fatalf("this run is meant to go through the Risky prompt and did not:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "where it chose rather than where unifig asked") {
-		t.Errorf("the placement notice was lost on the way through the Risky prompt:\n%s", stdout)
-	}
+	assertNoChangesPendingEnv(t, r.env(), configFile(t, body))
 }

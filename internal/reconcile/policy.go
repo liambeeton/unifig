@@ -44,12 +44,12 @@ import (
 // It names the consequence rather than the field, for wanRisk's reason: "action
 // is changing to block" is not something an operator can weigh at eleven at
 // night and "there may be no way back to this site" is. Like wanRisk it says
-// "can" rather than "will", and that hedge is load-bearing — unifig reads
-// neither a policy's precedence (`index`) nor whether it is enabled, so it knows
-// that a rule closing the management path is being written and cannot know what
-// the rule set as a whole will do with it (ADR-0018). It *asks* for an index on a
-// create now (ADR-0033) and reads none, which leaves the hedge exactly where it
-// was: naming where one policy goes is not evaluating a rule set.
+// "can" rather than "will", and that hedge is load-bearing — unifig does not know
+// whether a policy is enabled, and reads its precedence (`index`) only far enough
+// to tell which side of the generated tier it sits on (ADR-0033). So it knows that
+// a rule closing the management path is being written and cannot know what the
+// rule set as a whole will do with it (ADR-0018): one boundary is not an
+// evaluation order.
 const gatewayRisk = "the Controller answers in the Gateway zone, and blocking traffic to it can cut the path this site is managed over"
 
 // blockingActions are the verdicts that close a path. A policy moving between
@@ -264,13 +264,16 @@ func planFirewallPolicies(
 	facts zoneFacts,
 	bound bindings,
 	opts Options,
-	placedPolicies *policyPlacements,
 ) ([]Change, []unifi.FirewallZonePolicy, []Caveat, error) {
 	byKey, err := policiesByKey(live, bound)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	held := policyNames(live)
+	// Which pairs a Return Rule sits on, computed once for the whole plan: it
+	// reads the live collection and the config together, and both halves are the
+	// same for every policy in the loop below.
+	carrying := pairsCarryingCompanions(cfg, live, facts, bound)
 
 	// A zone a policy names is resolved against the Controller and against the
 	// zones this file creates, together — the file's own zones do not exist yet,
@@ -302,11 +305,11 @@ func planFirewallPolicies(
 		current, exists := byKey[keyOfDesiredPolicy(desired)]
 		if !exists {
 			blocking = blocking || becomesBlocking(config.FirewallPolicy{}, desired)
-			changes = append(changes, createFirewallPolicy(desired, facts, bound, placedPolicies))
+			changes = append(changes, createFirewallPolicy(desired, cfg, facts, bound, carrying))
 			continue
 		}
 		stated, _ := fromLivePolicy(current, bound)
-		if change, differs := updateFirewallPolicy(desired, current, facts, bound, held); differs {
+		if change, differs := updateFirewallPolicy(desired, current, cfg, facts, bound, held, carrying); differs {
 			// A Generated Policy is matchable and is not writable, so the
 			// difference is real and the change is not one this plan may promise
 			// (ADR-0027). The caveat is said only where something differs: the
@@ -1064,13 +1067,12 @@ func narrowsPorts(matching, port, group string) bool {
 // one it narrowed by something with no name.
 func narrowsTarget(target string) bool { return target != "" && target != anyMatch }
 
-// unifigPolicyIndex is where unifig asks the Controller to put a policy it
-// creates, and it is asked for because the value the Controller picks unasked
-// makes a firewall that does not mean what the file says.
+// Where a policy sits in the Controller's evaluation order, and why unifig is in
+// the business of saying so at all.
 //
-// **The measurement.** Live UDR on 10.6.101, 3 September 2026 (issue #54). A
-// config stating the ordinary pair of intentions — trusted reaches IoT, IoT does
-// not reach trusted — planned clean and left the pair like this:
+// **The bug.** Live UDR on 10.6.101, 3 September 2026 (issue #54). A config
+// stating the ordinary pair of intentions — trusted reaches IoT, IoT does not
+// reach trusted — planned clean and left the pair like this:
 //
 //	10000        Ellingson -> Gibson     'Ellingson off the Gibson'      BLOCK  ALL
 //	10000        Gibson    -> Ellingson  'Gibson to Ellingson'           ALLOW  ALL
@@ -1079,158 +1081,293 @@ func narrowsTarget(target string) bool { return target != "" && target != anyMat
 //
 // The companion was created exactly as ADR-0022 measured and is never reached:
 // the operator's block sits 20000 above it, so the reply to a request the allow
-// permits is dropped. Confirmed at packet level in the same session by moving
-// one variable — disabling the block brought replies back, re-enabling it took
-// them away again — and there was nothing an operator could write to avoid it,
-// because 10000 is the Controller's choice rather than anybody's request. So
-// unifig was creating blocks that structurally outranked the companions of its
-// own allows.
+// permits is dropped. Confirmed at packet level in the same session by moving one
+// variable — disabling the block brought replies back, re-enabling it took them
+// away again. 10000 is the Controller's choice rather than anybody's request, so
+// there was nothing an operator could write to avoid it: unifig was creating
+// blocks that structurally outranked the companions of its own allows.
 //
-// **Why this value.** Three things fix it, and the recording is where two of
-// them are read off. The band the Controller generates into is per pair rather
-// than per site — every pair in the 86-policy recording starts again at 30000 —
-// and it runs 30000 to 30008 before jumping to the catch-all at 2147483647.
+// **`index` is not writable, and that is measured rather than assumed.** The
+// first attempt at this named the index in the create body. On the same router,
+// 4 September 2026, on a throwaway `Dmz -> Dmz` policy deleted afterwards:
 //
-//   - Above the companion tier at 30000, which is the whole point: the return
-//     rule has to be reached before a policy unifig created is.
-//   - Above the rest of the generated band too, so it collides with no index
-//     anyone has read off a Controller. A tie is an ordering nobody has
-//     measured, and this project does not ship one of those.
-//   - Below the catch-all at 2147483647, so ADR-0018 and ADR-0029 keep the
-//     arguments they rest on: a policy the operator creates over the
-//     Controller's own still takes effect, and a stored policy still outranks
-//     the generated one sharing its key.
+//	POST  index: 40000  ->  201, stored at 10000
+//	PUT   index: 40000  ->  200, stored at 10000
 //
-// **Only a verdict that closes a path asks for it**, and the recording is what
-// rules out asking on every policy. The generated tier is not all return rules:
-// `Isolated Networks`, an enabled `BLOCK ALL`, sits at 30000 as well — on
-// `Internal -> Internal`, `Internal -> Hotspot` and `Internal -> Dmz` — and so
-// do `Block Invalid Traffic` and, one tier down, `Post-Authorization
-// Restrictions` and `Block Unauthorized Traffic`. An `allow` moved to 40000 would
-// sit under those, which is issue #54's own defect pointing the other way: a
-// policy the file states plainly, doing nothing. And there is no third value that
-// escapes both, because the companion and `Isolated Networks` are *at the same
-// index* — anything that yields to one yields to the other.
+// The Controller takes the field on both verbs and ignores it. So the field is
+// the Controller's to assign and the *position* is what a client may ask for,
+// through a different endpoint entirely.
 //
-// So each verdict is placed by what it needs in order to mean what it says, which
-// is the Controller's own asymmetry rather than unifig's: a companion is always
-// an `ALLOW` on the *reverse* pair, so only a policy that blocks can harm one,
-// and only a policy that allows is harmed by the generated blocks on its own
-// pair. An `allow` therefore asks for nothing and keeps the Controller's 10000,
-// exactly as before this change.
+// **`PUT .../firewall-policies/batch-reorder` is that endpoint**, measured in the
+// same session. It takes a pair and two lists of stored policy ids, and the
+// Controller assigns the indices:
 //
-// **What that decides as a side effect is named rather than dressed up as a
-// choice**: on one pair a `block` unifig created now sits below an `allow` unifig
-// created. That is not unifig sorting the operator's policies on their merits —
-// the option that would do that is issue #54's option 1, still declined. It is
-// what falls out, and what it replaces is not an order but a tie: two policies
-// unifig created on one pair were both at 10000, and which of them won was
-// whatever the Controller does with a tie, which nobody has measured either.
+//	after_predefined_ids   ->  40000
+//	before_predefined_ids  ->  10000, then 10001, …
 //
-// **Whether the Controller honours it is unmeasured**, and that is why
-// createFirewallPolicy reads the answer back. Nobody has sent a create naming an
-// index; issue #54 named it as the thing option 3 was blocked on, and it is a
-// question only hardware settles. What is known is that the field goes on the
-// wire on an update already — an update carries the whole stored object back,
-// `index` and all, and the object comes back holding it (ADR-0021). That is
-// weaker than it looks: an endpoint that ignored the field entirely would answer
-// a PUT the same way, since the value sent was the value already stored. It rules
-// out "a field the DTO has never heard of" and nothing more, and what a POST does
-// with one is a separate question again — this endpoint family has answered the
-// same question oppositely for two collections before (ADR-0021, ADR-0024). The
-// read-back is what says which answer this Controller gave.
-const unifigPolicyIndex = 40000
+// Which is the whole answer: `before` is where a create lands on its own, `after`
+// is below the tier the companions are generated into, and 40000 is the
+// Controller's own number for it rather than one unifig picked.
+//
+// **The reorder is a total statement about a pair.** Naming one of two stored
+// policies on a pair answered
+// `400 api.err.ShouldIncludeFirewallPolicyInBatchUpdate`; naming both answered
+// 200 and placed them as asked. So unifig cannot move one policy without saying
+// where every stored policy on that pair goes — including the ones the config
+// does not manage. What it does with those is keep them exactly where they are
+// (see reorderedPair), which is ADR-0004's rule reaching a place ADR-0004 did not
+// anticipate: the file states what unifig manages, and an endpoint that will only
+// take the whole list is not a reason to start managing the rest.
+const (
+	// beforePredefined and afterPredefined are the two sides of the Controller's
+	// generated tier, named as the endpoint names them.
+	beforePredefined = "before the return rules"
+	afterPredefined  = "after the return rules"
 
-// askedIndex is the index a create names, and zero — which `omitempty` drops
-// from the body — for a policy that names none.
+	// companionPolicyIndex is where the Controller generates the companion
+	// return rule for a policy unifig created: 30000, read off the router in
+	// ADR-0026's write session and again on both companions in issue #54's
+	// reading. It is the boundary between the two sides, and it is read rather
+	// than assumed for one reason — the after side is 40000 and the before side
+	// 10000, so any split between them would do, and this is the one that says
+	// *why* there are two sides at all.
+	companionPolicyIndex = 30000
+)
+
+// placedAfterPredefined is whether a live policy already sits below the tier the
+// Controller generates companions into.
 //
-// A policy is placed by what its verdict needs, for the reasons unifigPolicyIndex
-// gives. It reads the verdict rather than taking a boolean, because the two
-// callers that would have to agree about that boolean are this and the plan.
-func askedIndex(desired config.FirewallPolicy) int {
-	if !yieldsToTheCompanionTier(desired) {
-		return 0
-	}
-	return unifigPolicyIndex
+// This is unifig reading `index`, which ADR-0018 said it did not do, and the
+// narrowing is deliberate and small: it reads the field to know which side of one
+// boundary a policy is on, and still evaluates no rule set and still decides
+// nothing from the indices of policies relative to each other (ADR-0033).
+func placedAfterPredefined(policy unifi.FirewallZonePolicy) bool {
+	return policy.Index > companionPolicyIndex
 }
 
-// yieldsToTheCompanionTier is whether this policy has to sit below the tier the
-// Controller generates companions into: the verdicts that close a path, because
-// a companion is an `ALLOW` and only a block can stop one being reached.
-func yieldsToTheCompanionTier(desired config.FirewallPolicy) bool {
+// belongsAfterPredefined is whether the config wants this policy below the
+// companion tier: the verdicts that close a path, and no others.
+//
+// A companion is always an `ALLOW`, and always on the *reverse* pair, so only a
+// policy that blocks can stop one being reached. An `allow` is left where the
+// Controller puts it, and that is not symmetry for its own sake — the generated
+// tier is not all return rules. `Isolated Networks` is an enabled `BLOCK ALL` at
+// 30000 on `Internal -> Internal`, `Internal -> Hotspot` and `Internal -> Dmz`,
+// with `Block Invalid Traffic`, `Post-Authorization Restrictions` and `Block
+// Unauthorized Traffic` in the same band. An `allow` moved below those would be a
+// policy the file states plainly and the firewall does not have, which is issue
+// #54's own defect pointing the other way. There is no third position that
+// escapes both, because the companion and `Isolated Networks` are at the *same
+// index*: each verdict is placed by what it needs in order to mean what it says.
+func belongsAfterPredefined(desired config.FirewallPolicy) bool {
 	return blockingActions[desired.Action]
 }
 
-// policyPlacements is where the Controller actually put the policies an apply
-// created, kept for the ones it did not put where unifig asked.
+// zonePair is the pair of Zones a policy governs, by the names the config uses.
+// It is policyKey without the name, because placement is a property of the pair
+// rather than of one policy on it.
+type zonePair struct{ source, destination string }
+
+// pairsCarryingCompanions is every pair a Return Rule sits on, which is every
+// pair where a policy above the companion tier can do the harm issue #54 measured.
 //
-// It is shared by every policy create in one plan and read once when they have
-// all run, which is the same arrangement bindings has and for the same reason: a
-// write learns something at the moment it runs that the plan could not know when
-// it was made. Here what it learns is the answer to unifigPolicyIndex's open
-// question, and the operator's own site is the only place it can be asked.
+// **This is what keeps the blast radius honest.** A blocking policy only outranks
+// a companion where there *is* a companion: a block on `Internal -> External` has
+// no reply traffic to strand, and moving it would be unifig reordering a firewall
+// for no reason at all. Before this gate, a brownfield `export` produced a config
+// whose first `plan` proposed moving every blocking policy on the site — which is
+// a lot of change to justify with a bug that reaches almost none of them.
 //
-// A mismatch is not a failed change — the policy was created, and every field
-// the config states landed — so it is not an error and does not stop the apply.
-// It is the third thing a Caveat is, arriving one stage later: an absence with a
-// reason, invisible unless something says it out loud.
-type policyPlacements struct {
-	elsewhere []policyPlacement
+// It is read from two places because a companion can arrive from two, and both
+// are known before anything is written:
+//
+//   - a live policy that is a Return Rule, which is the companion of an allow
+//     somebody already made, unifig's or the Controller's own; and
+//   - an allow this very config states on the *reverse* pair, which is where the
+//     Controller will put its companion (ADR-0022). Reading the config rather than
+//     waiting for the write is what makes one apply enough: a block and the allow
+//     whose companion it would outrank can be created in either order, and the
+//     order is whatever the names happened to sort to.
+func pairsCarryingCompanions(
+	cfg config.Config,
+	live []unifi.FirewallZonePolicy,
+	facts zoneFacts,
+	bound bindings,
+) map[zonePair]bool {
+	carrying := map[zonePair]bool{}
+	for _, policy := range live {
+		if !returnRule(policy) {
+			continue
+		}
+		source, destination := bound.zoneName(policy.Source.ZoneID), bound.zoneName(policy.Destination.ZoneID)
+		if source == "" || destination == "" {
+			continue
+		}
+		carrying[zonePair{source: source, destination: destination}] = true
+	}
+	for _, desired := range cfg.FirewallPolicies {
+		if !asksForReturnRule(desired, facts) {
+			continue
+		}
+		// The companion is generated on the reverse pair, which is the pair a
+		// block would be on.
+		carrying[zonePair{source: desired.Destination, destination: desired.Source}] = true
+	}
+	return carrying
 }
 
-// policyPlacement is one policy the Controller put somewhere other than where
-// unifig asked, in the terms the operator needs to go and look at it.
-type policyPlacement struct {
-	name        string
-	asked, held int
-}
-
-func (p *policyPlacements) record(name string, asked, held int) {
-	if p == nil || asked == held {
-		return
-	}
-	p.elsewhere = append(p.elsewhere, policyPlacement{name: name, asked: asked, held: held})
-}
-
-// report is what apply says about the policies the Controller placed itself, and
-// nothing at all where it honoured every one — a notice on every apply is one an
-// operator reads past by the third (ADR-0012).
+// placementField is the plan line for a policy on the wrong side of the
+// companion tier, and nothing at all for one already on the right side.
 //
-// It names the indices rather than only the fact, because the repair is in the
-// Controller's UI and an operator cannot make it without knowing what to drag
-// where. And it says what the ordering costs rather than only what it is: an
-// index is a number about nothing until it is put beside the return rule it
-// outranks.
-func (p *policyPlacements) report() string {
-	if p == nil || len(p.elsewhere) == 0 {
-		return ""
+// It is a field of the policy's change rather than a change of its own, on the
+// same reasoning as the return-rule field: the operator wrote one policy and what
+// they need to read is everything about to happen to it. It is also what makes
+// this converge, which the create-time-only version did not — every site that had
+// this bug when it was found has its policies already created, so a fix that only
+// ran on a create would have fixed nobody's firewall including the one it was
+// reported from.
+func placementField(
+	desired config.FirewallPolicy,
+	live unifi.FirewallZonePolicy,
+	carrying map[zonePair]bool,
+) (Field, bool) {
+	if !carrying[zonePair{source: desired.Source, destination: desired.Destination}] {
+		return Field{}, false
 	}
-
-	noun := kinds[FirewallPolicy].many
-	if len(p.elsewhere) == 1 {
-		noun = kinds[FirewallPolicy].one
+	// A Generated Policy is not one of these, and the exemption is the same one
+	// it has everywhere else: it has no document handle, so the reorder endpoint
+	// has nothing to name it by, and it is what the two lists are named
+	// *relative to* rather than a thing in them (ADR-0027, ADR-0028). Without
+	// this every generated policy reads as misplaced, because the Controller's
+	// own sit at 30000 and 2147483647 — which is above the boundary by
+	// construction.
+	if generated(live) {
+		return Field{}, false
 	}
-	var out strings.Builder
-	fmt.Fprintf(&out, "\nThe Controller placed %d %s where it chose rather than where unifig asked:\n",
-		len(p.elsewhere), noun)
-	for _, at := range p.elsewhere {
-		fmt.Fprintf(&out, "  %q asked for index %d and was placed at %d\n", at.name, at.asked, at.held)
+	want := belongsAfterPredefined(desired)
+	if want == placedAfterPredefined(live) {
+		return Field{}, false
 	}
-	fmt.Fprintf(&out,
-		"A policy above the companion tier at %d outranks the return rule of an allow unifig made, "+
-			"which drops the reply to traffic that allow permits. Putting it back is a reordering unifig does not do.\n",
-		companionPolicyIndex)
-	return out.String()
+	from, to := beforePredefined, afterPredefined
+	if !want {
+		from, to = afterPredefined, beforePredefined
+	}
+	return Field{Name: "placement", From: from, To: to}, true
 }
 
-// companionPolicyIndex is where the Controller puts the companion return rule it
-// generates for a policy unifig created: 30000, read off the router in ADR-0026's
-// write session and again on both companions in issue #54's live reading.
+// placementNote is what a create says about where the policy will end up, for
+// the same reason returnRuleNote says the companion is coming: unifig is about to
+// do something the config does not state and the plan may not be silent about it.
+func placementNote(desired config.FirewallPolicy, carrying map[zonePair]bool) []string {
+	if !belongsAfterPredefined(desired) {
+		return nil
+	}
+	if !carrying[zonePair{source: desired.Source, destination: desired.Destination}] {
+		return nil
+	}
+	return []string{
+		"the Controller creates this above the return rules it generates, so unifig will move it below them; " +
+			"a policy above one drops the reply to traffic an allow permits",
+	}
+}
+
+// reorderPair puts every stored policy on one pair on the side it belongs, and
+// is what both the create and the update call once the policy itself is written.
 //
-// It is the tier unifigPolicyIndex has to sit below, and it is named here rather
-// than folded into that constant because the two are different facts: one is the
-// Controller's, measured, and the other is unifig's request.
-const companionPolicyIndex = 30000
+// It reads the pair at the moment it runs rather than at plan time, for the
+// reason every write here does: a policy created earlier in this same apply is
+// one this pair now holds. That read is the price of an endpoint that will not
+// take a partial list.
+func reorderPair(
+	ctx context.Context,
+	client unifi.Client,
+	site string,
+	cfg config.Config,
+	source, destination string,
+	bound bindings,
+) error {
+	sourceID, err := bound.zoneID(source)
+	if err != nil {
+		return err
+	}
+	destinationID, err := bound.zoneID(destination)
+	if err != nil {
+		return err
+	}
+
+	live, err := listFirewallPolicies(ctx, client, site)
+	if err != nil {
+		return err
+	}
+	before, after := reorderedPair(cfg, live, sourceID, destinationID, bound)
+	if len(before)+len(after) == 0 {
+		return nil
+	}
+	_, err = client.ReorderFirewallPolicies(ctx, site, &unifi.FirewallPolicyOrderUpdate{
+		SourceZoneId:        sourceID,
+		DestinationZoneId:   destinationID,
+		BeforePredefinedIds: before,
+		AfterPredefinedIds:  after,
+	})
+	return err
+}
+
+// reorderedPair is the two lists the reorder endpoint wants: every stored policy
+// on this pair, on the side it belongs, in the order it is in now.
+//
+// **A policy the config does not name keeps the side it is on.** That is the
+// whole of what stops an endpoint requiring the complete list from turning into
+// unifig managing the complete list (ADR-0004). Only a policy the file states
+// moves, and it moves because its verdict says where it has to be.
+//
+// Generated Policies are left out entirely rather than sorted: they are what the
+// two lists are named *relative to*, and they have no document handle to name
+// anyway (ADR-0027, ADR-0028). A companion is one of those twice over.
+//
+// The order within each list is the order the Controller already has, because a
+// list is a statement about relative order and unifig has nothing to say about
+// the relative order of two policies the operator wrote. That is issue #54's
+// option 1, still declined for ADR-0004's reason.
+func reorderedPair(
+	cfg config.Config,
+	live []unifi.FirewallZonePolicy,
+	sourceID, destinationID string,
+	bound bindings,
+) (before, after []string) {
+	managed := make(map[policyKey]config.FirewallPolicy, len(cfg.FirewallPolicies))
+	for _, desired := range cfg.FirewallPolicies {
+		managed[keyOfDesiredPolicy(desired)] = desired
+	}
+
+	onThePair := make([]unifi.FirewallZonePolicy, 0, len(live))
+	for _, policy := range live {
+		if policy.Source.ZoneID != sourceID || policy.Destination.ZoneID != destinationID {
+			continue
+		}
+		if generated(policy) {
+			continue
+		}
+		onThePair = append(onThePair, policy)
+	}
+	slices.SortStableFunc(onThePair, func(a, b unifi.FirewallZonePolicy) int {
+		return a.Index - b.Index
+	})
+
+	for _, policy := range onThePair {
+		side := placedAfterPredefined(policy)
+		if key, keyed := keyOfLivePolicy(policy, bound); keyed {
+			if desired, named := managed[key]; named {
+				side = belongsAfterPredefined(desired)
+			}
+		}
+		if side {
+			after = append(after, policy.ID)
+		} else {
+			before = append(before, policy.ID)
+		}
+	}
+	return before, after
+}
 
 // createFirewallPolicy is the Change for a policy the Controller does not have.
 //
@@ -1238,7 +1375,13 @@ const companionPolicyIndex = 30000
 // one turned that way is, and more directly: the Controller's own predefined
 // allow sits at the lowest precedence there is, so a policy written over it is
 // one that takes effect.
-func createFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts, bound bindings, placedPolicies *policyPlacements) Change {
+func createFirewallPolicy(
+	desired config.FirewallPolicy,
+	cfg config.Config,
+	facts zoneFacts,
+	bound bindings,
+	carrying map[zonePair]bool,
+) Change {
 	risk := ""
 	if closesTheGateway(config.FirewallPolicy{}, desired, facts) {
 		risk = gatewayRisk
@@ -1247,7 +1390,7 @@ func createFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts, bound 
 		Action: Create,
 		Kind:   FirewallPolicy,
 		Name:   desired.Name,
-		Fields: setPolicyFields(desired, facts),
+		Fields: setPolicyFields(desired, facts, carrying),
 		Risk:   risk,
 		write: func(ctx context.Context, client unifi.Client, site string) error {
 			// Read at the moment of writing rather than the moment of planning:
@@ -1257,31 +1400,24 @@ func createFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts, bound 
 			if err := overwriteManagedPolicy(&policy, desired, bound); err != nil {
 				return err
 			}
-			created, err := client.CreateFirewallZonePolicy(ctx, site, &policy)
-			if err != nil {
+			if _, err := client.CreateFirewallZonePolicy(ctx, site, &policy); err != nil {
 				return err
 			}
-			// The answer to unifigPolicyIndex's open question, taken from the
-			// object the Controller sent back rather than from the one unifig
-			// built. A Controller that ignored the request is one whose firewall
-			// does not have the ordering unifig relies on, and saying so is the
-			// difference between an assumption and a measurement.
+			// The Controller puts a created policy above the tier it generates
+			// companions into, and `index` is not a field a client may set
+			// (ADR-0033), so the position is asked for afterwards or not at all.
 			//
-			// A nil body and a zero index are both the Controller declining to
-			// answer rather than answering a different number, and neither is
-			// reported: `index` is `omitempty` on the way in and absent on the
-			// way back is indistinguishable from zero, so a response carrying no
-			// index would otherwise read as "placed at 0" on every apply. Zero is
-			// safe to read that way because it is not a value any Controller has
-			// been seen using — the lowest index in the 86-policy recording is
-			// 10000 — and a notice that fires on every apply is one an operator
-			// stops reading (ADR-0012). The shape of a create response is as
-			// unmeasured as the semantics this is here to measure, which is the
-			// whole reason to be careful with it.
-			if created != nil && created.Index != 0 {
-				placedPolicies.record(desired.Name, policy.Index, created.Index)
+			// A failure here leaves the policy created and misplaced, and is
+			// returned rather than swallowed. That is what makes it recoverable:
+			// apply stops, says what did and did not happen, and the next plan
+			// sees a live policy on the wrong side and proposes the placement as
+			// a change of its own. A notice instead of an error would leave a
+			// firewall that does not mean what the file says and nothing to make
+			// it converge.
+			if len(placementNote(desired, carrying)) == 0 {
+				return nil
 			}
-			return nil
+			return reorderPair(ctx, client, site, cfg, desired.Source, desired.Destination, bound)
 		},
 	}
 }
@@ -1291,9 +1427,11 @@ func createFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts, bound 
 func updateFirewallPolicy(
 	desired config.FirewallPolicy,
 	live unifi.FirewallZonePolicy,
+	cfg config.Config,
 	facts zoneFacts,
 	bound bindings,
 	held policyNameSet,
+	carrying map[zonePair]bool,
 ) (Change, bool) {
 	current, _ := fromLivePolicy(live, bound)
 
@@ -1302,6 +1440,14 @@ func updateFirewallPolicy(
 	// `create_allow_respond`, for the reason returnRuleField gives: the flag is
 	// the request, and the companion is what an operator has.
 	fields := changedPolicyFields(current, desired, facts, live.CreateAllowRespond, held[returnRuleName(live.Name)])
+	// Where the policy sits is the one field here that is not written through the
+	// policy endpoint at all, and the one that can be the only thing differing —
+	// which is exactly the case issue #54 was reported from, where `plan` said
+	// "No changes" about a firewall that was dropping replies.
+	placement, misplaced := placementField(desired, live, carrying)
+	if misplaced {
+		fields = append(fields, placement)
+	}
 	if len(fields) == 0 {
 		return Change{}, false
 	}
@@ -1347,7 +1493,18 @@ func updateFirewallPolicy(
 			// an operator had narrowed it to, in the same request and without
 			// saying so (ADR-0021, issue #35). So the object that goes back is
 			// the one the Controller sent.
-			return mergeIntoStoredPolicy(ctx, client, site, live.ID, desired, facts, bound)
+			if err := mergeIntoStoredPolicy(ctx, client, site, live.ID, desired, facts, bound); err != nil {
+				return err
+			}
+			// The placement goes through a different endpoint, so it is a second
+			// request or none. It runs only where the plan said it would, because
+			// a reorder is a statement about every stored policy on the pair and
+			// making one nobody asked for is how an operator's own ordering
+			// quietly stops being theirs (ADR-0033).
+			if !misplaced {
+				return nil
+			}
+			return reorderPair(ctx, client, site, cfg, desired.Source, desired.Destination, bound)
 		},
 	}, true
 }
@@ -1507,9 +1664,9 @@ func deleteFirewallPolicy(live unifi.FirewallZonePolicy, bound bindings) Change 
 // setPolicyFields lists what a create would set. All three are always listed,
 // because the schema requires all three: there is no such thing as a policy the
 // config states only part of.
-func setPolicyFields(desired config.FirewallPolicy, facts zoneFacts) []Field {
+func setPolicyFields(desired config.FirewallPolicy, facts zoneFacts, carrying map[zonePair]bool) []Field {
 	fields := []Field{
-		{Name: "action", To: desired.Action, Notes: returnRuleNote(desired, facts)},
+		{Name: "action", To: desired.Action, Notes: append(returnRuleNote(desired, facts), placementNote(desired, carrying)...)},
 		{Name: "source", To: desired.Source},
 		{Name: "destination", To: desired.Destination},
 		// The fourth is always listed and the fifth only sometimes, which is the
@@ -1570,11 +1727,12 @@ func portList(ports []config.Port) any {
 // written without a narrowing does not keep it off the admin page. It keeps it
 // off the network.
 //
-// **That reasoning used to say "above every one of them" and no longer can.** A
-// policy unifig creates asks for index 40000 rather than taking the Controller's
-// 10000 (ADR-0033), so it sits below `Allow mDNS` at 30000 now. The note is
-// unchanged because what it is about is unchanged: the services a custom Zone
-// loses are the ones riding the catch-all, and 40000 still outranks 2147483647.
+// **That reasoning used to say "above every one of them" and now holds only where
+// the policy stays put.** A blocking policy on a pair carrying a Return Rule is
+// reordered to 40000 (ADR-0033), and there it sits below `Allow mDNS` at 30000.
+// The note is unchanged either way, because what it is about is unchanged: the
+// services a custom Zone loses are the ones riding the catch-all `Allow All
+// Traffic` at 2147483647, which 40000 still outranks.
 //
 // The wording hedges for ADR-0018's reason and stops where ADR-0018 stops. unifig
 // reads no `index` and no `enabled` and will not evaluate a rule set, so this is
@@ -2245,10 +2403,6 @@ func newFirewallPolicy(desired config.FirewallPolicy, facts zoneFacts) unifi.Fir
 		Protocol:            "all",
 		IPVersion:           "BOTH",
 		ConnectionStateType: "ALL",
-		// Where the policy sits in the Controller's evaluation order, asked for
-		// on a verdict that closes a path and left to the Controller on one that
-		// opens one. See unifigPolicyIndex and yieldsToTheCompanionTier.
-		Index: askedIndex(desired),
 		// This asks the Controller to generate the companion return rule, and
 		// it is a request rather than a property: measured on the live migrated
 		// UDR on 18 August 2026, creating one allow policy with it true made the
