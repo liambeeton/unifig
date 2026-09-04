@@ -87,5 +87,12 @@ at all.
   table was tested against that one database. A Network version that wanted a
   different MongoDB would be a change to `container.database` and a fact worth
   recording here rather than a row in the table.
+  **It moved to `mongo:8.2` on 4 September 2026**, and not for a Network version:
+  `mongo:8` refuses to start at all on a Docker host running a Linux kernel of
+  6.19 or newer (SERVER-121912), which took the whole suite with it — the
+  Controller came up, could not reach `MONGO_HOST`, and timed out five minutes
+  later pointing at itself. Every version in the table was re-run against 8.2 and
+  passed. That this pin is covered by nothing, and that the rig's port check
+  reported a dying database as ready, is issue #60.
 - The recording is untouched by any of this. It came off a physical UDR
   (ADR-0011) and says nothing about which container the rest of the suite boots.
