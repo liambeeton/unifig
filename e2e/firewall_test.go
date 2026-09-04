@@ -1389,6 +1389,92 @@ func TestPlanSaysTheReturnRuleIsMissingWhenNothingElseDiffers(t *testing.T) {
 	}
 }
 
+// The row the guard could not see, and the one that matters: the request is
+// already what the verdict wants, and the companion is not there.
+//
+// It is the same firewall as the test above — a policy allowing with no
+// `<name> (Return)` beside it — reached by the other of the two histories that
+// lead to it, and until issue #55 the plan answered the two differently. The
+// flag was compared and the companion was not, so a policy whose flag was
+// already right read as "nothing to say" whatever the site was holding. No
+// field means no change, so no write goes out, so the companion is never
+// regenerated: the state is invisible and it perpetuates itself.
+//
+// What ADR-0026 superseded ADR-0025 to promise is that a companion follows the
+// config rather than the policy's history. Two policies allowing the same pair
+// under the same config text have to plan the same, and this is the second of
+// them.
+func TestPlanSaysTheReturnRuleIsMissingWhenTheRequestIsAlreadyRight(t *testing.T) {
+	r := startReplay(t)
+	// The default `create_allow_respond` is true, which is the point: the
+	// request agrees with the verdict and there is still no companion.
+	r.seedPolicy(t, "Asked And Never Got One", "ALLOW", "Internal", "Dmz", nil)
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Asked And Never Got One
+    action: allow
+    source: Internal
+    destination: Dmz
+`)
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d — a policy allowing without its companion is a change whatever its flag says:\n%s",
+			res.ExitCode, exitChangesPending, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{
+		`~ firewall-policy "Asked And Never Got One"`,
+		"return-rule",
+		`"Asked And Never Got One (Return)"`,
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan does not say the return rule is missing (%q missing):\n%s", fragment, stdout)
+		}
+	}
+	if strings.Contains(stdout, "action:") {
+		t.Errorf("the plan reports a verdict change where only the return rule differs:\n%s", stdout)
+	}
+}
+
+// The fourth row, and the mirror of the third: the request is already false,
+// the verdict wants no companion, and the site is holding one anyway.
+//
+// Nothing measured says a companion outlives the request that made it — ADR-0022
+// watched the Controller reclaim one with its parent, and #40's probe watched the
+// flag drive it in both directions on an update. What the plan owes an operator
+// is a statement about the companion they have, not about the flag, and the two
+// come apart here exactly as they do above.
+func TestPlanSaysTheReturnRuleGoesWhenTheRequestIsAlreadyFalse(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Shut But Answering", "BLOCK", "Internal", "Dmz", map[string]any{
+		"create_allow_respond": false,
+	})
+	r.seedCompanion(t, "Shut But Answering", "Dmz", "Internal")
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Shut But Answering
+    action: block
+    source: Internal
+    destination: Dmz
+`)
+	if res.ExitCode != exitChangesPending {
+		t.Fatalf("plan exited %d, want %d — a policy blocking while its companion stands is a change:\n%s",
+			res.ExitCode, exitChangesPending, res.Stdout)
+	}
+	stdout := string(res.Stdout)
+	for _, fragment := range []string{
+		`~ firewall-policy "Shut But Answering"`,
+		"return-rule",
+		`"Shut But Answering (Return)"`,
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Errorf("the plan does not say the return rule goes (%q missing):\n%s", fragment, stdout)
+		}
+	}
+	if strings.Contains(stdout, "action:") {
+		t.Errorf("the plan reports a verdict change where only the return rule differs:\n%s", stdout)
+	}
+}
+
 // The whole of issue #40, stated as the thing an operator would notice: one
 // config file, two histories, one firewall.
 //
@@ -1422,6 +1508,28 @@ func TestTheSameConfigGivesTheSameFirewallWhateverThePolicysHistory(t *testing.T
 		if !r.hasPolicyNamed(t, companion) {
 			t.Errorf("a policy created blocking and later allowed has no %q, so the firewall still depends on its history",
 				companion)
+		}
+	})
+
+	// The third history, and the one issue #55 found the plan silent about: the
+	// request already true and the companion gone anyway. It is the whole harm in
+	// one subtest — the plan said nothing, so nothing was written, so the
+	// companion was never regenerated — and it is the half the plan tests cannot
+	// reach, because here the body that goes out is the one already stored and
+	// the convergence rests entirely on the write happening at all.
+	//
+	// **What it pins is unifig's half.** The stand-in regenerates from the flag's
+	// value rather than from the flag changing, which is a model of ADR-0026's
+	// readings and not one of them: that session moved the flag, and no one has
+	// watched the Controller answer a PUT re-sending one already true. So this
+	// says the write goes out where it has to; whether the Controller does its
+	// half is the measurement ADR-0034 asks for.
+	t.Run("asking already, with nothing beside it", func(t *testing.T) {
+		r := startReplay(t)
+		r.seedPolicy(t, "Let them answer", "ALLOW", "Internal", "Dmz", nil)
+		applyFirewall(t, r, body)
+		if !r.hasPolicyNamed(t, companion) {
+			t.Errorf("a policy already asking for %q still has none, so the state repairs no way but by hand", companion)
 		}
 	})
 }
@@ -3254,6 +3362,13 @@ func TestExportWritesTheStoredPolicyAndStillLeavesOutTheGeneratedOneItShadows(t 
 	r.seedGeneratedPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz", 2147483647)
 	r.seedStoredPolicy(t, "Allow All Traffic", "ALLOW", "Dmz", "Dmz")
 	live := r.livePolicies(t)
+	// The companion the stored allow asked for, because it asked: an allow
+	// carrying `create_allow_respond` with nothing beside it is a site no
+	// Controller hands back, and it is the state a plan now says out loud
+	// (ADR-0034). It is seeded after the count on purpose — export leaves a
+	// Return Rule out on `connection_state_type` rather than on the `_id` shape,
+	// so it is not one of the policies the notice below speaks for (ADR-0028).
+	r.seedCompanion(t, "Allow All Traffic", "Dmz", "Dmz")
 
 	exported := exportFirewall(t, r)
 
@@ -3550,6 +3665,7 @@ func TestCreatingAPolicyWithNoNarrowingSendsAllProtocolsAndAnyPorts(t *testing.T
 func TestAPolicyNarrowedInTheControllerKeepsItWhenTheFileStatesNoPorts(t *testing.T) {
 	r := startReplay(t)
 	r.seedPolicy(t, "Allow DNS out", "ALLOW", "Internal", "Dmz", narrowedTo(t, r, "Dmz", "tcp", "53"))
+	r.seedCompanion(t, "Allow DNS out", "Dmz", "Internal")
 
 	res := planFirewall(t, r, `firewall-policies:
   - name: Allow DNS out
@@ -3761,6 +3877,7 @@ func TestExportWritesAPolicyWhosePortsSitBesideAProtocolWithNoneAndCountsIt(t *t
 		"protocol":    "all",
 		"destination": endOn(t, r, "Dmz", map[string]any{"port_matching_type": "SPECIFIC", "port": "53"}),
 	})
+	r.seedCompanion(t, "Wide and narrow", "Dmz", "Internal")
 
 	exported := exportFirewall(t, r)
 
@@ -3824,6 +3941,7 @@ func TestExportWritesAPolicyWithAnInvertedPortMatchAndCountsIt(t *testing.T) {
 			"match_opposite_ports": true,
 		}),
 	})
+	r.seedCompanion(t, "All but DNS", "Dmz", "Internal")
 
 	exported := exportFirewall(t, r)
 

@@ -1451,7 +1451,8 @@ func updateFirewallPolicy(
 	// asked of the live collection rather than of the policy's own
 	// `create_allow_respond`, for the reason returnRuleField gives: the flag is
 	// the request, and the companion is what an operator has.
-	fields := changedPolicyFields(current, desired, facts, live.CreateAllowRespond, held[returnRuleName(live.Name)])
+	fields := changedPolicyFields(
+		current, desired, facts, live.CreateAllowRespond, companionOf(live, held))
 	// Where the policy sits is the one field here that is not written through the
 	// policy endpoint at all, and the one that can be the only thing differing —
 	// which is exactly the case issue #54 was reported from, where `plan` said
@@ -1877,6 +1878,44 @@ func parentOfReturnRule(name string) (string, bool) {
 
 const returnRuleSuffix = " (Return)"
 
+// returnRuleCompanion is what the plan knows about a policy's Return Rule: what
+// the site is holding, and whether what it is holding is evidence about this
+// policy at all.
+//
+// The second half is there for the Generated Policy, and it is the question
+// `generated` asks everywhere else arriving where the companion is read rather
+// than a special case bolted on. `<name> (Return)` is the Controller's scheme for
+// a policy unifig created; its own companions carry the other name policyNameSet
+// describes. So the absence of a `<name> (Return)` beside a Generated Policy is
+// not a companion missing — it is a name that policy's companion was never going
+// to carry. Nothing to write to either (ADR-0027), which is the same answer
+// arriving from the other direction: the companion half of the guard below fires
+// only where unifig has something to write.
+//
+// Without it, a file agreeing with a generated allow in every word it states
+// would raise a Caveat about a companion nobody is missing — on any of the
+// fifty-two `ALLOW` policies among the eighty-six a migrated router ships, since
+// every one of them carries the flag true and has no `<name> (Return)`. Which is
+// TestAPolicyTheControllerGeneratesAndTheFileAgreesWithIsQuiet, in the negative.
+type returnRuleCompanion struct {
+	// held is whether a policy by the name this policy's companion would carry
+	// is somewhere on the site.
+	held bool
+	// named is whether `<name> (Return)` is that name — true for a policy unifig
+	// could have made a companion for, false for one the Controller generates.
+	named bool
+}
+
+// companionOf reads the pair off a live policy and the site's names.
+//
+// It is a constructor rather than two fields filled in at the call site because
+// the halves are one rule: a name is evidence about a policy only where it is
+// the name that policy's companion would carry, and filling them separately is
+// how the two come to disagree.
+func companionOf(live unifi.FirewallZonePolicy, held policyNameSet) returnRuleCompanion {
+	return returnRuleCompanion{held: held[returnRuleName(live.Name)], named: !generated(live)}
+}
+
 // returnRuleField is what an update does to the companion return rule, said as a
 // field of the change rather than as a note on one.
 //
@@ -1901,30 +1940,64 @@ const returnRuleSuffix = " (Return)"
 // Empty when the two ends agree, which is the ordinary case: a policy that
 // allowed and still allows keeps its companion, and a plan does not mention what
 // is not moving.
+//
+// **Both ends have to be asked, and for a while only one of them was.** The
+// guard below compared the request and returned early, so what the Controller is
+// actually holding never reached the comparison at all — and the state that
+// matters most is the one that hides in exactly that gap: an `allow` policy
+// whose flag is already true with no companion behind it. The plan rendered no
+// field, so no field meant no change, so no write went out, so the companion was
+// never regenerated. Invisible and self-perpetuating, which is the opposite of
+// what ADR-0026 superseded ADR-0025 to promise (ADR-0034, issue #55).
+//
+// The last link in that chain is inferred rather than measured, and saying so is
+// the point of saying it at all. ADR-0026 moved the flag — false to true, 87 to
+// 88 — and what an update here re-sends is a flag that was already true. That the
+// Controller answers it by generating the companion is this codebase reading the
+// flag as a statement of what the site should hold rather than as an edit, which
+// is what ADR-0026's own wording says and not a write anyone has watched. The
+// plan is the honest end of that either way: silence claimed a completeness it
+// did not have, and a field states the difference an operator can then go and
+// look at.
 func returnRuleField(
 	desired config.FirewallPolicy,
 	facts zoneFacts,
-	requested, companionHeld bool,
+	requested bool,
+	companion returnRuleCompanion,
 ) (Field, bool) {
 	want := asksForReturnRule(desired, facts)
-	// Nothing for unifig to write: the request the Controller is holding already
-	// says what the verdict says. This is what keeps an exported firewall
-	// planning clean — the fifty-two shipped `ALLOW` policies carry the flag
-	// true and want it true, so none of them is a change.
-	if requested == want {
+	// Nothing for unifig to do: the request the Controller is holding says what
+	// the verdict says, *and* the site is holding what that request produces.
+	// Either one disagreeing is a policy this plan has something to say about —
+	// the flag because there is a write to make, the companion because there is
+	// a policy an operator has or lacks — and only the pair agreeing is silence.
+	//
+	// It used to be the flag alone, on a justification that has since expired.
+	// The fifty-two shipped `ALLOW` policies carry the flag true and want it
+	// true, so reading the companion as well would have put a line in every
+	// exported firewall's first plan. Read again on 3 September 2026, Network
+	// 10.6.101: 123 of the site's 137 policies are in that state and every one of
+	// them is a Generated Policy, which export has not written into a config file
+	// since ADR-0028 — and which `named` is false for, so the second half asks
+	// nothing about them here either (ADR-0034, issue #55).
+	agreed := requested == want
+	if companion.named {
+		agreed = agreed && companion.held == want
+	}
+	if agreed {
 		return Field{}, false
 	}
 
 	// Quoted, the way every other policy name in a plan is: `(Return)` is part
 	// of the name the Controller gives it, and unquoted it reads as an aside
 	// about the line rather than as the object it is.
-	companion := fmt.Sprintf("%q", returnRuleName(desired.Name))
+	name := fmt.Sprintf("%q", returnRuleName(desired.Name))
 	var from, to any
-	if companionHeld {
-		from = companion
+	if companion.held {
+		from = name
 	}
 	if want {
-		to = companion
+		to = name
 	}
 	// The write is worth making and there is nothing to show for it: a policy
 	// carrying the request with no companion by that name, closing. That is
@@ -1955,7 +2028,8 @@ func returnRuleField(
 func changedPolicyFields(
 	current, desired config.FirewallPolicy,
 	facts zoneFacts,
-	requested, companionHeld bool,
+	requested bool,
+	companion returnRuleCompanion,
 ) []Field {
 	fields := make([]Field, 0, 6)
 	if current.Action != desired.Action {
@@ -1989,7 +2063,7 @@ func changedPolicyFields(
 	// decides whether one is. An update runs when they disagree, which is what
 	// makes a policy left at `allow` without a companion something unifig can
 	// put right rather than only describe (ADR-0026).
-	if field, differs := returnRuleField(desired, facts, requested, companionHeld); differs {
+	if field, differs := returnRuleField(desired, facts, requested, companion); differs {
 		fields = append(fields, field)
 	}
 	annotateWideGatewayBlock(fields, current, desired, effectiveProtocol(current, desired), facts)

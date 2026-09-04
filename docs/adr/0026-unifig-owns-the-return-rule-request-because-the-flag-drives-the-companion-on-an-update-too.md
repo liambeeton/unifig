@@ -83,6 +83,10 @@ shipped ones.
   clean. Without the second, a plan would promise to remove a companion that was
   never there — the defect ADR-0025 caught in review, preserved here because the
   reason for it has not changed.
+  **Amended by ADR-0034 on the gate**: it asks the companion as well as the flag,
+  because the flag being already right is not the companion being there, and the
+  reason given for the flag alone expired when export stopped writing a Generated
+  Policy (ADR-0028). Everything else in this bullet stands.
 - **The stand-in generates and reclaims companions.** It has to, or an apply
   that asks for one is not idempotent in the suite: the next plan would still
   see a companion missing, which is a real failure the old stand-in would have
