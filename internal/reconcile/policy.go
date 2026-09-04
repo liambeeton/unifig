@@ -1211,6 +1211,16 @@ func pairsCarryingCompanions(
 		}
 		// The companion is generated on the reverse pair, which is the pair a
 		// block would be on.
+		//
+		// This half predicts, and the prediction has a known false premise:
+		// `asksForReturnRule` reads the verdict and the destination zone, and the
+		// Controller also requires the policy to be *enabled* before it generates
+		// anything (ADR-0035). `enabled` is not a field of the config, so a file
+		// naming an allow that is switched off on the Controller predicts a
+		// companion that will not exist, and ADR-0033 then reorders a blocking
+		// policy below a tier that is not there. Fixing it means resolving each
+		// config policy to its live counterpart here, which is a different
+		// question from the one this function is asked; it is issue #59.
 		carrying[zonePair{source: desired.Destination, destination: desired.Source}] = true
 	}
 	return carrying
@@ -1904,6 +1914,10 @@ type returnRuleCompanion struct {
 	// named is whether `<name> (Return)` is that name — true for a policy unifig
 	// could have made a companion for, false for one the Controller generates.
 	named bool
+	// enabled is whether the Controller is enforcing the parent, and so whether
+	// it is generating the companion at all. A policy switched off has no
+	// companion and is not missing one (ADR-0035).
+	enabled bool
 }
 
 // companionOf reads the pair off a live policy and the site's names.
@@ -1913,7 +1927,11 @@ type returnRuleCompanion struct {
 // the name that policy's companion would carry, and filling them separately is
 // how the two come to disagree.
 func companionOf(live unifi.FirewallZonePolicy, held policyNameSet) returnRuleCompanion {
-	return returnRuleCompanion{held: held[returnRuleName(live.Name)], named: !generated(live)}
+	return returnRuleCompanion{
+		held:    held[returnRuleName(live.Name)],
+		named:   !generated(live),
+		enabled: live.Enabled,
+	}
 }
 
 // returnRuleField is what an update does to the companion return rule, said as a
@@ -1950,15 +1968,20 @@ func companionOf(live unifi.FirewallZonePolicy, held policyNameSet) returnRuleCo
 // never regenerated. Invisible and self-perpetuating, which is the opposite of
 // what ADR-0026 superseded ADR-0025 to promise (ADR-0034, issue #55).
 //
-// The last link in that chain is inferred rather than measured, and saying so is
-// the point of saying it at all. ADR-0026 moved the flag — false to true, 87 to
-// 88 — and what an update here re-sends is a flag that was already true. That the
-// Controller answers it by generating the companion is this codebase reading the
-// flag as a statement of what the site should hold rather than as an edit, which
-// is what ADR-0026's own wording says and not a write anyone has watched. The
-// plan is the honest end of that either way: silence claimed a completeness it
-// did not have, and a field states the difference an operator can then go and
-// look at.
+// The last link in that chain was inferred rather than measured, and it has
+// since been measured wrong. ADR-0026 moved the flag — false to true, 87 to 88 —
+// and what an update here re-sends is a flag that was already true; ADR-0034
+// inferred from that the Controller would answer such a body by generating the
+// missing companion. Issue #56 watched it and it does not: a true -> true PUT
+// changes nothing, because the flag was never what was missing. The companion
+// follows whether the Controller is *enforcing* the policy, so the only history
+// that reaches "flag true, no companion" is a policy switched off — which is
+// what `holds` below is about, and why this function may not promise a companion
+// on one (ADR-0035).
+//
+// What survives unchanged is why this is a field at all: silence claimed a
+// completeness it did not have, and a field states a difference an operator can
+// go and look at.
 func returnRuleField(
 	desired config.FirewallPolicy,
 	facts zoneFacts,
@@ -1966,6 +1989,38 @@ func returnRuleField(
 	companion returnRuleCompanion,
 ) (Field, bool) {
 	want := asksForReturnRule(desired, facts)
+	// What the site will be holding once the request is right, which is not the
+	// same question as what the request asks for — and the gap between the two
+	// is a policy that is switched off.
+	//
+	// The companion is a projection of the parent rather than an object with a
+	// history: the Controller generates one for a policy it is *enforcing* and
+	// reclaims it for one it is not, recomputing on every write. Issue #56's
+	// probe watched both directions on the live UDR, 4 September 2026, Network
+	// 10.6.101, on a throwaway `Dmz` -> `Dmz` allow with the flag held true
+	// throughout — disabling it took the companion (139 -> 138) and re-enabling
+	// it put the companion back (138 -> 139), neither write touching the flag.
+	//
+	// So `enabled` decides whether there is a companion to have, and it is not a
+	// field an update can move. unifig names it exactly once, on a create, where
+	// `newFirewallPolicy` sends `Enabled: true`; it is not a line of the config
+	// and not one of the four values an update writes, because an update merges
+	// into the object the Controller sent (ADR-0021). A policy an operator
+	// switched off in the UI therefore stays off across every apply — which is
+	// ADR-0004's ordinary rule, and the right outcome, since a config file that
+	// does not mention `enabled` must not switch a firewall rule back on.
+	//
+	// A plan may therefore not promise this companion on a policy that is off:
+	// apply would write the flag, the Controller would generate nothing, and the
+	// next plan would say the same thing again. That was measured too, and it is
+	// the tell — a true -> true PUT on the disabled policy left the count at 138
+	// and left `plan` dirty at exit 2 (ADR-0035, issue #56).
+	//
+	// It is the flag that stays on `want` below rather than on this: the request
+	// is unifig's to own whatever the Controller is doing with it (ADR-0026), so
+	// it still goes out true on a disabled allow and the companion appears the
+	// moment an operator switches the policy back on.
+	holds := want && companion.enabled
 	// Nothing for unifig to do: the request the Controller is holding says what
 	// the verdict says, *and* the site is holding what that request produces.
 	// Either one disagreeing is a policy this plan has something to say about —
@@ -1982,7 +2037,7 @@ func returnRuleField(
 	// nothing about them here either (ADR-0034, issue #55).
 	agreed := requested == want
 	if companion.named {
-		agreed = agreed && companion.held == want
+		agreed = agreed && companion.held == holds
 	}
 	if agreed {
 		return Field{}, false
@@ -1996,7 +2051,7 @@ func returnRuleField(
 	if companion.held {
 		from = name
 	}
-	if want {
+	if holds {
 		to = name
 	}
 	// The write is worth making and there is nothing to show for it: a policy

@@ -1408,6 +1408,13 @@ func TestPlanSaysTheReturnRuleIsMissingWhenTheRequestIsAlreadyRight(t *testing.T
 	r := startReplay(t)
 	// The default `create_allow_respond` is true, which is the point: the
 	// request agrees with the verdict and there is still no companion.
+	//
+	// The seed is enabled, and that is now what keeps this row hypothetical:
+	// issue #56 measured the companion following whether the Controller is
+	// enforcing the policy, so an *enabled* allow always has one and the only
+	// history reaching this state is a policy switched off — which is the case
+	// two tests below, and which the plan is deliberately silent about
+	// (ADR-0035). Kept for the same reason as the row below it.
 	r.seedPolicy(t, "Asked And Never Got One", "ALLOW", "Internal", "Dmz", nil)
 
 	res := planFirewall(t, r, `firewall-policies:
@@ -1443,6 +1450,13 @@ func TestPlanSaysTheReturnRuleIsMissingWhenTheRequestIsAlreadyRight(t *testing.T
 // flag drive it in both directions on an update. What the plan owes an operator
 // is a statement about the companion they have, not about the flag, and the two
 // come apart here exactly as they do above.
+//
+// Measured since, and the answer is that nothing ever will: issue #56 set the
+// flag false on an enabled allow and the Controller took the companion in the
+// same write, 139 policies to 138. **This row does not occur.** The test is kept
+// anyway — the reading is one firmware on one router, and a plan that behaves
+// sensibly on a state this firmware does not produce costs nothing — but it is
+// no longer evidence that an apply would repair such a state (ADR-0035).
 func TestPlanSaysTheReturnRuleGoesWhenTheRequestIsAlreadyFalse(t *testing.T) {
 	r := startReplay(t)
 	r.seedPolicy(t, "Shut But Answering", "BLOCK", "Internal", "Dmz", map[string]any{
@@ -1472,6 +1486,139 @@ func TestPlanSaysTheReturnRuleGoesWhenTheRequestIsAlreadyFalse(t *testing.T) {
 	}
 	if strings.Contains(stdout, "action:") {
 		t.Errorf("the plan reports a verdict change where only the return rule differs:\n%s", stdout)
+	}
+}
+
+// A policy switched off is the one history that reaches the third row on
+// hardware, and the one the plan may not promise a repair for.
+//
+// Issue #56's probe went looking for how a site reaches "flag true, no
+// companion" and found it in the field nobody had tried: `enabled`. On the live
+// UDR on 4 September 2026, Network 10.6.101, a throwaway `Dmz` -> `Dmz` allow —
+//
+//	create allow, flag true      137 -> 139 policies, companion present
+//	disable it, flag left true   139 -> 138 policies, companion GONE
+//	true -> true PUT, disabled   138 -> 138 policies, companion STILL GONE
+//	re-enable it, flag still true 138 -> 139 policies, companion BACK
+//
+// — so the companion tracks whether the Controller is enforcing the policy, and
+// a disabled allow is *correctly* without one. The third line is the one this
+// test exists for: re-sending the flag repairs nothing, because the flag was
+// never what was wrong (ADR-0035).
+//
+// unifig does not model `enabled` at all, so it cannot put this right and must
+// not say it will. Silence here is ADR-0004's ordinary rule reaching the
+// consequence of an unmanaged field: unifig says nothing about `enabled`, so it
+// says nothing about what `enabled` decides.
+func TestPlanIsQuietAboutADisabledPolicyWhoseRequestIsAlreadyRight(t *testing.T) {
+	r := startReplay(t)
+	// The third row exactly — flag true, no companion — reached the only way a
+	// Controller reaches it. `seedCompanion` is deliberately not called: a
+	// disabled allow does not have one.
+	r.seedPolicy(t, "Switched Off And Answering Nothing", "ALLOW", "Internal", "Dmz", map[string]any{
+		"enabled": false,
+	})
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Switched Off And Answering Nothing
+    action: allow
+    source: Internal
+    destination: Dmz
+`)
+	if res.ExitCode != exitNoChanges {
+		t.Fatalf("plan exited %d, want %d — a disabled allow is correctly without its companion, and apply could not put it back:\n%s",
+			res.ExitCode, exitNoChanges, res.Stdout)
+	}
+	if strings.Contains(string(res.Stdout), "return-rule") {
+		t.Errorf("the plan promises a companion the Controller generates only for a policy it is enforcing:\n%s", res.Stdout)
+	}
+}
+
+// The same policy with the flag the other way, which is the case that would
+// have slipped through a fix to the companion half alone.
+//
+// Here there *is* a write to make — the flag is false and the verdict wants it
+// true — so the guard above does not fire and the field is rendered from the
+// ends. What it may not do is name the companion on the `to` end: apply writes
+// the flag, the policy stays switched off, and the Controller still generates
+// nothing. That is the same false promise arriving by the other road.
+//
+// It is the `from == to` case ADR-0034 already relies on for a closing verdict —
+// a write worth making with nothing to show for it — reached now by a policy
+// that is simply off.
+func TestPlanPromisesNoCompanionForADisabledPolicyWhoseRequestIsAlreadyFalse(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Switched Off And Not Asking", "ALLOW", "Internal", "Dmz", map[string]any{
+		"enabled":              false,
+		"create_allow_respond": false,
+	})
+
+	res := planFirewall(t, r, `firewall-policies:
+  - name: Switched Off And Not Asking
+    action: allow
+    source: Internal
+    destination: Dmz
+`)
+	// Asserted before the substring, and not only for the usual reason that a
+	// plan which errored prints nothing and would pass the check below
+	// vacuously. It is the disclosed consequence of rendering from `holds`: the
+	// flag differs and has nothing to show for it, so no field is rendered, so
+	// no update is planned at all and the flag stays false until something else
+	// about this policy changes. That is the same trade ADR-0034 made for a
+	// closing verdict, reached now by a policy that is simply off (ADR-0035).
+	if res.ExitCode != exitNoChanges {
+		t.Fatalf("plan exited %d, want %d — a flag with no companion to show for it is not a change unifig announces:\n%s",
+			res.ExitCode, exitNoChanges, res.Stdout)
+	}
+	if strings.Contains(string(res.Stdout), "return-rule") {
+		t.Errorf("the plan promises a companion for a policy the Controller is not enforcing:\n%s", res.Stdout)
+	}
+}
+
+// The other half of that disclosure, which is the half with teeth: the flag on a
+// disabled policy is not written *by itself*, but it is written the moment the
+// policy differs in anything else — because unifig owns the request whatever the
+// Controller is doing with it (ADR-0026), and `setReturnRuleRequest` writes the
+// key unconditionally.
+//
+// So the silence above costs an operator nothing they cannot recover: the next
+// apply that touches this policy for any reason leaves the request correct, and
+// the companion appears when they switch the policy back on. Without this the
+// disclosure would be a gap rather than a trade.
+func TestADisabledPolicysRequestIsStillWrittenByAnUpdateThatHappensAnyway(t *testing.T) {
+	r := startReplay(t)
+	r.seedPolicy(t, "Switched Off And Being Narrowed", "ALLOW", "Internal", "Dmz", map[string]any{
+		"enabled":              false,
+		"create_allow_respond": false,
+	})
+
+	// The verdict is unchanged and the policy is still off; what moves is the
+	// narrowing, which is reason enough for an update to go out.
+	applyFirewall(t, r, `firewall-policies:
+  - name: Switched Off And Being Narrowed
+    action: allow
+    source: Internal
+    destination: Dmz
+    protocol: tcp
+    ports:
+      - "443"
+`)
+
+	policy := r.policyNamed(t, "Switched Off And Being Narrowed")
+	if asked, _ := policy["create_allow_respond"].(bool); !asked {
+		t.Errorf("an update that happened anyway left the request false on a policy whose verdict allows: %v",
+			policy["create_allow_respond"])
+	}
+	// And it did not switch the firewall rule back on to get the companion,
+	// which is the thing ADR-0035 refused to do.
+	if on, _ := policy["enabled"].(bool); on {
+		t.Errorf("unifig switched a policy the operator had disabled back on")
+	}
+	// So the request is right and there is still no companion, which is the
+	// state the Controller actually holds — and the reason the plan above is
+	// silent rather than promising one.
+	if r.hasPolicyNamed(t, "Switched Off And Being Narrowed (Return)") {
+		t.Errorf("a companion was generated for a policy the Controller is not enforcing")
 	}
 }
 

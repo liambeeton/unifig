@@ -1,5 +1,21 @@
 # The Controller's own policies are generated, not stored, so unifig cannot update one
 
+> **Extended by issue #56 to a third verb, on its evidence rather than its
+> decision.** This ADR measured `GET` and `PUT` answering a Generated Policy's
+> composite `_id` with 404 `api.err.FirewallPolicyNotFound`. `DELETE` answers it
+> the same way, measured on the live UDR on 4 September 2026 against a Return Rule
+> the Controller had just generated:
+>
+> ```
+> DELETE .../firewall-policies/6a8dbef0…627f6a8dbef0…627f30000
+>   404 {"code":"api.err.FirewallPolicyNotFound"}
+> ```
+>
+> So a Generated Policy has no handle for any verb, and the reading is stronger
+> for it: "not a handle but a description of where it came from" now holds against
+> everything anyone has tried. That the companion cannot be removed on its own is
+> also why the only route to a missing one is a policy switched off (ADR-0035).
+
 > **Amended by issue #43 on the wording of the way out, not on its decision.**
 > The caveat below ends by telling the operator that "a policy of your own on the
 > same pair takes precedence over it", and an operator who followed that literally

@@ -1,5 +1,19 @@
 # The plan asks the companion as well as the flag, because the flag being right is not the companion being there
 
+> **Amended by issue #56 on its central inference, not on its decision.** This ADR
+> widened the gate and then inferred, in its consequences, that an apply repairs
+> the state the widened gate reports — saying plainly that this was "not a write
+> anyone has watched". It has now been watched, and it is **wrong**: a true -> true
+> PUT regenerates nothing. The companion follows whether the Controller is
+> *enforcing* the policy, so the only history reaching the missed state is a policy
+> switched off, and `enabled` is not a field an apply moves. The plan is now silent
+> there rather than promising a repair it cannot perform (ADR-0035).
+>
+> The decision stands: the gate still asks both ends, and the table below still
+> describes what the plan reports. What the table's third and fourth rows lose is
+> their claim to be states a Controller produces — row 4 is unreachable, and row 3
+> is reached only by disabling the policy.
+
 ADR-0026 decided that the `return-rule` field is "gated on the flag and rendered
 from the companion", and gave the reason for the gate: without it, "the 52
 shipped `ALLOW` policies would each look divergent and an exported firewall would
@@ -22,6 +36,11 @@ two of them.
 | true | yes | yes | correctly silent |
 | **true** | **no** | **yes** | **no — missed** |
 | **false** | **yes** | **no** | **no — missed** |
+
+_Rows 3 and 4 are marked as missed, and they were. What this ADR did not know is
+that neither is a state a Controller produces by the histories it had in mind:
+issue #56 measured row 4 unreachable outright, and row 3 reachable only by
+switching the policy off — where the plan is now deliberately silent (ADR-0035)._
 
 The third row is the one that matters: an `allow` policy already carrying the
 request, with no companion behind it. The plan renders no field, so no field means
@@ -107,7 +126,12 @@ that the plan could not have answered the question either way.
   questions it names are still two questions; what changed is that the first one
   is asked of the companion as well as of the flag.
 - **That an apply repairs the missed state is inferred, and the inference is
-  named here rather than left in the code.** ADR-0026 measured the flag *moving* —
+  named here rather than left in the code.** _Measured 4 September 2026 and
+  **wrong** — see ADR-0035. A true -> true PUT regenerates nothing; the companion
+  follows whether the Controller is enforcing the policy, so the only history that
+  reaches the missed state is a policy switched off, and `enabled` is not
+  unifig's to change. The plan is now silent there. The rest of this bullet is
+  kept as the reasoning that was current when it was written._ ADR-0026 measured the flag *moving* —
   false to true, 87 policies to 88 — and what an update on row 3 re-sends is a flag
   that was already true. The Controller answering that by generating the companion
   is this codebase reading `create_allow_respond` as a statement of what the site
@@ -119,7 +143,9 @@ that the plan could not have answered the question either way.
   the next thing to measure. What is not inferred is the plan: silence claimed a
   completeness it did not have, and a field states a difference an operator can go
   and look at.
-- **How a site reaches the missed state is unmeasured.** ADR-0022 measured the
+- **How a site reaches the missed state is unmeasured.** _Measured now: it is
+  `enabled`, and nothing else reaches it (ADR-0035). Deleting a companion on its
+  own is refused with the same 404 ADR-0027 measured for `GET` and `PUT`._ ADR-0022 measured the
   Controller reclaiming a companion with its parent, and issue #40's probe measured
   the flag driving the companion in both directions on an update. Nobody has tried
   deleting a companion on its own, or seen the Controller drop one while keeping

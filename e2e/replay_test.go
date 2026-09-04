@@ -234,11 +234,28 @@ var (
 // `Dmz`, so the pair and its reverse are the same two ids. The companion's own
 // is the reading that makes the id a description of where *this* policy sits,
 // which is what a composite id is (ADR-0027).
+// It reads `enabled` alongside the request and the verdict, because the
+// Controller does. The companion is a projection of the parent rather than an
+// object with a history: issue #56 disabled a policy on the live UDR with the
+// flag held true and the companion went (139 policies to 138), re-enabled it and
+// the companion came back (138 to 139), neither write touching
+// `create_allow_respond`. A stand-in that generated one for a policy the
+// Controller is not enforcing would model a firewall no router hands back — and
+// it would do it in exactly the place ADR-0035's change is about, so the suite
+// would agree with a bug (ADR-0035).
 func (r *replay) reconcileCompanion(held *[]map[string]any, parent map[string]any) {
 	name, _ := parent["name"].(string)
 	requested, _ := parent["create_allow_respond"].(bool)
 	action, _ := parent["action"].(string)
-	if !requested || action != "ALLOW" {
+	// A policy the Controller sent with no `enabled` key at all is enabled: the
+	// field is absent from nothing anyone has read — all 86 policies in the
+	// recording carry it, as do all 137 on the live site — so this is the
+	// missing-key case rather than a default anyone chose.
+	enabled := true
+	if held, ok := parent["enabled"].(bool); ok {
+		enabled = held
+	}
+	if !requested || action != "ALLOW" || !enabled {
 		r.dropCompanion(held, name)
 		return
 	}
