@@ -92,7 +92,9 @@ at all.
   6.19 or newer (SERVER-121912), which took the whole suite with it — the
   Controller came up, could not reach `MONGO_HOST`, and timed out five minutes
   later pointing at itself. Every version in the table was re-run against 8.2 and
-  passed. That this pin is covered by nothing, and that the rig's port check
-  reported a dying database as ready, is issue #60.
+  passed. That this pin was covered by nothing, and that the rig's port check
+  reported a dying database as ready, was issue #60. Both are ADR-0037: the rig
+  waits for a mongod that answers a ping, which makes every run the thing that
+  covers the pin.
 - The recording is untouched by any of this. It came off a physical UDR
   (ADR-0011) and says nothing about which container the rest of the suite boots.

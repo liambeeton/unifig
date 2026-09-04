@@ -39,6 +39,7 @@ const compatibilityConfig = "../compatibility.yaml"
 // lives for one suite run; nothing outside the rig can reach either.
 const (
 	databaseHost     = "database"
+	databasePort     = "27017"
 	databaseUser     = "unifig"
 	databasePassword = "unifig"
 	databaseName     = "unifi"
@@ -177,7 +178,7 @@ func (r *rig) startController(ctx context.Context) error {
 			Networks:     []string{private.Name},
 			Env: map[string]string{
 				"MONGO_HOST":       databaseHost,
-				"MONGO_PORT":       "27017",
+				"MONGO_PORT":       databasePort,
 				"MONGO_USER":       databaseUser,
 				"MONGO_PASS":       databasePassword,
 				"MONGO_DBNAME":     databaseName,
@@ -201,10 +202,13 @@ func (r *rig) startController(ctx context.Context) error {
 		},
 		Started: true,
 	})
+	// Held before the error is returned, so that a Controller which never
+	// became ready is still a container the rig shuts down, rather than one
+	// left to the reaper when the process exits.
+	r.container = container
 	if err != nil {
 		return fmt.Errorf("starting Controller container %s: %w", image, err)
 	}
-	r.container = container
 
 	endpoint, err := container.PortEndpoint(ctx, "8443/tcp", "https")
 	if err != nil {
@@ -215,15 +219,16 @@ func (r *rig) startController(ctx context.Context) error {
 }
 
 // startDatabase starts the MongoDB the Network application stores everything
-// in. It waits for the port to answer from outside the container, which is
-// what tells the two mongod runs apart: the official image starts one bound to
-// loopback to create the root user, and only the second is reachable at all.
+// in, and waits until it is serving.
+//
+// The image is the pin in compatibility.yaml, which the matrix says nothing
+// about: every Controller version in the table was run against one database,
+// so what covers that pin is this wait and the run behind it (ADR-0037).
 func (r *rig) startDatabase(ctx context.Context, image string) error {
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        image,
-			ExposedPorts: []string{"27017/tcp"},
-			Networks:     []string{r.net.Name},
+			Image:    image,
+			Networks: []string{r.net.Name},
 			NetworkAliases: map[string][]string{
 				r.net.Name: {databaseHost},
 			},
@@ -231,15 +236,41 @@ func (r *rig) startDatabase(ctx context.Context, image string) error {
 				"MONGO_INITDB_ROOT_USERNAME": databaseUser,
 				"MONGO_INITDB_ROOT_PASSWORD": databasePassword,
 			},
-			WaitingFor: wait.ForListeningPort("27017/tcp").WithStartupTimeout(3 * time.Minute),
+			WaitingFor: databaseServing().WithStartupTimeout(3 * time.Minute),
 		},
 		Started: true,
 	})
+	// Held before the error, for the reason the Controller is.
+	r.database = container
 	if err != nil {
 		return fmt.Errorf("starting the Controller's database (%s): %w", image, err)
 	}
-	r.database = container
 	return nil
+}
+
+// databaseServing is what the rig waits for: a mongod answering an
+// authenticated ping at the name, port and credentials the Controller is about
+// to use it under.
+//
+// Waiting on the listening port instead is issue #60, and why each clause of
+// this one is load-bearing is ADR-0037. In short: a port is answered by Docker
+// rather than by mongod, and went on answering for a database that had refused
+// to start; the alias is a name the loopback mongod the entrypoint runs during
+// initialisation does not answer to; and an exec needs a container that is
+// still running.
+func databaseServing() *wait.ExecStrategy {
+	return wait.ForExec([]string{
+		"mongosh",
+		"--host", databaseHost,
+		"--port", databasePort,
+		"--username", databaseUser,
+		"--password", databasePassword,
+		"--authenticationDatabase", "admin",
+		"--quiet",
+		// The wait reads the exit code, and mongosh exits 0 for a command the
+		// server refused politely, so the ping's own answer has to become one.
+		"--eval", "quit(db.adminCommand({ping: 1}).ok === 1 ? 0 : 1)",
+	})
 }
 
 func (r *rig) login(ctx context.Context) error {

@@ -23,12 +23,13 @@ container:
   # The series is pinned rather than left at `mongo:8`, which refuses to start
   # at all on a Docker host running a Linux kernel of 6.19 or newer — "MongoDB
   # cannot start: … a known incompatibility with this version of MongoDB"
-  # (SERVER-121912), which current Docker Desktop hits and which takes the whole
-  # suite with it: the Controller comes up, cannot reach `MONGO_HOST`, and times
-  # out. This is the pin ADR-0016 noted the matrix does not cover, so nothing in
-  # the table changes when it moves — and nothing checks it either, which is
-  # what issue #60 is about along with the port check that reported a dying
-  # database as ready.
+  # (SERVER-121912), which current Docker Desktop hits. This is the pin ADR-0016
+  # noted the matrix does not cover, so no row or column moves when it moves.
+  #
+  # What covers it is every run. The rig reaches no test until this image has
+  # answered an authenticated ping as the Controller's database, so a series
+  # that stops serving fails the suite in seconds naming the image, rather than
+  # five minutes later naming the Controller (ADR-0037).
   database: mongo:8.2
 
 # The Controller versions CI boots, newest first. The first is also what a bare
