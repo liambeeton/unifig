@@ -89,6 +89,25 @@ type replay struct {
 	// issued counts the IDs this stand-in has handed out, so that two objects
 	// created in one apply cannot collide.
 	issued int
+	// assignedIndex is the index this stand-in stamps onto a policy it is
+	// asked to create, whatever the body named, and nil for a Controller that
+	// stores the index it was given.
+	//
+	// **Nil is an assumption rather than a measurement, and this is where it is
+	// written down.** Nobody has sent a real Controller a create naming an
+	// index, so what it does with one is the question issue #54 was blocked on;
+	// unifig now asks, and the default here is the answer being yes. What *is*
+	// measured is the other branch: a create naming no index came back at
+	// `index: 10000` on the live UDR in issue #46's probe, and on all nine
+	// stored policies in issue #54's reading. assignPolicyIndex is how a test
+	// asks for that behaviour, and it is what the day-one answer would look like
+	// if the probe comes back no.
+	//
+	// A stand-in that stores what it is handed is a fixture asserting a guess
+	// (ADR-0019), so the guess is named here rather than left to look like a
+	// reading. It is a cheap one to correct: one field, and the suite says which
+	// tests were resting on it.
+	assignedIndex *int
 	// written is every body unifig has sent to one of the v2 collections, in
 	// the order it sent them and whatever the stand-in then did with it.
 	//
@@ -170,6 +189,12 @@ type writeContract struct {
 	// not one it resolves, and empty for a collection nobody has asked. See
 	// writeContract.unresolvable.
 	notFoundCode string
+	// assignsIndex is whether this collection decides for itself where a created
+	// object sits in evaluation order. Only the firewall-policy collection has
+	// been seen doing it — a create naming no index came back at 10000 — and
+	// what it does with a create that *names* one is replay.assignedIndex's
+	// question rather than this one's.
+	assignsIndex bool
 }
 
 // The two contracts, one per collection. Neither was inferred from the other:
@@ -185,6 +210,7 @@ var (
 		refusesBody:  refusedByPolicyWrite,
 		semantics:    replaces,
 		companions:   true,
+		assignsIndex: true,
 	}
 )
 
@@ -684,6 +710,9 @@ func (r *replay) collectionV2(
 		r.issued++
 		sent["_id"] = fmt.Sprintf("6613a1f0c4b2d90a5e1f9%03d", r.issued)
 		sent["site_id"] = "6613a1f0c4b2d90a5e1f0000"
+		if contract.assignsIndex && r.assignedIndex != nil {
+			sent["index"] = *r.assignedIndex
+		}
 		*held = append(*held, sent)
 		if contract.companions {
 			r.reconcileCompanion(held, sent)
@@ -1685,8 +1714,21 @@ func (r *replay) seedStoredPolicy(t *testing.T, name, action, source, destinatio
 }
 
 // storedPolicyIndex is the index the Controller assigned the created policy,
-// unasked, in issue #46's probe.
+// unasked, in issue #46's probe — and the same value all nine stored policies on
+// the live site carried in issue #54's reading.
 const storedPolicyIndex = 10000
+
+// assignPolicyIndex makes this stand-in place a created policy where it decides
+// rather than where the body asked, which is how a test asks what unifig does
+// when the Controller does not honour the index it was given.
+//
+// See replay.assignedIndex for why the default is the other way and why that
+// default is an assumption rather than a reading.
+func (r *replay) assignPolicyIndex(index int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.assignedIndex = &index
+}
 
 // seedUnmarkedGeneratedPolicy is that policy with the marker taken off: the
 // composite `_id` of one the Controller computes, and no `predefined` on it.

@@ -196,6 +196,13 @@ type Plan struct {
 	// Caveats are the places where this plan is narrower than what was asked
 	// for, and why. See Caveat.
 	Caveats []Caveat `json:"caveats"`
+
+	// placedPolicies is where the Controller actually put the firewall policies
+	// plan creates, filled in by the writes as they run and read by Apply once
+	// they have. It is unexported for the reason Change.write is: a plan is a
+	// statement about what will happen, and this is a fact about what did, so it
+	// belongs to apply rather than to the renderer or the JSON output.
+	placedPolicies *policyPlacements
 }
 
 // Caveat is something a plan has to say about itself: unifig was asked to do
@@ -486,6 +493,10 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 
 	var changes []Change
 	var caveats []Caveat
+	// Shared by every policy create in this plan and read once they have all
+	// run. Made here rather than in the firewall's own planner so that Apply can
+	// reach it whether or not the file has a firewall section.
+	placedPolicies := &policyPlacements{}
 
 	// The WLANs are read whenever the file manages them, and whenever a prune
 	// could propose deleting a network: the Controller will not delete a network a
@@ -582,7 +593,7 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 		}
 		sparedPolicies := policies
 		if cfg.FirewallPolicies != nil {
-			policyChanges, left, policyCaveats, err := planFirewallPolicies(cfg, policies, facts, bound, opts)
+			policyChanges, left, policyCaveats, err := planFirewallPolicies(cfg, policies, facts, bound, opts, placedPolicies)
 			if err != nil {
 				return Plan{}, err
 			}
@@ -629,7 +640,7 @@ func ComputePlan(ctx context.Context, client unifi.Client, site string, cfg conf
 
 	sortChanges(changes)
 	sortCaveats(caveats)
-	return Plan{Changes: changes, Caveats: caveats}, nil
+	return Plan{Changes: changes, Caveats: caveats, placedPolicies: placedPolicies}, nil
 }
 
 // Project is the config that describes the Controller as it stands — the

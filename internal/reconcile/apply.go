@@ -47,6 +47,13 @@ func (p Plan) Apply(ctx context.Context, client unifi.Client, site string, out i
 	}
 
 	_, _ = fmt.Fprintf(out, "\nApplied %s.\n", count(len(p.Changes), len(p.Changes)))
+	// What the Controller did with a request unifig makes and cannot enforce.
+	// It comes after the summary rather than beside the change it is about,
+	// because it is not a failure of that change: the policy was created and
+	// every field the config states landed. What did not land is where it sits
+	// in the rule set, which is a thing about the site rather than about the
+	// line the operator wrote (ADR-0033).
+	_, _ = fmt.Fprint(out, p.placedPolicies.report())
 	return nil
 }
 

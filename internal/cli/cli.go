@@ -276,7 +276,15 @@ func approveRisky(asking *prompt, plan reconcile.Plan, allowed bool) (reconcile.
 		asking.say("\nLeaving %s unapplied. `--allow-risky` applies Risky changes without asking.\n",
 			change.Summary())
 	}
-	return reconcile.Plan{Changes: kept}, nil
+	// The plan is narrowed rather than rebuilt, and that is the difference
+	// between dropping a change and dropping a field. A Plan carries state this
+	// package cannot see — the writes share a collector so that apply can say
+	// where the Controller actually put the policies it created (ADR-0033) — and
+	// a `reconcile.Plan{Changes: kept}` silently leaves every such field at its
+	// zero value. Nothing here would have said so: the `--allow-risky` path above
+	// returns the plan whole, so only an interactive apply lost it.
+	plan.Changes = kept
+	return plan, nil
 }
 
 // options turns the flags a verb was given into the engine's terms. Both verbs
