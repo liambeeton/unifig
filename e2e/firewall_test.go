@@ -4600,6 +4600,27 @@ func TestABlockingPolicyOnAPairWithNoReturnRuleIsLeftAlone(t *testing.T) {
 	}
 }
 
+// quietPairSource and quietPairDestination are `Dmz` and `Hotspot`, and the
+// choice is what lets the tests below say anything about a companion the config
+// *predicts*.
+//
+// pairsCarryingCompanions reads two halves, and the live half is generous: the
+// recording ships twelve `Allow Return Traffic` policies on twelve pairs, `Dmz ->
+// Internal` and `Hotspot -> Internal` among them. A placement test on one of
+// those marks the pair off the live collection alone, so it passes whatever the
+// config half predicts — which is how this pair came to be needed at all.
+//
+// It is not an empty pair and does not need to be: the recording holds `Block All
+// Traffic` on both directions and `Allow Public DNS` at 30000 on `Hotspot ->
+// Dmz`. All three are Generated Policies and none is a Return Rule, which is the
+// only property asked of them here. What matters is that neither direction
+// carries a companion, so a block on one moves only if the prediction is made and
+// stays put only if it is not.
+const (
+	quietPairSource      = "Dmz"
+	quietPairDestination = "Hotspot"
+)
+
 // The companion the config is about to bring into being counts as well as the one
 // already there, which is what makes one apply enough.
 //
@@ -4611,23 +4632,146 @@ func TestABlockIsMovedForACompanionTheSameApplyIsAboutToCreate(t *testing.T) {
 	measuredOn(t, onTheReorderEndpoint)
 	r := startReplay(t)
 
-	// The allow sorts after the block by name, so the companion does not exist
-	// at the moment the block is written.
-	body := `firewall-policies:
+	applyFirewall(t, r, quietPairBody)
+	assertBlockIsBelowTheCompanionTier(t, r, quietPairBody)
+}
+
+// quietPairBody is a block and, on the reverse pair, the allow whose companion it
+// would otherwise outrank. The allow sorts after the block by name, so the
+// companion does not exist at the moment the block is written and the prediction
+// is the only thing that can place it.
+var quietPairBody = fmt.Sprintf(`firewall-policies:
   - name: Block first by name
     action: block
-    source: Dmz
-    destination: Internal
+    source: %s
+    destination: %s
   - name: Zulu allow sorts last
     action: allow
-    source: Internal
-    destination: Dmz
-`
-	applyFirewall(t, r, body)
+    source: %s
+    destination: %s
+`, quietPairDestination, quietPairSource, quietPairSource, quietPairDestination)
 
+// assertBlockIsBelowTheCompanionTier is the reading every test of a predicted
+// companion ends on: the companion arrived, the block is under it, and a second
+// plan has nothing left to say.
+func assertBlockIsBelowTheCompanionTier(t *testing.T, r *replay, body string) {
+	t.Helper()
+	if !r.hasPolicyNamed(t, "Zulu allow sorts last (Return)") {
+		t.Fatalf("the allow has no companion, so this fixture is not the state the test is about")
+	}
 	if index, _ := numberIn(r.policyNamed(t, "Block first by name"), "index"); index <= companionIndex {
 		t.Errorf("the block is at index %d, at or above the companion tier at %d, so the reply to traffic the allow permits is dropped",
 			index, companionIndex)
 	}
 	assertNoChangesPendingEnv(t, r.env(), configFile(t, body))
+}
+
+// A companion the config predicts is one the Controller will generate, and a
+// disabled allow is one it will not.
+//
+// This is issue #59: ADR-0035's measurement arriving at the *other* call site
+// that predicts a companion. pairsCarryingCompanions built its config half from
+// `asksForReturnRule`, which reads the verdict and the destination zone — and
+// `enabled` is neither, because it is not a field of the config at all. So a file
+// naming an allow the operator switched off in the UI predicted a companion the
+// Controller had already reclaimed, and ADR-0033 then moved a blocking policy on
+// the reverse pair below a tier that is not there.
+//
+// The cost is a wrong ordering rather than a wrong line of output, which is the
+// worse of the two: the plan says the move out loud, the operator approves it,
+// and the firewall they are left with is not the one the file describes.
+//
+// The fix is not ADR-0035's fix. That one had the live policy beside it and read
+// `enabled` off it directly; this one is handed a config entry identified by key,
+// so it has to resolve that key to its live counterpart before there is an
+// `enabled` to ask about.
+//
+// It rests on two measurements: what the Controller does about a disabled
+// policy's companion, and how placement is asked for at all — the assertions
+// below are that no reorder was sent and that the block did not move.
+func TestABlockIsNotMovedForTheCompanionOfADisabledAllow(t *testing.T) {
+	measuredOn(t, onADisabledPolicysCompanion)
+	measuredOn(t, onTheReorderEndpoint)
+	r := startReplay(t)
+	// Switched off with the request still true, which is the state issue #56
+	// measured rather than one invented here: disabling the parent reclaims the
+	// companion and never touches the flag.
+	r.seedPolicy(t, "Zulu allow sorts last", "ALLOW", quietPairSource, quietPairDestination, map[string]any{
+		"enabled":    false,
+		"index":      storedPolicyIndex,
+		"predefined": false,
+	})
+	r.seedStoredPolicy(t, "Block first by name", "BLOCK", quietPairDestination, quietPairSource)
+
+	assertNoChangesPendingEnv(t, r.env(), configFile(t, quietPairBody))
+	if sent := r.reorderWrites(t); len(sent) != 0 {
+		t.Errorf("unifig reordered a pair for a companion the Controller reclaimed when the allow was switched off: %v", sent)
+	}
+	if index, _ := numberIn(r.policyNamed(t, "Block first by name"), "index"); index != storedPolicyIndex {
+		t.Errorf("the block moved to index %d, below a companion tier that is not there", index)
+	}
+}
+
+// The other side of that gate, and the half that keeps the fix from being the bug
+// pointing the other way.
+//
+// Asking `enabled` of the live counterpart must not narrow the prediction to
+// policies the config creates. A policy the Controller is already enforcing keeps
+// its `enabled` across an update — it merges, and `enabled` is not one of the
+// values it writes (ADR-0021) — so an allow this apply turns a live block into
+// gets its companion in the same write, and the block on the reverse pair still
+// has something to outrank.
+//
+// It is the matched-and-enabled case, which no other placement test reaches:
+// TestABlockIsMovedForACompanionTheSameApplyIsAboutToCreate covers the unmatched
+// one, where there is no live policy to ask.
+func TestABlockIsMovedForTheCompanionOfAnAllowThisApplyTurnsALiveBlockInto(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
+	r := startReplay(t)
+	r.seedStoredPolicy(t, "Zulu allow sorts last", "BLOCK", quietPairSource, quietPairDestination)
+	r.seedStoredPolicy(t, "Block first by name", "BLOCK", quietPairDestination, quietPairSource)
+
+	applyFirewall(t, r, quietPairBody)
+	assertBlockIsBelowTheCompanionTier(t, r, quietPairBody)
+}
+
+// The third road to the same wrong ordering, and the widest of them: a config
+// entry matched to a Generated Policy.
+//
+// unifig writes nothing for one. A change to a Generated Policy is held back as a
+// Caveat because there is no document handle to send it to (ADR-0027), so no
+// companion of unifig's making is coming however the entry reads — and the
+// request the Controller stores on its own policies is no evidence that one is
+// there already. Forty of the eighty-six a migrated router ships are enabled
+// generated allows carrying `create_allow_respond`, and twenty-seven of those are
+// on pairs whose reverse holds no Return Rule at all: the Controller names its
+// own companions `Allow Return Traffic` and generates far fewer than the flag
+// suggests (ADR-0034).
+//
+// So the config half must say nothing about one, and the live half is what speaks
+// for whatever companion such a policy really has. Without that, a file agreeing
+// with a shipped generated allow moves a blocking policy on the reverse pair
+// below a tier that is not there — issue #59's harm, reached without a disabled
+// policy anywhere.
+func TestABlockIsNotMovedForTheCompanionOfAPolicyUnifigCannotWrite(t *testing.T) {
+	measuredOn(t, onTheReorderEndpoint)
+	r := startReplay(t)
+	// Seeded rather than taken from the recording, for the reason
+	// seedGeneratedPolicy exists: a test about a Generated Policy should state
+	// the policy it is about. It carries seedPolicy's `create_allow_respond:
+	// true`, which is what every generated allow on both sites anyone has read
+	// carries, and is the whole of what the config half used to believe.
+	r.seedGeneratedPolicy(t, "Zulu allow sorts last", "ALLOW", quietPairSource, quietPairDestination, companionIndex)
+	r.seedStoredPolicy(t, "Block first by name", "BLOCK", quietPairDestination, quietPairSource)
+
+	// The file states the verdict the generated policy already has, so nothing
+	// differs and there is no Caveat to read — the entry is quiet, and the only
+	// thing it could still do is move the block.
+	assertNoChangesPendingEnv(t, r.env(), configFile(t, quietPairBody))
+	if sent := r.reorderWrites(t); len(sent) != 0 {
+		t.Errorf("unifig reordered a pair for the companion of a policy it can never write to: %v", sent)
+	}
+	if index, _ := numberIn(r.policyNamed(t, "Block first by name"), "index"); index != storedPolicyIndex {
+		t.Errorf("the block moved to index %d, below a companion tier that is not there", index)
+	}
 }

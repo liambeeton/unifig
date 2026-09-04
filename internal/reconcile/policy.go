@@ -271,9 +271,11 @@ func planFirewallPolicies(
 	}
 	held := policyNames(live)
 	// Which pairs a Return Rule sits on, computed once for the whole plan: it
-	// reads the live collection and the config together, and both halves are the
-	// same for every policy in the loop below.
-	carrying := pairsCarryingCompanions(cfg, live, facts, bound)
+	// reads the live collection and the config together — and the index that
+	// joins them, since predicting a companion means asking the live counterpart
+	// whether the Controller is enforcing its policy — and every half is the same
+	// for every policy in the loop below.
+	carrying := pairsCarryingCompanions(cfg, live, byKey, facts, bound)
 
 	// A zone a policy names is resolved against the Controller and against the
 	// zones this file creates, together — the file's own zones do not exist yet,
@@ -1188,9 +1190,15 @@ type zonePair struct{ source, destination string }
 //     waiting for the write is what makes one apply enough: a block and the allow
 //     whose companion it would outrank can be created in either order, and the
 //     order is whatever the names happened to sort to.
+//
+// The second half is a prediction, so it has to be right about what the
+// Controller will do rather than about what the file says — which is why it asks
+// companionThisApplyBringsAbout rather than asksForReturnRule, and why it is
+// handed the index rather than the config alone (issue #59).
 func pairsCarryingCompanions(
 	cfg config.Config,
 	live []unifi.FirewallZonePolicy,
+	byKey map[policyKey]unifi.FirewallZonePolicy,
 	facts zoneFacts,
 	bound bindings,
 ) map[zonePair]bool {
@@ -1206,24 +1214,94 @@ func pairsCarryingCompanions(
 		carrying[zonePair{source: source, destination: destination}] = true
 	}
 	for _, desired := range cfg.FirewallPolicies {
-		if !asksForReturnRule(desired, facts) {
+		if !companionThisApplyBringsAbout(desired, facts, byKey) {
 			continue
 		}
 		// The companion is generated on the reverse pair, which is the pair a
 		// block would be on.
-		//
-		// This half predicts, and the prediction has a known false premise:
-		// `asksForReturnRule` reads the verdict and the destination zone, and the
-		// Controller also requires the policy to be *enabled* before it generates
-		// anything (ADR-0035). `enabled` is not a field of the config, so a file
-		// naming an allow that is switched off on the Controller predicts a
-		// companion that will not exist, and ADR-0033 then reorders a blocking
-		// policy below a tier that is not there. Fixing it means resolving each
-		// config policy to its live counterpart here, which is a different
-		// question from the one this function is asked; it is issue #59.
 		carrying[zonePair{source: desired.Destination, destination: desired.Source}] = true
 	}
 	return carrying
+}
+
+// companionWillExist is whether the Controller will be holding a companion for
+// this policy, which is a different question from whether unifig asks for one and
+// is the question both places that care about a companion are really asking.
+//
+// **It is one predicate for the reason asksForReturnRule is one.** ADR-0022 put
+// the create, the update and the plan through a single function because "a second
+// condition arriving is exactly what would have left three copies of the first
+// disagreeing" — and a second condition is exactly what arrived. ADR-0035
+// measured a third thing the companion depends on, `enabled`, and fixed it at the
+// call site that renders the plan; the call site that predicts a companion for a
+// *placement* went on asking the two-condition question and was wrong in the way
+// issue #59 describes. Written twice, they came apart within one ADR.
+//
+// The condition itself is the Controller's, measured: it generates a companion
+// only for a policy it is **enforcing**, reclaiming it the moment the policy is
+// switched off and putting it back when it is switched on, with the request never
+// moving (ADR-0035, issue #56).
+//
+// `enforced` is a parameter rather than something read here because the two
+// callers know it in different ways, and neither way is available to the other: a
+// plan line has the live policy in its hand, and a prediction about placement has
+// only a key to resolve. What may not differ between them is what is done with
+// the answer.
+func companionWillExist(desired config.FirewallPolicy, facts zoneFacts, enforced bool) bool {
+	return asksForReturnRule(desired, facts) && enforced
+}
+
+// companionThisApplyBringsAbout is the config half's whole question: will the
+// Controller be holding a companion for this entry, *because of what this apply
+// does about it*. The live half speaks for every companion already there, so
+// this one may only speak for the ones unifig is causing.
+//
+// It resolves the entry to its live counterpart through the same index the
+// matching itself uses, which is what stops the prediction and the policy it is
+// about coming apart: `policiesByKey` has already applied the Controller's own
+// precedence, so an entry over a Shadowed generated policy resolves to the
+// stored policy here as well — the one an update would really write to
+// (ADR-0029). Three answers come out of it.
+//
+// **No counterpart: a create, and a create is enabled.** unifig names `enabled`
+// exactly once, in `newFirewallPolicy`, and sends true — so the companion of an
+// allow this file creates is coming, and a block on the reverse pair has to be
+// under it before the reply traffic it would strand starts arriving.
+//
+// **A stored counterpart: whatever the Controller is holding.** An update merges
+// and `enabled` is not one of the values it writes, so a policy an operator
+// switched off in the UI stays off across every apply — ADR-0004's ordinary rule,
+// and the right outcome, since a file that does not mention the field must not
+// switch a firewall rule back on. That is issue #59: the entry asks for the
+// request, the Controller declines to generate anything while the policy is off,
+// and a block moved below that absent tier is a firewall the file does not
+// describe.
+//
+// **A generated counterpart: nothing, because unifig writes nothing.** A change
+// to a Generated Policy is held back as a Caveat and never sent — it has no
+// document handle to send it to (ADR-0027) — so no companion of unifig's making
+// is coming, whatever the entry's verdict says. Reading `enabled` off one and
+// believing it is issue #59 arriving by a third road, and a wider one than the
+// road it was reported from: forty of the eighty-six policies a migrated router
+// ships are enabled generated allows carrying the request, and twenty-seven of
+// them are on pairs whose reverse holds no Return Rule at all. The Controller
+// names its own companions `Allow Return Traffic` and generates far fewer of them
+// than that flag suggests (ADR-0034), so the flag is no evidence of a companion
+// here. Where such a policy does have one, it is on the site already and the live
+// half has it.
+func companionThisApplyBringsAbout(
+	desired config.FirewallPolicy,
+	facts zoneFacts,
+	byKey map[policyKey]unifi.FirewallZonePolicy,
+) bool {
+	live, matched := byKey[keyOfDesiredPolicy(desired)]
+	if !matched {
+		return companionWillExist(desired, facts, true)
+	}
+	if generated(live) {
+		return false
+	}
+	return companionWillExist(desired, facts, live.Enabled)
 }
 
 // placementField is the plan line for a policy on the wrong side of the
@@ -2020,7 +2098,12 @@ func returnRuleField(
 	// is unifig's to own whatever the Controller is doing with it (ADR-0026), so
 	// it still goes out true on a disabled allow and the companion appears the
 	// moment an operator switches the policy back on.
-	holds := want && companion.enabled
+	//
+	// The rule itself lives in companionWillExist rather than here, because the
+	// plan is not the only thing that has to know it: predicting a placement asks
+	// the same question of a policy it has only a key for, and the two written
+	// separately came apart inside one ADR (issue #59).
+	holds := companionWillExist(desired, facts, companion.enabled)
 	// Nothing for unifig to do: the request the Controller is holding says what
 	// the verdict says, *and* the site is holding what that request produces.
 	// Either one disagreeing is a policy this plan has something to say about —
