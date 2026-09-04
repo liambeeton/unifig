@@ -131,6 +131,39 @@ func TestAVersionNobodyRanIsRefused(t *testing.T) {
 	}
 }
 
+// A test the suite holds that the run never mentions is stale evidence, not a
+// failure. Adding a test and generating the table before the suite has been run
+// again would otherwise drop the version from that test's row — publishing a
+// narrower claim than the runs support, with nothing said about why.
+func TestATestTheRunNeverMentionsIsRefusedRatherThanReadAsAFailure(t *testing.T) {
+	_, err := buildErr(t, map[string]results{
+		"10.5.67":  ran("TestNetworks", "TestZones", "TestZonesAgain"),
+		"10.0.162": ran("TestNetworks", "TestZones"),
+	})
+	if err == nil {
+		t.Fatal("a table was generated from results that predate a test in the suite")
+	}
+	if !strings.Contains(err.Error(), "TestZonesAgain") {
+		t.Errorf("the error should name the test the run never mentions, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "10.0.162") {
+		t.Errorf("the error should name the version whose run is stale, got: %v", err)
+	}
+}
+
+// A skip is a test that did not run, but the run is still the one this suite
+// asked for: it is the table's business (the row loses the version), not a
+// reason to refuse the whole run as stale.
+func TestASkippedTestIsNotAStaleRun(t *testing.T) {
+	matrix := built(t, map[string]results{
+		"10.5.67":  ran("TestNetworks", "TestZones", "TestZonesAgain"),
+		"10.0.162": {tests: map[string]string{"TestNetworks": skipped, "TestZones": passed, "TestZonesAgain": passed}},
+	})
+	if got, want := row(t, matrix, "Networks").Versions, []string{"10.5.67"}; !equal(got, want) {
+		t.Errorf("Networks versions = %v, want %v", got, want)
+	}
+}
+
 // A run that never got as far as reporting tests is not a pass, however few
 // failures it managed to report.
 func TestARunThatBrokeIsNotAPass(t *testing.T) {

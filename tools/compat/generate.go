@@ -39,6 +39,10 @@ func build(cfg compat.Config, s suite, runs map[string]results, recording compat
 		matrix.Versions = append(matrix.Versions, version)
 	}
 
+	if err := fresh(cfg, s, runs, matrix.Versions); err != nil {
+		return compat.Matrix{}, err
+	}
+
 	for _, area := range cfg.Areas {
 		tests := s.testsByFile[area.Tests]
 		evidence, err := s.evidenceFor(area)
@@ -79,6 +83,39 @@ func build(cfg compat.Config, s suite, runs map[string]results, recording compat
 	}
 
 	return matrix, nil
+}
+
+// fresh refuses results that predate the suite they are supposed to be evidence
+// about: a test the run never mentions at all, because it was written after the
+// run happened.
+//
+// Without this the absence reads as "did not pass" — allPassed cannot tell the
+// two apart — and the version quietly drops out of that test's row. The table
+// would then publish a narrower claim than the runs support, blaming a
+// Controller for a test that was never put to it, and `check` would report the
+// committed file as out of date rather than the runs. Everywhere else here
+// keeps "did not run" apart from "ran and failed" (results.broken, and a skip
+// kept out of the passes); this is the same distinction, one level up.
+func fresh(cfg compat.Config, s suite, runs map[string]results, versions []string) error {
+	for _, version := range versions {
+		run := runs[version]
+		var missing []string
+		for _, area := range cfg.Areas {
+			for _, test := range s.testsByFile[area.Tests] {
+				if _, ran := run.tests[test]; !ran {
+					missing = append(missing, test)
+				}
+			}
+		}
+		if len(missing) > 0 {
+			slices.Sort(missing)
+			return fmt.Errorf("the run against UniFi Network %s does not mention %d test(s) the suite holds, so it"+
+				" is older than the suite and cannot be what the table is generated from: re-run it with `make"+
+				" matrix`. The tests it never put to that Controller are %s",
+				version, len(missing), strings.Join(missing, ", "))
+		}
+	}
+	return nil
 }
 
 // evidenceFor says which kind of Controller answered an area's tests, and
