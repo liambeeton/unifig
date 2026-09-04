@@ -2,6 +2,7 @@
   "image": "linuxserver/unifi-network-application",
   "floor": "10.0",
   "versions": [
+    "10.6.101",
     "10.5.67",
     "10.4.57",
     "10.1.84",
@@ -17,6 +18,7 @@
       "tests": "reconcile_test.go",
       "evidence": "container",
       "versions": [
+        "10.6.101",
         "10.5.67",
         "10.4.57",
         "10.1.84",
@@ -28,6 +30,7 @@
       "tests": "wlan_test.go",
       "evidence": "container",
       "versions": [
+        "10.6.101",
         "10.5.67",
         "10.4.57",
         "10.1.84",
@@ -39,6 +42,7 @@
       "tests": "portforward_test.go",
       "evidence": "container",
       "versions": [
+        "10.6.101",
         "10.5.67",
         "10.4.57",
         "10.1.84",
@@ -50,6 +54,7 @@
       "tests": "reservation_test.go",
       "evidence": "container",
       "versions": [
+        "10.6.101",
         "10.5.67",
         "10.4.57",
         "10.1.84",
@@ -61,6 +66,7 @@
       "tests": "export_test.go",
       "evidence": "container",
       "versions": [
+        "10.6.101",
         "10.5.67",
         "10.4.57",
         "10.1.84",
@@ -72,6 +78,7 @@
       "tests": "backup_test.go",
       "evidence": "container",
       "versions": [
+        "10.6.101",
         "10.5.67",
         "10.4.57",
         "10.1.84",

@@ -34,6 +34,7 @@ container:
 # The Controller versions CI boots, newest first. The first is also what a bare
 # `make e2e` runs against, so the pin and the matrix cannot drift apart.
 versions:
+  - "10.6.101"
   - "10.5.67"
   - "10.4.57"
   - "10.1.84"

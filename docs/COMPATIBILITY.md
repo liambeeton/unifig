@@ -13,14 +13,14 @@ The floor is **10.0**. Nothing older is tested — and nothing is refused, whate
 
 CI boots `linuxserver/unifi-network-application` at each of these versions and runs the whole suite against it — the real unifig binary, over HTTPS, against a real Network application.
 
-| Area | 10.5.67 | 10.4.57 | 10.1.84 | 10.0.162 |
-| --- | --- | --- | --- | --- |
-| Networks | yes | yes | yes | yes |
-| WLANs | yes | yes | yes | yes |
-| Port Forwards | yes | yes | yes | yes |
-| DHCP Reservations | yes | yes | yes | yes |
-| Export | yes | yes | yes | yes |
-| Controller backup | yes | yes | yes | yes |
+| Area | 10.6.101 | 10.5.67 | 10.4.57 | 10.1.84 | 10.0.162 |
+| --- | --- | --- | --- | --- | --- |
+| Networks | yes | yes | yes | yes | yes |
+| WLANs | yes | yes | yes | yes | yes |
+| Port Forwards | yes | yes | yes | yes | yes |
+| DHCP Reservations | yes | yes | yes | yes | yes |
+| Export | yes | yes | yes | yes | yes |
+| Controller backup | yes | yes | yes | yes | yes |
 
 ## Tested against a recording, not a container
 
@@ -55,7 +55,7 @@ None of this says the behaviour is absent from the version the row above names �
 It says so, once, on stderr, and carries on:
 
 ```
-unifig: this Controller runs UniFi Network 10.6.0, which is newer than any version unifig has been tested against — the newest is 10.5.67 (docs/COMPATIBILITY.md). Carrying on anyway.
+unifig: this Controller runs UniFi Network 10.7.0, which is newer than any version unifig has been tested against — the newest is 10.6.101 (docs/COMPATIBILITY.md). Carrying on anyway.
 ```
 
 Every online command does it — `plan`, `apply`, `export` — and none of them stops. An untested Controller is one nobody has run the suite against, which is not the same as one anybody has found a fault in, and unifig refusing to manage a router on that basis would be a worse answer than a warning. The versions it checks against are the columns of the **first** table — the ones a whole suite ran against — and deliberately not the recording's version below it: a recording is evidence about the areas below, so going quiet for a Controller the areas above were never run against would be the warning claiming more than anybody tested. They are compiled into the binary from `internal/compat/matrix.json`, which is generated from these same runs.

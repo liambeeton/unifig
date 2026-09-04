@@ -1,5 +1,18 @@
 # A test names the Controller its evidence was measured on, because a recording holds no writes
 
+> **Amended on its premise, not on its decision, on 4 September 2026.** This ADR
+> argued from 10.6.101 being "a version outside the matrix entirely". It is not
+> one any more: `linuxserver/unifi-network-application` publishes it, the suite
+> passes against it, and `compatibility.yaml` now lists it at the head of the
+> matrix. The rule below is untouched, and the reason it survives is the reason
+> it was written — a container on 10.6.101 has no zone-based firewall either
+> (ADR-0013), so what ADR-0033 and ADR-0035 measured still came off a physical
+> router and still could not have come from anywhere the suite can boot. What
+> changed is only that the version string now names two different Controllers:
+> a container in the columns of the first table, and the UDR the write session
+> ran against, under the second. The table is harder to read for it, and every
+> sentence in it is still one a run supports.
+
 `docs/COMPATIBILITY.md` gave the firewall row one version — 10.5.67, read out of
 `e2e/testdata/udr/sysinfo.json` — and by ADR-0033 that row covered tests whose
 subject had only ever been exercised on 10.6.101. The row was not wrong about the
@@ -19,8 +32,9 @@ all. So nothing the stand-in models about a **write** was ever in those files. I
 came from a live session against a real router, on whatever firmware that router
 was running the day somebody asked it. For ADR-0019 through ADR-0032 that was
 10.5.67 and the row was accidentally right. The router was upgraded, and by
-ADR-0033 and ADR-0035 it was 10.6.101 — a version outside the matrix entirely,
-against which unifig prints its own untested-version warning on every run.
+ADR-0033 and ADR-0035 it was 10.6.101 — then a version outside the matrix
+entirely, against which unifig printed its own untested-version warning on every
+run, and since carried as a container by the note above.
 
 Thirteen tests in `e2e/firewall_test.go` name those two sessions. More rest on
 them than that — `reconcileCompanion` in the stand-in models what ADR-0035
@@ -127,3 +141,9 @@ something the suite does not:
   matrix and only that (`compat.Matrix.Warning`). A measurement is evidence about
   a replayed area, and letting one into that set would be the warning going quiet
   for a Controller the container areas were never run against.
+- **The warning has since gone quiet for 10.6.101, and by the route this bullet
+  allows.** The version is in the container matrix because the whole suite was
+  run against a container on it, which is the only thing that set has ever
+  admitted. The measurements below are unchanged and were not consulted: had the
+  version arrived that way instead, the warning would have been claiming a run
+  nobody performed.
