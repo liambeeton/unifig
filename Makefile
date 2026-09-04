@@ -11,7 +11,15 @@ BINARY := unifig
 # the only version to keep in step between local and CI. Bumping it changes the
 # installed path below, so the new version is fetched automatically.
 GOLANGCI_LINT_VERSION := v2.12.2
-GOLANGCI_LINT := $(TOOLS_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
+
+# The Go release is part of the pin, because golangci-lint type-checks with the
+# go/types it was compiled against. A binary built by an older Go cannot read a
+# newer Go's stdlib: upgrading to 1.27 made every run fail in math/rand/v2 with
+# "method must have no type parameters", generic methods being a 1.27 addition.
+# So the toolchain goes in the path for the same reason the version does — a Go
+# upgrade changes the path, and the rebuild happens without anyone noticing.
+GO_VERSION := $(shell $(GO) env GOVERSION)
+GOLANGCI_LINT := $(TOOLS_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(GO_VERSION)
 
 # Arguments forwarded to the binary by `run`, e.g. make run ARGS="export".
 ARGS ?=

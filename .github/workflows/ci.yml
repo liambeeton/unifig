@@ -31,11 +31,13 @@ jobs:
       # binary rather than recompiling it every run. The Makefile owns the
       # pin, so keying on the whole file is conservative: any Makefile edit
       # evicts the cache, but a bumped pin can never serve a stale binary.
+      # go.mod is in the key because it is what setup-go reads: the Go release
+      # is half the pin, and a binary built by another Go cannot lint this one.
       - name: Cache pinned tools
         uses: actions/cache@v4
         with:
           path: bin
-          key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile', 'go.mod') }}
 
       - name: Check
         run: make check
